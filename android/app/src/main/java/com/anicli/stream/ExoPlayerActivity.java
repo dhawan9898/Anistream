@@ -15,10 +15,12 @@ import android.view.GestureDetector;
 import android.view.MotionEvent;
 import android.view.View;
 import android.view.WindowManager;
+import android.widget.LinearLayout;
 import android.widget.SeekBar;
 import android.widget.TextView;
 
 import androidx.appcompat.app.AppCompatActivity;
+import androidx.appcompat.widget.PopupMenu;
 import androidx.media3.common.C;
 import androidx.media3.common.MediaItem;
 import androidx.media3.common.MimeTypes;
@@ -45,24 +47,34 @@ public class ExoPlayerActivity extends AppCompatActivity {
     private static final long SKIP_INTRO_JUMP_MS = 85_000;
     private static final long SEEK_STEP_MS = 10_000;
     private static final long CONTROLS_HIDE_DELAY_MS = 3_500;
+    private static final long NEXT_EPISODE_THRESHOLD_MS = 20_000;
+    private static final int NEXT_EPISODE_COUNTDOWN_SECONDS = 12;
 
     private PlayerView playerView;
     private ExoPlayer player;
 
     private View controlsRoot;
+    private View scrimTop;
+    private View scrimBottom;
     private TextView btnPlayPause;
     private TextView btnBack;
     private TextView btnRewind;
     private TextView btnForward;
-    private TextView btnSubtitles;
-    private TextView btnMode;
+    private TextView btnAudioSubs;
     private TextView btnSkipIntro;
     private TextView textTitle;
     private TextView textEpisode;
     private TextView textCurrentTime;
-    private TextView textDuration;
+    private TextView textRemainingTime;
     private TextView gestureIndicator;
     private SeekBar seekBar;
+
+    private LinearLayout nextEpisodeCard;
+    private TextView textNextEpisodeCountdown;
+    private TextView textNextEpisodeTitle;
+    private TextView btnPlayNextNow;
+    private boolean nextEpisodeTriggered = false;
+    private int nextEpisodeCountdown = NEXT_EPISODE_COUNTDOWN_SECONDS;
 
     private final Handler handler = new Handler(Looper.getMainLooper());
     private boolean subtitlesEnabled = true;
@@ -126,7 +138,6 @@ public class ExoPlayerActivity extends AppCompatActivity {
 
         textTitle.setText(animeTitle != null ? animeTitle : "AniStream");
         textEpisode.setText("Ep " + (episodeNumber != null ? episodeNumber : "1") + " • " + currentMode.toUpperCase());
-        btnMode.setText(currentMode.toUpperCase());
 
         if (videoUrl != null && !videoUrl.isEmpty()) {
             initializePlayer(videoUrl, referer, subtitlesJson);
@@ -139,38 +150,51 @@ public class ExoPlayerActivity extends AppCompatActivity {
     private void bindViews() {
         playerView = findViewById(R.id.player_view);
         controlsRoot = findViewById(R.id.controls_root);
+        scrimTop = findViewById(R.id.scrim_top);
+        scrimBottom = findViewById(R.id.scrim_bottom);
         btnPlayPause = findViewById(R.id.btn_play_pause);
         btnBack = findViewById(R.id.btn_back);
         btnRewind = findViewById(R.id.btn_rewind);
         btnForward = findViewById(R.id.btn_forward);
-        btnSubtitles = findViewById(R.id.btn_subtitles);
-        btnMode = findViewById(R.id.btn_mode);
+        btnAudioSubs = findViewById(R.id.btn_audio_subs);
         btnSkipIntro = findViewById(R.id.btn_skip_intro);
         textTitle = findViewById(R.id.text_title);
         textEpisode = findViewById(R.id.text_episode);
         textCurrentTime = findViewById(R.id.text_current_time);
-        textDuration = findViewById(R.id.text_duration);
+        textRemainingTime = findViewById(R.id.text_remaining_time);
         gestureIndicator = findViewById(R.id.gesture_indicator);
         seekBar = findViewById(R.id.seek_bar);
+        nextEpisodeCard = findViewById(R.id.next_episode_card);
+        textNextEpisodeCountdown = findViewById(R.id.text_next_episode_countdown);
+        textNextEpisodeTitle = findViewById(R.id.text_next_episode_title);
+        btnPlayNextNow = findViewById(R.id.btn_play_next_now);
     }
 
-    // Approximate a "liquid glass" look with programmatic rounded, semi-transparent
-    // pill backgrounds (no drawable resources needed, no real-time blur behind video).
+    // Netflix-style chrome: clear video with bounded top/bottom scrims (not a
+    // full-screen wash) and rounded semi-transparent "glass" pill buttons -
+    // no drawable resources needed, no real-time blur behind the video.
     private void styleGlassChrome() {
         pill(btnBack, 20f, 0.35f);
-        pill(btnSubtitles, 18f, 0.28f);
-        pill(btnMode, 18f, 0.28f);
-        pill(btnRewind, 20f, 0.28f);
-        pill(btnForward, 20f, 0.28f);
+        pill(btnAudioSubs, 20f, 0.35f);
+        pill(btnRewind, 26f, 0.28f);
+        pill(btnForward, 26f, 0.28f);
         pill(btnSkipIntro, 24f, 0.55f);
         pill(gestureIndicator, 24f, 0.55f);
+        pill(nextEpisodeCard, 14f, 0.6f);
 
         GradientDrawable playBg = new GradientDrawable();
         playBg.setShape(GradientDrawable.OVAL);
         playBg.setColor(Color.parseColor("#B3312E81"));
         btnPlayPause.setBackground(playBg);
 
-        controlsRoot.setBackground(topBottomScrim());
+        GradientDrawable nextBg = new GradientDrawable();
+        nextBg.setShape(GradientDrawable.RECTANGLE);
+        nextBg.setCornerRadius(10f * getResources().getDisplayMetrics().density);
+        nextBg.setColor(Color.parseColor("#6366f1"));
+        btnPlayNextNow.setBackground(nextBg);
+
+        scrimTop.setBackground(edgeScrim(GradientDrawable.Orientation.TOP_BOTTOM));
+        scrimBottom.setBackground(edgeScrim(GradientDrawable.Orientation.BOTTOM_TOP));
     }
 
     private void pill(View view, float radiusDp, float alpha) {
@@ -184,12 +208,8 @@ public class ExoPlayerActivity extends AppCompatActivity {
         view.setBackground(bg);
     }
 
-    private GradientDrawable topBottomScrim() {
-        GradientDrawable scrim = new GradientDrawable(
-                GradientDrawable.Orientation.TOP_BOTTOM,
-                new int[]{Color.argb(180, 0, 0, 0), Color.argb(0, 0, 0, 0), Color.argb(0, 0, 0, 0), Color.argb(200, 0, 0, 0)}
-        );
-        return scrim;
+    private GradientDrawable edgeScrim(GradientDrawable.Orientation orientation) {
+        return new GradientDrawable(orientation, new int[]{Color.argb(160, 0, 0, 0), Color.argb(0, 0, 0, 0)});
     }
 
     private void readInitialBrightness() {
@@ -210,8 +230,8 @@ public class ExoPlayerActivity extends AppCompatActivity {
             seekBy(SKIP_INTRO_JUMP_MS);
             btnSkipIntro.setVisibility(View.GONE);
         });
-        btnSubtitles.setOnClickListener(v -> toggleSubtitles());
-        btnMode.setOnClickListener(v -> requestModeSwitch());
+        btnAudioSubs.setOnClickListener(this::showAudioSubtitlesMenu);
+        btnPlayNextNow.setOnClickListener(v -> triggerNextEpisode());
 
         seekBar.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
             @Override
@@ -240,6 +260,24 @@ public class ExoPlayerActivity extends AppCompatActivity {
         });
     }
 
+    // Netflix combines audio + subtitle selection behind one icon; do the same
+    // instead of two separate top-bar buttons.
+    private void showAudioSubtitlesMenu(View anchor) {
+        PopupMenu menu = new PopupMenu(this, anchor);
+        String otherMode = "sub".equals(currentMode) ? "Dub" : "Sub";
+        menu.getMenu().add(0, 1, 0, "Subtitles: " + (subtitlesEnabled ? "On" : "Off"));
+        menu.getMenu().add(0, 2, 1, "Switch Audio to " + otherMode);
+        menu.setOnMenuItemClickListener(item -> {
+            if (item.getItemId() == 1) {
+                toggleSubtitles();
+            } else if (item.getItemId() == 2) {
+                requestModeSwitch();
+            }
+            return true;
+        });
+        menu.show();
+    }
+
     private void requestModeSwitch() {
         String newMode = "sub".equals(currentMode) ? "dub" : "sub";
         ExoPlayerPlugin.notifyModeSwitchRequested(animeTitle, episodeNumber, newMode);
@@ -254,7 +292,13 @@ public class ExoPlayerActivity extends AppCompatActivity {
                         .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, !subtitlesEnabled)
                         .build()
         );
-        btnSubtitles.setAlpha(subtitlesEnabled ? 1f : 0.45f);
+    }
+
+    private void triggerNextEpisode() {
+        if (nextEpisodeTriggered) return;
+        nextEpisodeTriggered = true;
+        ExoPlayerPlugin.notifyNextEpisodeRequested(animeTitle, episodeNumber);
+        finish();
     }
 
     private void togglePlayPause() {
@@ -317,7 +361,7 @@ public class ExoPlayerActivity extends AppCompatActivity {
             @Override
             public void onPlaybackStateChanged(int state) {
                 if (state == Player.STATE_READY) {
-                    textDuration.setText(formatTime(Math.max(player.getDuration(), 0)));
+                    textRemainingTime.setText("-" + formatTime(Math.max(player.getDuration(), 0)));
                 }
             }
         });
@@ -357,6 +401,7 @@ public class ExoPlayerActivity extends AppCompatActivity {
         long position = Math.max(player.getCurrentPosition(), 0);
         if (duration > 0) {
             seekBar.setProgress((int) ((position * 1000) / duration));
+            textRemainingTime.setText("-" + formatTime(Math.max(duration - position, 0)));
         }
         textCurrentTime.setText(formatTime(position));
 
@@ -365,6 +410,52 @@ public class ExoPlayerActivity extends AppCompatActivity {
             btnSkipIntro.setVisibility(View.VISIBLE);
         } else if (!shouldShowSkip && btnSkipIntro.getVisibility() == View.VISIBLE) {
             btnSkipIntro.setVisibility(View.GONE);
+        }
+
+        updateNextEpisodePrompt(duration, position);
+    }
+
+    // Netflix-style binge flow: in the last stretch of the episode, slide in a
+    // "Next Episode" card with a countdown that auto-advances unless dismissed.
+    private void updateNextEpisodePrompt(long duration, long position) {
+        if (duration <= 0 || nextEpisodeTriggered) return;
+        long remaining = duration - position;
+
+        if (remaining > NEXT_EPISODE_THRESHOLD_MS) {
+            if (nextEpisodeCard.getVisibility() == View.VISIBLE) {
+                nextEpisodeCard.setVisibility(View.GONE);
+                nextEpisodeCountdown = NEXT_EPISODE_COUNTDOWN_SECONDS;
+            }
+            return;
+        }
+
+        if (nextEpisodeCard.getVisibility() != View.VISIBLE) {
+            nextEpisodeCard.setVisibility(View.VISIBLE);
+            String nextNum = nextEpisodeNumber();
+            textNextEpisodeTitle.setText(nextNum != null ? ("Episode " + nextNum) : "Next Episode");
+            handler.post(nextEpisodeCountdownRunnable);
+        }
+    }
+
+    private final Runnable nextEpisodeCountdownRunnable = new Runnable() {
+        @Override
+        public void run() {
+            if (nextEpisodeTriggered || nextEpisodeCard.getVisibility() != View.VISIBLE) return;
+            textNextEpisodeCountdown.setText("Playing next episode in " + nextEpisodeCountdown + "s");
+            if (nextEpisodeCountdown <= 0) {
+                triggerNextEpisode();
+                return;
+            }
+            nextEpisodeCountdown--;
+            handler.postDelayed(this, 1000);
+        }
+    };
+
+    private String nextEpisodeNumber() {
+        try {
+            return String.valueOf(Integer.parseInt(episodeNumber) + 1);
+        } catch (Exception e) {
+            return null;
         }
     }
 

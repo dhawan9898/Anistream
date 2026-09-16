@@ -7,6 +7,11 @@ export interface ModeSwitchRequestedEvent {
   mode: 'sub' | 'dub';
 }
 
+export interface NextEpisodeRequestedEvent {
+  title: string;
+  episode: string;
+}
+
 export interface ExoPlayerPluginInterface {
   play(options: {
     url: string;
@@ -20,6 +25,11 @@ export interface ExoPlayerPluginInterface {
   addListener(
     eventName: 'modeSwitchRequested',
     listenerFunc: (event: ModeSwitchRequestedEvent) => void
+  ): Promise<PluginListenerHandle>;
+
+  addListener(
+    eventName: 'nextEpisodeRequested',
+    listenerFunc: (event: NextEpisodeRequestedEvent) => void
   ): Promise<PluginListenerHandle>;
 }
 

@@ -36,23 +36,41 @@ export const App: React.FC = () => {
   // sees the currently playing anime/episode without re-subscribing.
   const playingAnimeRef = useRef<AnimeItem | null>(null);
   const playingEpisodeRef = useRef<EpisodeItem | null>(null);
+  const playingModeRef = useRef<'sub' | 'dub'>('sub');
   playingAnimeRef.current = playingAnime;
   playingEpisodeRef.current = playingEpisode;
+  playingModeRef.current = playingMode;
 
-  // The native ExoPlayer's Sub/Dub button can't re-resolve a stream itself -
-  // it notifies us here so we can call getEpisodeStream() again for the
-  // other mode and relaunch the player.
+  // The native ExoPlayer's Sub/Dub button and "Next Episode" card can't
+  // re-resolve a stream themselves - they notify us here so we can call
+  // getEpisodeStream() again and relaunch the player. Read anime/episode from
+  // refs, not state: this effect subscribes once (empty deps), so closing
+  // over the state variables directly would only ever see their initial
+  // (null) values.
   useEffect(() => {
     if (!Capacitor.isNativePlatform()) return;
-    const handle = ExoPlayerPlugin.addListener('modeSwitchRequested', ({ mode }) => {
+    const modeHandle = ExoPlayerPlugin.addListener('modeSwitchRequested', ({ mode }) => {
       const anime = playingAnimeRef.current;
       const episode = playingEpisodeRef.current;
       if (anime && episode) {
         handlePlayEpisode(anime, episode, mode, 0);
       }
     });
+    const nextEpHandle = ExoPlayerPlugin.addListener('nextEpisodeRequested', () => {
+      const anime = playingAnimeRef.current;
+      const episode = playingEpisodeRef.current;
+      if (!anime || !episode) return;
+      const nextEpNum = String(parseInt(episode.number, 10) + 1);
+      const nextEp: EpisodeItem = {
+        id: `${anime.id}-ep-${nextEpNum}`,
+        number: nextEpNum,
+        title: `Episode ${nextEpNum}`
+      };
+      handlePlayEpisode(anime, nextEp, playingModeRef.current, 0);
+    });
     return () => {
-      handle.then(h => h.remove());
+      modeHandle.then(h => h.remove());
+      nextEpHandle.then(h => h.remove());
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);

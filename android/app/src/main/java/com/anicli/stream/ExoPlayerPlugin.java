@@ -56,4 +56,12 @@ public class ExoPlayerPlugin extends Plugin {
         data.put("mode", newMode);
         activeInstance.notifyListeners("modeSwitchRequested", data);
     }
+
+    static void notifyNextEpisodeRequested(String title, String episode) {
+        if (activeInstance == null) return;
+        JSObject data = new JSObject();
+        data.put("title", title);
+        data.put("episode", episode);
+        activeInstance.notifyListeners("nextEpisodeRequested", data);
+    }
 }
