@@ -12,15 +12,6 @@ dist
 dist-ssr
 *.local
 
-# APK outputs
-AniStream-v1.0.apk
-*.apk
-
-# Android / Gradle build folders
-android/app/build/
-android/.gradle/
-android/local.properties
-
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
