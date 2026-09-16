@@ -49,6 +49,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   const [isMuted, setIsMuted] = useState<boolean>(false);
   const [showSkipIntro, setShowSkipIntro] = useState<boolean>(false);
   const [doubleTapFeedback, setDoubleTapFeedback] = useState<'left' | 'right' | null>(null);
+  const [videoTrackWarning, setVideoTrackWarning] = useState<string | null>(null);
 
   // Initialize Hls / Video stream
   useEffect(() => {
@@ -61,6 +62,19 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     }
 
     const streamUrl = streamSource.streamUrl;
+    setVideoTrackWarning(null);
+
+    // Diagnose "playing but no picture": Chromium's Android WebView shows a
+    // large audio-only glyph in that case (wrong codec, or an audio-only
+    // rendition got resolved). Surface it instead of a silently blank screen.
+    const checkVideoTrack = () => {
+      if (video.videoWidth === 0 && video.videoHeight === 0 && !video.paused) {
+        console.warn('[VideoPlayer] Playback has no video track (videoWidth/videoHeight are 0). streamUrl:', streamUrl);
+        setVideoTrackWarning('No video track in this stream (audio only or unsupported codec).');
+      }
+    };
+    video.addEventListener('loadeddata', checkVideoTrack);
+    video.addEventListener('playing', checkVideoTrack);
 
     if (Hls.isSupported()) {
       // The manifest/segments live on a CDN that only serves requests carrying
@@ -82,7 +96,14 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
       hls.attachMedia(video);
       hlsRef.current = hls;
 
-      hls.on(Hls.Events.MANIFEST_PARSED, () => {
+      hls.on(Hls.Events.MANIFEST_PARSED, (_event, data) => {
+        console.log('[VideoPlayer] Manifest parsed, levels:', data.levels.map(l => ({
+          bitrate: l.bitrate, width: l.width, height: l.height,
+          videoCodec: l.videoCodec, audioCodec: l.audioCodec
+        })));
+        if (data.levels.length > 0 && data.levels.every(l => !l.videoCodec && !l.width)) {
+          setVideoTrackWarning('No video track in this stream (audio only or unsupported codec).');
+        }
         if (initialTime > 0) {
           video.currentTime = initialTime;
         }
@@ -90,6 +111,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
       });
 
       hls.on(Hls.Events.ERROR, (_event, data) => {
+        console.warn('[VideoPlayer] hls.js error:', data.type, data.details, 'fatal:', data.fatal);
         if (data.fatal) {
           switch (data.type) {
             case Hls.ErrorTypes.NETWORK_ERROR:
@@ -116,6 +138,8 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     }
 
     return () => {
+      video.removeEventListener('loadeddata', checkVideoTrack);
+      video.removeEventListener('playing', checkVideoTrack);
       if (hlsRef.current) {
         hlsRef.current.destroy();
       }
@@ -204,8 +228,10 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     onProgressUpdate?.(video.currentTime, video.duration || 0);
   };
 
-  const handleLoadedMetadata = () => {
-    if (videoRef.current) {
+  // HLS/MSE streams can report NaN duration when 'loadedmetadata' first fires
+  // (it only fires once); the real duration arrives later via 'durationchange'.
+  const handleDurationChange = () => {
+    if (videoRef.current && isFinite(videoRef.current.duration)) {
       setDuration(videoRef.current.duration);
     }
   };
@@ -265,7 +291,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
         playsInline
         style={{ width: '100%', height: '100%', objectFit: 'contain' }}
         onTimeUpdate={handleTimeUpdate}
-        onLoadedMetadata={handleLoadedMetadata}
+        onDurationChange={handleDurationChange}
         onPlay={() => setIsPlaying(true)}
         onPause={() => setIsPlaying(false)}
         onEnded={() => {
@@ -284,6 +310,34 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
           />
         ))}
       </video>
+
+      {/* No-video-track warning (audio plays, no picture) */}
+      {videoTrackWarning && (
+        <div
+          onClick={(e) => e.stopPropagation()}
+          style={{
+            position: 'absolute',
+            top: '50%',
+            left: '50%',
+            transform: 'translate(-50%, -50%)',
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+            gap: '10px',
+            padding: '20px 24px',
+            borderRadius: 'var(--radius-md)',
+            backgroundColor: 'rgba(0,0,0,0.75)',
+            color: '#f8fafc',
+            textAlign: 'center',
+            maxWidth: '80%',
+            zIndex: 20,
+            pointerEvents: 'none'
+          }}
+        >
+          <span style={{ fontSize: '14px', fontWeight: 700 }}>{videoTrackWarning}</span>
+          <span style={{ fontSize: '12px', color: '#94a3b8' }}>Audio is playing, but this server sent no watchable video track. Try again or pick a different episode/server.</span>
+        </div>
+      )}
 
       {/* Double Tap Visual Ripple Feedback */}
       {doubleTapFeedback === 'left' && (
