@@ -50,7 +50,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   const [showSkipIntro, setShowSkipIntro] = useState<boolean>(false);
   const [doubleTapFeedback, setDoubleTapFeedback] = useState<'left' | 'right' | null>(null);
 
-  // Initialize Hls / Video stream
+  // Initialize Hls / Video stream with robust mobile WebView fallback
   useEffect(() => {
     const video = videoRef.current;
     if (!video) return;
@@ -61,8 +61,18 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     }
 
     const streamUrl = streamSource.streamUrl;
+    const isCapacitor = window.location.protocol === 'capacitor:' || window.location.protocol === 'file:';
 
-    if (Hls.isSupported()) {
+    if (isCapacitor || video.canPlayType('application/vnd.apple.mpegurl')) {
+      video.src = streamUrl;
+      video.addEventListener('loadedmetadata', () => {
+        if (initialTime > 0) {
+          video.currentTime = initialTime;
+        }
+        video.play().then(() => setIsPlaying(true)).catch(() => setIsPlaying(false));
+      });
+      video.load();
+    } else if (Hls.isSupported()) {
       const hls = new Hls({
         enableWorker: true,
         lowLatencyMode: true,
@@ -83,25 +93,23 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
         if (data.fatal) {
           switch (data.type) {
             case Hls.ErrorTypes.NETWORK_ERROR:
-              hls.startLoad();
+              video.src = streamUrl;
+              video.play().catch(() => {});
               break;
             case Hls.ErrorTypes.MEDIA_ERROR:
               hls.recoverMediaError();
               break;
             default:
-              hls.destroy();
+              video.src = streamUrl;
+              video.play().catch(() => {});
               break;
           }
         }
       });
-    } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+    } else {
       video.src = streamUrl;
-      video.addEventListener('loadedmetadata', () => {
-        if (initialTime > 0) {
-          video.currentTime = initialTime;
-        }
-        video.play().then(() => setIsPlaying(true)).catch(() => setIsPlaying(false));
-      });
+      video.load();
+      video.play().catch(() => {});
     }
 
     return () => {
