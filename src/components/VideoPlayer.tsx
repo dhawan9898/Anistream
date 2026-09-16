@@ -63,10 +63,20 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     const streamUrl = streamSource.streamUrl;
 
     if (Hls.isSupported()) {
+      // The manifest/segments live on a CDN that only serves requests carrying
+      // its own embed page as Referer (that's why the anime plays in a browser
+      // but not here) - CapacitorHttp patches XHR to allow otherwise-forbidden
+      // headers like Referer/Origin/User-Agent through to native networking.
+      const referer = streamSource.referer;
+      const origin = referer.replace(/\/$/, '');
       const hls = new Hls({
         enableWorker: true,
         lowLatencyMode: true,
-        backBufferLength: 90
+        backBufferLength: 90,
+        xhrSetup: (xhr) => {
+          xhr.setRequestHeader('Referer', referer);
+          xhr.setRequestHeader('Origin', origin);
+        }
       });
       hls.loadSource(streamUrl);
       hls.attachMedia(video);
@@ -110,7 +120,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
         hlsRef.current.destroy();
       }
     };
-  }, [streamSource.streamUrl]);
+  }, [streamSource.streamUrl, streamSource.referer]);
 
   // Controls auto-hide logic
   const resetControlsTimer = useCallback(() => {
