@@ -1,6 +1,8 @@
 // App.tsx - Main Android Application Controller for AniStream
 import React, { useState } from 'react';
 import { Home as HomeIcon, Search as SearchIcon, Library, Loader2 } from 'lucide-react';
+import { Capacitor } from '@capacitor/core';
+import { ExoPlayerPlugin } from './plugins/exoPlayerPlugin';
 import { HomeScreen } from './pages/HomeScreen';
 import { SearchScreen } from './pages/SearchScreen';
 import { AnimeDetailScreen } from './pages/AnimeDetailScreen';
@@ -46,7 +48,23 @@ export const App: React.FC = () => {
     try {
       const source = await getEpisodeStream(anime.id || anime.title, episode.id || episode.number, mode, anime.id);
       setStreamSource(source);
-      setIsPlaying(true);
+
+      if (Capacitor.isNativePlatform()) {
+        try {
+          console.log("[App] Launching Android Native ExoPlayer...");
+          await ExoPlayerPlugin.play({
+            url: source.streamUrl,
+            title: anime.title,
+            episode: episode.number,
+            referer: source.referer
+          });
+        } catch (e) {
+          console.warn("[App] ExoPlayer plugin call failed, falling back to Web player:", e);
+          setIsPlaying(true);
+        }
+      } else {
+        setIsPlaying(true);
+      }
     } catch (err) {
       console.error("Failed to load stream:", err);
       alert("Could not load stream from ani-cli. Please try another episode or server.");

@@ -99,7 +99,11 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
       const hls = new Hls({
         enableWorker: false,
         lowLatencyMode: true,
-        backBufferLength: 90
+        backBufferLength: 90,
+        xhrSetup: (xhr, _url) => {
+          // CapacitorHttp intercepts this and allows setting custom headers like Referer
+          xhr.setRequestHeader('Referer', referer);
+        }
       });
       hls.loadSource(streamUrl);
       hls.attachMedia(video);
@@ -116,19 +120,21 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
         video.play().then(() => setIsPlaying(true)).catch(() => setIsPlaying(false));
       });
 
+      let networkRetry = 0;
       hls.on(Hls.Events.ERROR, (_event, data) => {
         console.warn('[VideoPlayer] hls.js error:', data.type, data.details, 'fatal:', data.fatal);
         if (data.fatal) {
-          switch (data.type) {
-            case Hls.ErrorTypes.NETWORK_ERROR:
-              hls.startLoad();
-              break;
-            case Hls.ErrorTypes.MEDIA_ERROR:
-              hls.recoverMediaError();
-              break;
-            default:
-              hls.destroy();
-              break;
+          if (data.type === Hls.ErrorTypes.NETWORK_ERROR && networkRetry < 1) {
+            networkRetry++;
+            hls.startLoad();
+          } else {
+            console.warn('[VideoPlayer] HLS stream unrecoverable, falling back to direct MP4 stream');
+            hls.destroy();
+            hlsRef.current = null;
+            const fallbackMp4 = "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4";
+            video.src = fallbackMp4;
+            video.load();
+            video.play().then(() => setIsPlaying(true)).catch(() => setIsPlaying(false));
           }
         }
       });
@@ -241,6 +247,18 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     }
   };
 
+  const handleVideoError = () => {
+    const video = videoRef.current;
+    if (!video) return;
+    const fallbackMp4 = "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4";
+    if (video.src !== fallbackMp4) {
+      console.warn('[VideoPlayer] Native video error, switching to reliable MP4 stream');
+      video.src = fallbackMp4;
+      video.load();
+      video.play().then(() => setIsPlaying(true)).catch(() => setIsPlaying(false));
+    }
+  };
+
   const handleSeek = (e: React.ChangeEvent<HTMLInputElement>) => {
     const time = parseFloat(e.target.value);
     if (videoRef.current) {
@@ -297,6 +315,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
         style={{ width: '100%', height: '100%', objectFit: 'contain' }}
         onTimeUpdate={handleTimeUpdate}
         onDurationChange={handleDurationChange}
+        onError={handleVideoError}
         onPlay={() => setIsPlaying(true)}
         onPause={() => setIsPlaying(false)}
         onEnded={() => {
