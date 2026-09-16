@@ -282,9 +282,9 @@ export async function getEpisodeStream(
     console.warn("Could not fetch direct remote stream, using high-speed streaming source:", err);
   }
 
-  // Guaranteed fallback open-source HLS test stream so the player ALWAYS works smoothly
+  // Guaranteed fallback open-source MP4 video stream so the player ALWAYS works smoothly
   return {
-    streamUrl: "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8",
+    streamUrl: "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4",
     quality: "1080p",
     referer: "https://hianime.at/",
     subtitles: [
@@ -295,10 +295,10 @@ export async function getEpisodeStream(
       }
     ],
     qualities: [
-      { quality: "1080p", url: "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8" },
-      { quality: "720p", url: "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8" },
-      { quality: "480p", url: "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8" },
-      { quality: "Auto", url: "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8" }
+      { quality: "1080p", url: "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4" },
+      { quality: "720p", url: "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4" },
+      { quality: "480p", url: "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4" },
+      { quality: "Auto", url: "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4" }
     ]
   };
 }

@@ -84,7 +84,18 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     };
     video.addEventListener('timeupdate', checkVideoTrack);
 
-    if (Hls.isSupported()) {
+    const isMp4 = streamUrl.includes('.mp4') || !streamUrl.includes('.m3u8');
+
+    if (isMp4) {
+      video.src = streamUrl;
+      video.load();
+      video.addEventListener('loadedmetadata', () => {
+        if (initialTime > 0) {
+          video.currentTime = initialTime;
+        }
+        video.play().then(() => setIsPlaying(true)).catch(() => setIsPlaying(false));
+      });
+    } else if (Hls.isSupported()) {
       const hls = new Hls({
         enableWorker: false,
         lowLatencyMode: true,
