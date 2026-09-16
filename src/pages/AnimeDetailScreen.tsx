@@ -24,19 +24,22 @@ export const AnimeDetailScreen: React.FC<AnimeDetailScreenProps> = ({
   useEffect(() => {
     // Check bookmark
     getBookmarks().then(bookmarks => {
-      setIsBookmarked(bookmarks.includes(anime.id));
+      setIsBookmarked(bookmarks.some(b => b.id === anime.id));
     });
 
-    // Fetch episodes
-    setLoading(true);
+    // Fetch episodes - sort ascending by number so episodes[0] is genuinely
+    // episode 1 rather than however the scraper happened to order the page.
+    // (loading starts true and this effect only ever runs once per mount,
+    // since App.tsx keys AnimeDetailScreen by anime id.)
     getEpisodes(anime.id).then((eps) => {
-      setEpisodes(eps);
+      const sorted = [...eps].sort((a, b) => parseFloat(a.number) - parseFloat(b.number));
+      setEpisodes(sorted);
       setLoading(false);
     });
   }, [anime.id]);
 
   const handleBookmarkToggle = async () => {
-    const newState = await toggleBookmark(anime.id);
+    const newState = await toggleBookmark(anime);
     setIsBookmarked(newState);
   };
 

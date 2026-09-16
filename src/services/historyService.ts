@@ -1,5 +1,6 @@
 // historyService.ts - Watch history, bookmarks, and preferences management
 import { Preferences } from '@capacitor/preferences';
+import type { AnimeItem } from '../core/aniCliCore';
 
 export interface WatchHistoryItem {
   animeId: string;
@@ -62,10 +63,13 @@ export async function clearWatchHistory(): Promise<void> {
   await Preferences.remove({ key: HISTORY_KEY });
 }
 
-export async function toggleBookmark(animeId: string): Promise<boolean> {
+// Bookmarks store the full AnimeItem, not just its id: the Saved tab needs to
+// render posters/titles for anime that may only exist as live search/home
+// results, not in the small curated FEATURED_ANIME list.
+export async function toggleBookmark(anime: AnimeItem): Promise<boolean> {
   const bookmarks = await getBookmarks();
-  const exists = bookmarks.includes(animeId);
-  const updated = exists ? bookmarks.filter(id => id !== animeId) : [...bookmarks, animeId];
+  const exists = bookmarks.some(b => b.id === anime.id);
+  const updated = exists ? bookmarks.filter(b => b.id !== anime.id) : [...bookmarks, anime];
   await Preferences.set({
     key: BOOKMARKS_KEY,
     value: JSON.stringify(updated)
@@ -73,7 +77,7 @@ export async function toggleBookmark(animeId: string): Promise<boolean> {
   return !exists;
 }
 
-export async function getBookmarks(): Promise<string[]> {
+export async function getBookmarks(): Promise<AnimeItem[]> {
   try {
     const { value } = await Preferences.get({ key: BOOKMARKS_KEY });
     return value ? JSON.parse(value) : [];

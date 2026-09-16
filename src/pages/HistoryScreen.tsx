@@ -1,11 +1,11 @@
 // HistoryScreen.tsx - User watch history, bookmarks, and preferences
 import React, { useState, useEffect } from 'react';
 import { Clock, Bookmark, Trash2, Play } from 'lucide-react';
-import { 
-  getWatchHistory, clearWatchHistory, getBookmarks, 
-  type WatchHistoryItem 
+import {
+  getWatchHistory, clearWatchHistory, getBookmarks,
+  type WatchHistoryItem
 } from '../services/historyService';
-import { FEATURED_ANIME, type AnimeItem } from '../core/aniCliCore';
+import type { AnimeItem } from '../core/aniCliCore';
 
 interface HistoryScreenProps {
   onResumeEpisode: (history: WatchHistoryItem) => void;
@@ -18,18 +18,19 @@ export const HistoryScreen: React.FC<HistoryScreenProps> = ({
 }) => {
   const [activeTab, setActiveTab] = useState<'history' | 'bookmarks'>('history');
   const [historyList, setHistoryList] = useState<WatchHistoryItem[]>([]);
-  const [bookmarkIds, setBookmarkIds] = useState<string[]>([]);
-
-  useEffect(() => {
-    loadData();
-  }, []);
+  const [bookmarkedAnime, setBookmarkedAnime] = useState<AnimeItem[]>([]);
 
   const loadData = async () => {
     const history = await getWatchHistory();
     const bookmarks = await getBookmarks();
     setHistoryList(history);
-    setBookmarkIds(bookmarks);
+    setBookmarkedAnime(bookmarks);
   };
+
+  useEffect(() => {
+    loadData();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const handleClearHistory = async () => {
     if (window.confirm("Are you sure you want to clear your watch history?")) {
@@ -37,8 +38,6 @@ export const HistoryScreen: React.FC<HistoryScreenProps> = ({
       setHistoryList([]);
     }
   };
-
-  const bookmarkedAnime = FEATURED_ANIME.filter(a => bookmarkIds.includes(a.id));
 
   return (
     <div style={{ flex: 1, overflowY: 'auto', paddingBottom: '90px' }}>
@@ -125,7 +124,7 @@ export const HistoryScreen: React.FC<HistoryScreenProps> = ({
             }}
           >
             <Bookmark size={16} />
-            <span>Saved ({bookmarkIds.length})</span>
+            <span>Saved ({bookmarkedAnime.length})</span>
           </button>
         </div>
       </div>

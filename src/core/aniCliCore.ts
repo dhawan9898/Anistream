@@ -96,10 +96,11 @@ export async function searchAnime(query: string): Promise<AnimeItem[]> {
   }
 }
 
-// Trending/homepage anime (same card markup as search results)
+// Trending/homepage anime (same card markup as search results).
+// The root "/" is just a landing page - /home is the actual suggestions feed.
 export async function getTrendingAnime(): Promise<AnimeItem[]> {
   try {
-    const res = await fetch(`${getApiBase()}/`, {
+    const res = await fetch(`${getApiBase()}/home`, {
       headers: {
         'Accept': 'text/html,application/xhtml+xml',
         ...UPSTREAM_HEADERS

@@ -76,6 +76,13 @@ public class ExoPlayerActivity extends AppCompatActivity {
     private boolean nextEpisodeTriggered = false;
     private int nextEpisodeCountdown = NEXT_EPISODE_COUNTDOWN_SECONDS;
 
+    private LinearLayout errorOverlay;
+    private TextView textErrorMessage;
+    private TextView btnRetry;
+    private String pendingVideoUrl;
+    private String pendingReferer;
+    private String pendingSubtitlesJson;
+
     private final Handler handler = new Handler(Looper.getMainLooper());
     private boolean subtitlesEnabled = true;
     private boolean userSeeking = false;
@@ -140,6 +147,9 @@ public class ExoPlayerActivity extends AppCompatActivity {
         textEpisode.setText("Ep " + (episodeNumber != null ? episodeNumber : "1") + " • " + currentMode.toUpperCase());
 
         if (videoUrl != null && !videoUrl.isEmpty()) {
+            pendingVideoUrl = videoUrl;
+            pendingReferer = referer;
+            pendingSubtitlesJson = subtitlesJson;
             initializePlayer(videoUrl, referer, subtitlesJson);
         } else {
             Log.e(TAG, "No video URL provided to ExoPlayerActivity");
@@ -168,6 +178,9 @@ public class ExoPlayerActivity extends AppCompatActivity {
         textNextEpisodeCountdown = findViewById(R.id.text_next_episode_countdown);
         textNextEpisodeTitle = findViewById(R.id.text_next_episode_title);
         btnPlayNextNow = findViewById(R.id.btn_play_next_now);
+        errorOverlay = findViewById(R.id.error_overlay);
+        textErrorMessage = findViewById(R.id.text_error_message);
+        btnRetry = findViewById(R.id.btn_retry);
     }
 
     // Netflix-style chrome: clear video with bounded top/bottom scrims (not a
@@ -181,6 +194,8 @@ public class ExoPlayerActivity extends AppCompatActivity {
         pill(btnSkipIntro, 24f, 0.55f);
         pill(gestureIndicator, 24f, 0.55f);
         pill(nextEpisodeCard, 14f, 0.6f);
+        pill(errorOverlay, 16f, 0.75f);
+        pill(btnRetry, 20f, 0.9f);
 
         GradientDrawable playBg = new GradientDrawable();
         playBg.setShape(GradientDrawable.OVAL);
@@ -232,6 +247,7 @@ public class ExoPlayerActivity extends AppCompatActivity {
         });
         btnAudioSubs.setOnClickListener(this::showAudioSubtitlesMenu);
         btnPlayNextNow.setOnClickListener(v -> triggerNextEpisode());
+        btnRetry.setOnClickListener(v -> retryPlayback());
 
         seekBar.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
             @Override
@@ -301,6 +317,26 @@ public class ExoPlayerActivity extends AppCompatActivity {
         finish();
     }
 
+    // A failed stream used to just hang on a black screen with an infinite
+    // buffering spinner - show what happened and let the user retry or back out.
+    private void showPlaybackError(String message) {
+        handler.removeCallbacksAndMessages(null);
+        textErrorMessage.setText(message);
+        errorOverlay.setVisibility(View.VISIBLE);
+        setControlsVisible(true);
+    }
+
+    private void retryPlayback() {
+        errorOverlay.setVisibility(View.GONE);
+        if (player != null) {
+            player.release();
+            player = null;
+        }
+        if (pendingVideoUrl != null) {
+            initializePlayer(pendingVideoUrl, pendingReferer, pendingSubtitlesJson);
+        }
+    }
+
     private void togglePlayPause() {
         if (player == null) return;
         if (player.isPlaying()) {
@@ -363,6 +399,12 @@ public class ExoPlayerActivity extends AppCompatActivity {
                 if (state == Player.STATE_READY) {
                     textRemainingTime.setText("-" + formatTime(Math.max(player.getDuration(), 0)));
                 }
+            }
+
+            @Override
+            public void onPlayerError(androidx.media3.common.PlaybackException error) {
+                Log.e(TAG, "Playback error", error);
+                showPlaybackError("Couldn't play this stream. The server may be blocking it or the format isn't supported.");
             }
         });
 
