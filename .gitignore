@@ -12,10 +12,11 @@ dist
 dist-ssr
 *.local
 
-# Ignore local build APKs and build folders (AniStream-v1.0.apk is tracked for direct download)
+# Ignore local build APKs and build folders
 android/app/build/
 android/.gradle/
 android/local.properties
+*.apk
 
 # Editor directories and files
 .vscode/*
