@@ -32,7 +32,7 @@ public class AnimeStreamWebViewClient extends BridgeWebViewClient {
     @Override
     public WebResourceResponse shouldInterceptRequest(WebView view, WebResourceRequest request) {
         Uri uri = request.getUrl();
-        if (uri != null && PROXY_PATH.equals(uri.getPath())) {
+        if (uri != null && uri.getPath() != null && uri.getPath().startsWith(PROXY_PATH)) {
             return handleProxy(request);
         }
         return super.shouldInterceptRequest(view, request);
@@ -69,6 +69,8 @@ public class AnimeStreamWebViewClient extends BridgeWebViewClient {
             conn.setReadTimeout(30000);
             conn.setInstanceFollowRedirects(true);
 
+            // Important: request uncompressed identity stream so playlists can be parsed & rewritten cleanly
+            conn.setRequestProperty("Accept-Encoding", "identity");
             conn.setRequestProperty("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36");
             conn.setRequestProperty("Referer", referer);
             String origin = referer.replaceAll("/+$", "");
@@ -110,7 +112,9 @@ public class AnimeStreamWebViewClient extends BridgeWebViewClient {
             if (is == null) {
                 is = new ByteArrayInputStream(new byte[0]);
             }
-            return new WebResourceResponse(mimeType, "UTF-8", responseCode, "OK", responseHeaders, is);
+            // For binary data (.ts, .m4s, .mp4), encoding MUST be null (not UTF-8)
+            String encoding = isM3u8 || mimeType.startsWith("text/") ? "UTF-8" : null;
+            return new WebResourceResponse(mimeType, encoding, responseCode, "OK", responseHeaders, is);
 
         } catch (Exception e) {
             Log.e(TAG, "Proxy error for url " + targetUrl, e);
@@ -161,6 +165,15 @@ public class AnimeStreamWebViewClient extends BridgeWebViewClient {
         reader.close();
 
         byte[] bytes = sb.toString().getBytes(StandardCharsets.UTF_8);
+
+        // CRITICAL: Remove any upstream Content-Encoding or outdated Content-Length headers!
+        // Because the playlist text is now uncompressed plain text and its byte length has changed due to URL rewriting.
+        responseHeaders.remove("Content-Encoding");
+        responseHeaders.remove("content-encoding");
+        responseHeaders.remove("Content-Length");
+        responseHeaders.remove("content-length");
+        responseHeaders.put("Content-Length", String.valueOf(bytes.length));
+
         return new WebResourceResponse("application/vnd.apple.mpegurl", "UTF-8", responseCode, "OK", responseHeaders, new ByteArrayInputStream(bytes));
     }
 
@@ -169,6 +182,10 @@ public class AnimeStreamWebViewClient extends BridgeWebViewClient {
             return relativeOrAbsolute;
         }
         try {
+            int lastSlash = baseUrl.lastIndexOf('/');
+            if (lastSlash != -1) {
+                return baseUrl.substring(0, lastSlash + 1) + relativeOrAbsolute;
+            }
             URL base = new URL(baseUrl);
             return new URL(base, relativeOrAbsolute).toString();
         } catch (Exception e) {
