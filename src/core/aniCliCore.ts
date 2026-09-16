@@ -1,4 +1,5 @@
 // aniCliCore.ts - Port of ani-cli scraping & deobfuscation logic
+import { Capacitor } from '@capacitor/core';
 
 export interface AnimeItem {
   id: string;          // e.g. "solo-leveling-season-2-arise-from-the-shadow-19413"
@@ -52,10 +53,23 @@ export function deobfuscateBlob(base64Blob: string): string {
   }
 }
 
-// Helper to resolve API URLs (uses Vite proxy in dev, direct / capacitor http in prod)
+// Helper to resolve API URLs: the dev server proxies "/api-hianime" to
+// https://hianime.at (see vite.config.ts), which only exists while running
+// `npm run dev`. The built APK has no such proxy, so on a native device we
+// must hit the real host directly - CapacitorHttp (enabled in
+// capacitor.config.ts) routes fetch() through native networking, which
+// isn't subject to the browser's CORS / forbidden-header restrictions.
+const REMOTE_HOST = "https://hianime.at";
+
 export function getApiBase(): string {
-  return "/api-hianime";
+  return Capacitor.isNativePlatform() ? REMOTE_HOST : "/api-hianime";
 }
+
+// Headers the dev proxy injects automatically; native requests need them set explicitly.
+const UPSTREAM_HEADERS: Record<string, string> = {
+  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+  'Referer': `${REMOTE_HOST}/`
+};
 
 // Search anime
 export async function searchAnime(query: string): Promise<AnimeItem[]> {
@@ -64,6 +78,7 @@ export async function searchAnime(query: string): Promise<AnimeItem[]> {
     const res = await fetch(endpoint, {
       headers: {
         'Accept': 'text/html,application/xhtml+xml',
+        ...UPSTREAM_HEADERS
       }
     });
 
@@ -127,7 +142,7 @@ export async function getEpisodes(animeId: string): Promise<EpisodeItem[]> {
   try {
     const numericId = animeId.includes("-") ? animeId.split("-").pop() : animeId;
     const endpoint = `${getApiBase()}/api/theme/episode/list/${numericId}`;
-    const res = await fetch(endpoint);
+    const res = await fetch(endpoint, { headers: UPSTREAM_HEADERS });
     
     if (!res.ok) {
       throw new Error(`Episodes fetch failed with HTTP ${res.status}`);
@@ -163,35 +178,40 @@ export async function getEpisodeStream(
   episodeNumber: string = '1',
   mode: 'sub' | 'dub' = 'sub'
 ): Promise<StreamSource> {
-  // 1. First priority: Invoke real ani-cli shell core through the bridge
-  try {
-    const cleanQuery = animeTitleOrId.replace(/-[0-9]+$/, '').replace(/-/g, ' ');
-    const bridgeUrl = `/api/ani-cli/stream?query=${encodeURIComponent(cleanQuery)}&ep=${encodeURIComponent(episodeNumber)}&mode=${mode}`;
-    console.log("[aniCliCore] Requesting stream from ani-cli:", bridgeUrl);
-    const res = await fetch(bridgeUrl);
-    if (res.ok) {
-      const data = await res.json();
-      if (data.streamUrl) {
-        console.log("[aniCliCore] Received stream from ani-cli successfully:", data);
-        return {
-          streamUrl: data.streamUrl,
-          quality: data.qualities?.[0]?.quality || "1080p",
-          subtitles: data.subtitles || [],
-          referer: data.referer || 'https://zokoanime.video/',
-          masterUrl: data.streamUrl,
-          qualities: data.qualities || [{ quality: "1080p", url: data.streamUrl }]
-        };
+  // 1. First priority: Invoke real ani-cli shell core through the dev-only bridge.
+  // That bridge shells out to a local ani-cli script and only exists while
+  // running `npm run dev` on a machine with it installed - it can never work
+  // inside the built native app, so skip the attempt there entirely.
+  if (!Capacitor.isNativePlatform()) {
+    try {
+      const cleanQuery = animeTitleOrId.replace(/-[0-9]+$/, '').replace(/-/g, ' ');
+      const bridgeUrl = `/api/ani-cli/stream?query=${encodeURIComponent(cleanQuery)}&ep=${encodeURIComponent(episodeNumber)}&mode=${mode}`;
+      console.log("[aniCliCore] Requesting stream from ani-cli:", bridgeUrl);
+      const res = await fetch(bridgeUrl);
+      if (res.ok) {
+        const data = await res.json();
+        if (data.streamUrl) {
+          console.log("[aniCliCore] Received stream from ani-cli successfully:", data);
+          return {
+            streamUrl: data.streamUrl,
+            quality: data.qualities?.[0]?.quality || "1080p",
+            subtitles: data.subtitles || [],
+            referer: data.referer || 'https://zokoanime.video/',
+            masterUrl: data.streamUrl,
+            qualities: data.qualities || [{ quality: "1080p", url: data.streamUrl }]
+          };
+        }
       }
+    } catch (err) {
+      console.warn("[aniCliCore] ani-cli bridge call failed, falling back to direct scraper:", err);
     }
-  } catch (err) {
-    console.warn("[aniCliCore] ani-cli bridge call failed, falling back to direct scraper:", err);
   }
 
   // 2. Secondary fallback: direct scrape
   try {
     const numericId = animeTitleOrId.includes("-") ? animeTitleOrId.split("-").pop() : animeTitleOrId;
     const endpoint = `${getApiBase()}/api/theme/episode/servers?episodeId=${numericId}`;
-    const res = await fetch(endpoint);
+    const res = await fetch(endpoint, { headers: UPSTREAM_HEADERS });
     const data = await res.json();
     
     if (data.html) {
@@ -203,7 +223,7 @@ export async function getEpisodeStream(
       if (hash) {
         const embedUrl = atob(hash);
         const refr = embedUrl.replace(/^(https?:\/\/[^/]*).*/, '$1/');
-        const embedRes = await fetch(embedUrl);
+        const embedRes = await fetch(embedUrl, { headers: UPSTREAM_HEADERS });
         const embedHtml = await embedRes.text();
         const pMatch = embedHtml.match(/window\.__P\s*=\s*"([^"]+)"/);
 
