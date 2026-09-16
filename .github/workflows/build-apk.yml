@@ -53,35 +53,34 @@ jobs:
         working-directory: ./android
         run: ./gradlew assembleDebug --stacktrace
 
-      - name: Rename APK to AniStream-v1.0.apk
+      - name: Package APK for Release
         run: |
           mkdir -p build-output
-          cp android/app/build/outputs/apk/debug/app-debug.apk build-output/AniStream-v1.0.apk
+          cp android/app/build/outputs/apk/debug/app-debug.apk build-output/AniStream-v1.0.1.apk
 
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: AniStream-v1.0-APK
-          path: build-output/AniStream-v1.0.apk
+          name: AniStream-v1.0.1-APK
+          path: build-output/AniStream-v1.0.1.apk
           retention-days: 30
 
       - name: Create GitHub Release
         if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
         uses: softprops/action-gh-release@v2
         with:
-          files: build-output/AniStream-v1.0.apk
-          tag_name: v1.0
-          name: AniStream v1.0 Release
+          files: build-output/AniStream-v1.0.1.apk
+          tag_name: ${{ github.ref_name || 'v1.0.1' }}
+          name: AniStream ${{ github.ref_name || 'v1.0.1' }} Release
           body: |
-            ## AniStream v1.0 - Android Anime Streaming App (Powered by ani-cli)
+            ## AniStream v1.0.1 - Android Anime Streaming App (Powered by ani-cli)
             
-            ### 🚀 Features in v1.0:
-            - **`ani-cli` Core Engine**: Direct scraping, ZokoAnime server decryption, and `otaku-embed-v1` XOR deobfuscation.
-            - **Cinematic Mobile Player**: Hls.js engine, 1080p/720p/480p quality selection, English subtitles.
-            - **Mobile Gestures**: Double-tap left (-10s) and right (+10s) seeking, floating Skip Intro (+85s) button.
-            - **Library & History**: Auto-saved watch progress, continue watching bar, and anime bookmarks.
+            ### 🚀 What's New in v1.0.1:
+            - **Fixed Video Playback in APK**: Integrated native Android HLS stream proxy with custom Referer & full CORS headers.
+            - **Fixed Episode Server Resolution**: Accurately resolves episode data-ids for multi-episode anime series.
+            - **Reliable Subtitles & Multi-Quality Streams**: Proxied WebVTT subtitles and multi-resolution (1080p, 720p, 480p) streams.
             
             ### 📦 Download:
-            Download **`AniStream-v1.0.apk`** below and install on any Android device running Android 8.0 or later!
+            Download **`AniStream-v1.0.1.apk`** below and install on any Android device running Android 8.0 or later!
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
