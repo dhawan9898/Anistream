@@ -1,4 +1,11 @@
-import { registerPlugin } from '@capacitor/core';
+import { registerPlugin, type PluginListenerHandle } from '@capacitor/core';
+import type { SubtitleTrack } from '../core/aniCliCore';
+
+export interface ModeSwitchRequestedEvent {
+  title: string;
+  episode: string;
+  mode: 'sub' | 'dub';
+}
 
 export interface ExoPlayerPluginInterface {
   play(options: {
@@ -6,7 +13,14 @@ export interface ExoPlayerPluginInterface {
     title?: string;
     episode?: string;
     referer?: string;
+    mode?: 'sub' | 'dub';
+    subtitles?: SubtitleTrack[];
   }): Promise<{ success: boolean }>;
+
+  addListener(
+    eventName: 'modeSwitchRequested',
+    listenerFunc: (event: ModeSwitchRequestedEvent) => void
+  ): Promise<PluginListenerHandle>;
 }
 
 export const ExoPlayerPlugin = registerPlugin<ExoPlayerPluginInterface>('ExoPlayerPlugin');

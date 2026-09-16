@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Play, Flame, Clock, ChevronRight, Bookmark } from 'lucide-react';
-import { FEATURED_ANIME, type AnimeItem } from '../core/aniCliCore';
+import { FEATURED_ANIME, getTrendingAnime, type AnimeItem } from '../core/aniCliCore';
 import { getWatchHistory, type WatchHistoryItem } from '../services/historyService';
 
 interface HomeScreenProps {
@@ -16,20 +16,28 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
 }) => {
   const [featuredIndex, setFeaturedIndex] = useState<number>(0);
   const [history, setHistory] = useState<WatchHistoryItem[]>([]);
+  const [trending, setTrending] = useState<AnimeItem[]>(FEATURED_ANIME);
+
+  useEffect(() => {
+    getTrendingAnime().then(list => {
+      setTrending(list);
+      setFeaturedIndex(0);
+    });
+  }, []);
 
   // Auto-cycle hero banner every 6 seconds
   useEffect(() => {
     const timer = setInterval(() => {
-      setFeaturedIndex(prev => (prev + 1) % FEATURED_ANIME.length);
+      setFeaturedIndex(prev => (prev + 1) % (Math.min(trending.length, 8) || 1));
     }, 6000);
     return () => clearInterval(timer);
-  }, []);
+  }, [trending]);
 
   useEffect(() => {
     getWatchHistory().then(setHistory);
   }, []);
 
-  const heroAnime = FEATURED_ANIME[featuredIndex] || FEATURED_ANIME[0];
+  const heroAnime = trending[featuredIndex] || trending[0] || FEATURED_ANIME[0];
 
   return (
     <div style={{ flex: 1, overflowY: 'auto', paddingBottom: '90px', position: 'relative' }}>
@@ -142,19 +150,21 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
             {heroAnime.title}
           </h1>
 
-          <p style={{
-            fontSize: '13px',
-            color: '#cbd5e1',
-            lineHeight: '1.4',
-            display: '-webkit-box',
-            WebkitLineClamp: 2,
-            WebkitBoxOrient: 'vertical',
-            overflow: 'hidden',
-            marginBottom: '16px',
-            maxWidth: '90%'
-          }}>
-            {heroAnime.description}
-          </p>
+          {heroAnime.description && (
+            <p style={{
+              fontSize: '13px',
+              color: '#cbd5e1',
+              lineHeight: '1.4',
+              display: '-webkit-box',
+              WebkitLineClamp: 2,
+              WebkitBoxOrient: 'vertical',
+              overflow: 'hidden',
+              marginBottom: '16px',
+              maxWidth: '90%'
+            }}>
+              {heroAnime.description}
+            </p>
+          )}
 
           <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
             <button
@@ -310,7 +320,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
           gridTemplateColumns: 'repeat(2, 1fr)',
           gap: '14px'
         }}>
-          {FEATURED_ANIME.map((anime) => (
+          {trending.map((anime) => (
             <div
               key={anime.id}
               onClick={() => onSelectAnime(anime)}

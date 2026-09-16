@@ -1,5 +1,5 @@
 // App.tsx - Main Android Application Controller for AniStream
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Home as HomeIcon, Search as SearchIcon, Library, Loader2 } from 'lucide-react';
 import { Capacitor } from '@capacitor/core';
 import { ExoPlayerPlugin } from './plugins/exoPlayerPlugin';
@@ -32,6 +32,31 @@ export const App: React.FC = () => {
   const [streamLoading, setStreamLoading] = useState<boolean>(false);
   const [initialSeekTime, setInitialSeekTime] = useState<number>(0);
 
+  // Kept in refs so the native mode-switch listener (subscribed once) always
+  // sees the currently playing anime/episode without re-subscribing.
+  const playingAnimeRef = useRef<AnimeItem | null>(null);
+  const playingEpisodeRef = useRef<EpisodeItem | null>(null);
+  playingAnimeRef.current = playingAnime;
+  playingEpisodeRef.current = playingEpisode;
+
+  // The native ExoPlayer's Sub/Dub button can't re-resolve a stream itself -
+  // it notifies us here so we can call getEpisodeStream() again for the
+  // other mode and relaunch the player.
+  useEffect(() => {
+    if (!Capacitor.isNativePlatform()) return;
+    const handle = ExoPlayerPlugin.addListener('modeSwitchRequested', ({ mode }) => {
+      const anime = playingAnimeRef.current;
+      const episode = playingEpisodeRef.current;
+      if (anime && episode) {
+        handlePlayEpisode(anime, episode, mode, 0);
+      }
+    });
+    return () => {
+      handle.then(h => h.remove());
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // Play an episode
   const handlePlayEpisode = async (
     anime: AnimeItem, 
@@ -56,7 +81,9 @@ export const App: React.FC = () => {
             url: source.streamUrl,
             title: anime.title,
             episode: episode.number,
-            referer: source.referer
+            referer: source.referer,
+            mode,
+            subtitles: source.subtitles
           });
         } catch (e) {
           console.warn("[App] ExoPlayer plugin call failed, falling back to Web player:", e);
@@ -113,30 +140,36 @@ export const App: React.FC = () => {
       overflow: 'hidden',
       position: 'relative'
     }}>
-      {/* Active Screen Rendering */}
-      {selectedAnime ? (
-        <AnimeDetailScreen
-          anime={selectedAnime}
-          onBack={() => setSelectedAnime(null)}
-          onPlayEpisode={(ep, mode) => handlePlayEpisode(selectedAnime, ep, mode)}
-        />
-      ) : currentTab === 'home' ? (
-        <HomeScreen
-          onSelectAnime={(anime) => setSelectedAnime(anime)}
-          onResumeEpisode={handleResumeEpisode}
-          onOpenSearch={() => setCurrentTab('search')}
-        />
-      ) : currentTab === 'search' ? (
-        <SearchScreen
-          onBack={() => setCurrentTab('home')}
-          onSelectAnime={(anime) => setSelectedAnime(anime)}
-        />
-      ) : (
-        <HistoryScreen
-          onResumeEpisode={handleResumeEpisode}
-          onSelectAnime={(anime) => setSelectedAnime(anime)}
-        />
-      )}
+      {/* Active Screen Rendering - keyed + faded so switching screens doesn't hard-cut */}
+      <div
+        key={selectedAnime ? `detail-${selectedAnime.id}` : currentTab}
+        className="animate-fade-in"
+        style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}
+      >
+        {selectedAnime ? (
+          <AnimeDetailScreen
+            anime={selectedAnime}
+            onBack={() => setSelectedAnime(null)}
+            onPlayEpisode={(ep, mode) => handlePlayEpisode(selectedAnime, ep, mode)}
+          />
+        ) : currentTab === 'home' ? (
+          <HomeScreen
+            onSelectAnime={(anime) => setSelectedAnime(anime)}
+            onResumeEpisode={handleResumeEpisode}
+            onOpenSearch={() => setCurrentTab('search')}
+          />
+        ) : currentTab === 'search' ? (
+          <SearchScreen
+            onBack={() => setCurrentTab('home')}
+            onSelectAnime={(anime) => setSelectedAnime(anime)}
+          />
+        ) : (
+          <HistoryScreen
+            onResumeEpisode={handleResumeEpisode}
+            onSelectAnime={(anime) => setSelectedAnime(anime)}
+          />
+        )}
+      </div>
 
       {/* Stream Loading Overlay */}
       {streamLoading && (

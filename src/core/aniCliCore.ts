@@ -96,6 +96,29 @@ export async function searchAnime(query: string): Promise<AnimeItem[]> {
   }
 }
 
+// Trending/homepage anime (same card markup as search results)
+export async function getTrendingAnime(): Promise<AnimeItem[]> {
+  try {
+    const res = await fetch(`${getApiBase()}/`, {
+      headers: {
+        'Accept': 'text/html,application/xhtml+xml',
+        ...UPSTREAM_HEADERS
+      }
+    });
+
+    if (!res.ok) {
+      throw new Error(`Home fetch failed with HTTP ${res.status}`);
+    }
+
+    const html = await res.text();
+    const results = parseSearchResults(html);
+    return results.length > 0 ? results : FEATURED_ANIME;
+  } catch (err) {
+    console.warn("Live homepage fetch failed, using curated fallback:", err);
+    return FEATURED_ANIME;
+  }
+}
+
 // Parse HTML search results matching ani-cli regex patterns
 export function parseSearchResults(html: string): AnimeItem[] {
   const parser = new DOMParser();
