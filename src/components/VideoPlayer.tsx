@@ -1,19 +1,16 @@
 // VideoPlayer.tsx - Premium Mobile Video Player with HLS, Gestures, & Ani-cli controls
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import Hls from 'hls.js';
-import { Capacitor } from '@capacitor/core';
-import { 
+import {
   Play, Pause, RotateCcw, RotateCw, ArrowLeft, Settings, 
   Subtitles, Maximize, Minimize, SkipForward, FastForward, Volume2, VolumeX 
 } from 'lucide-react';
 import type { StreamSource, EpisodeItem } from '../core/aniCliCore';
 
-const resolvePlayableUrl = (url?: string, referer?: string): string => {
+const resolvePlayableUrl = (url?: string, _referer?: string): string => {
   if (!url) return '';
-  if (!Capacitor.isNativePlatform()) return url;
-  if (url.includes('/_anime_proxy_')) return url;
-  const ref = referer || 'https://zokoanime.video/';
-  return `${window.location.origin}/_anime_proxy_?url=${encodeURIComponent(url)}&ref=${encodeURIComponent(ref)}`;
+  // Return direct URL directly so hls.js can load it without requiring a local proxy server
+  return url;
 };
 
 interface VideoPlayerProps {
