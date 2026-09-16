@@ -15,6 +15,7 @@ import android.view.GestureDetector;
 import android.view.MotionEvent;
 import android.view.View;
 import android.view.WindowManager;
+import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.SeekBar;
 import android.widget.TextView;
@@ -56,8 +57,8 @@ public class ExoPlayerActivity extends AppCompatActivity {
     private View controlsRoot;
     private View scrimTop;
     private View scrimBottom;
-    private TextView btnPlayPause;
-    private TextView btnBack;
+    private ImageView btnPlayPause;
+    private ImageView btnBack;
     private TextView btnRewind;
     private TextView btnForward;
     private TextView btnAudioSubs;
@@ -189,8 +190,8 @@ public class ExoPlayerActivity extends AppCompatActivity {
     private void styleGlassChrome() {
         pill(btnBack, 20f, 0.35f);
         pill(btnAudioSubs, 20f, 0.35f);
-        pill(btnRewind, 26f, 0.28f);
-        pill(btnForward, 26f, 0.28f);
+        pill(btnRewind, 29f, 0.32f);
+        pill(btnForward, 29f, 0.32f);
         pill(btnSkipIntro, 24f, 0.55f);
         pill(gestureIndicator, 24f, 0.55f);
         pill(nextEpisodeCard, 14f, 0.6f);
@@ -199,7 +200,8 @@ public class ExoPlayerActivity extends AppCompatActivity {
 
         GradientDrawable playBg = new GradientDrawable();
         playBg.setShape(GradientDrawable.OVAL);
-        playBg.setColor(Color.parseColor("#B3312E81"));
+        playBg.setColor(Color.parseColor("#D9312E81"));
+        playBg.setStroke(Math.round(1.5f * getResources().getDisplayMetrics().density), Color.argb(70, 255, 255, 255));
         btnPlayPause.setBackground(playBg);
 
         GradientDrawable nextBg = new GradientDrawable();
@@ -390,7 +392,7 @@ public class ExoPlayerActivity extends AppCompatActivity {
         player.addListener(new Player.Listener() {
             @Override
             public void onIsPlayingChanged(boolean isPlaying) {
-                btnPlayPause.setText(isPlaying ? "⏸" : "▶");
+                btnPlayPause.setImageResource(isPlaying ? R.drawable.ic_pause : R.drawable.ic_play);
                 if (isPlaying) scheduleAutoHide(); else handler.removeCallbacks(hideControlsRunnable);
             }
 
@@ -443,6 +445,7 @@ public class ExoPlayerActivity extends AppCompatActivity {
         long position = Math.max(player.getCurrentPosition(), 0);
         if (duration > 0) {
             seekBar.setProgress((int) ((position * 1000) / duration));
+            seekBar.setSecondaryProgress(player.getBufferedPercentage() * 10);
             textRemainingTime.setText("-" + formatTime(Math.max(duration - position, 0)));
         }
         textCurrentTime.setText(formatTime(position));

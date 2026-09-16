@@ -109,14 +109,13 @@
             android:paddingTop="14dp"
             android:paddingBottom="14dp">
 
-            <TextView
+            <ImageView
                 android:id="@+id/btn_back"
                 android:layout_width="40dp"
                 android:layout_height="40dp"
-                android:gravity="center"
-                android:text="&#8592;"
-                android:textColor="#ffffff"
-                android:textSize="20sp" />
+                android:padding="9dp"
+                android:src="@drawable/ic_back"
+                android:contentDescription="Back" />
 
             <LinearLayout
                 android:layout_width="0dp"
@@ -164,32 +163,33 @@
 
             <TextView
                 android:id="@+id/btn_rewind"
-                android:layout_width="52dp"
-                android:layout_height="52dp"
-                android:layout_marginEnd="28dp"
+                android:layout_width="58dp"
+                android:layout_height="58dp"
+                android:layout_marginEnd="30dp"
                 android:gravity="center"
-                android:text="&#8630;10"
+                android:text="&#8634;10"
                 android:textColor="#ffffff"
-                android:textSize="14sp" />
+                android:textStyle="bold"
+                android:textSize="15sp" />
 
-            <TextView
+            <ImageView
                 android:id="@+id/btn_play_pause"
-                android:layout_width="72dp"
-                android:layout_height="72dp"
-                android:gravity="center"
-                android:text="&#9654;"
-                android:textColor="#ffffff"
-                android:textSize="28sp" />
+                android:layout_width="76dp"
+                android:layout_height="76dp"
+                android:padding="24dp"
+                android:src="@drawable/ic_play"
+                android:contentDescription="Play/Pause" />
 
             <TextView
                 android:id="@+id/btn_forward"
-                android:layout_width="52dp"
-                android:layout_height="52dp"
-                android:layout_marginStart="28dp"
+                android:layout_width="58dp"
+                android:layout_height="58dp"
+                android:layout_marginStart="30dp"
                 android:gravity="center"
-                android:text="10&#8631;"
+                android:text="10&#8635;"
                 android:textColor="#ffffff"
-                android:textSize="14sp" />
+                android:textStyle="bold"
+                android:textSize="15sp" />
         </LinearLayout>
 
         <!-- Skip intro pill -->
@@ -227,6 +227,7 @@
                 android:layout_height="wrap_content"
                 android:max="1000"
                 android:progressTint="#6366f1"
+                android:secondaryProgressTint="#66FFFFFF"
                 android:thumbTint="#6366f1" />
 
             <LinearLayout

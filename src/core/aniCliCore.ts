@@ -133,31 +133,40 @@ export function parseSearchResults(html: string): AnimeItem[] {
 
   const filmDetails = doc.querySelectorAll(".film-detail");
   const results: AnimeItem[] = [];
+  const seenIds = new Set<string>();
 
   filmDetails.forEach((el) => {
     const titleEl = el.querySelector(".film-name a") as HTMLAnchorElement | null;
     const parentCard = el.closest(".flw-item");
     const posterEl = parentCard?.querySelector(".film-poster img") as HTMLImageElement | null;
-    
-    if (titleEl) {
-      const href = titleEl.getAttribute("href") || "";
-      const slug = href.split("/").filter(Boolean).pop() || "";
-      const title = titleEl.getAttribute("title") || titleEl.textContent?.trim() || "Unknown Title";
-      const poster = posterEl?.getAttribute("data-src") || posterEl?.getAttribute("src") || "";
 
-      const subBadge = el.querySelector(".tick-sub")?.textContent?.trim();
-      const dubBadge = el.querySelector(".tick-dub")?.textContent?.trim();
-      const epBadge = el.querySelector(".tick-eps")?.textContent?.trim();
+    if (!titleEl) return;
 
-      results.push({
-        id: slug,
-        title,
-        poster: poster || "https://images.unsplash.com/photo-1578632767115-351597cf2477?w=600&auto=format&fit=crop",
-        type: "TV",
-        subCount: subBadge ? parseInt(subBadge, 10) : (epBadge ? parseInt(epBadge, 10) : undefined),
-        dubCount: dubBadge ? parseInt(dubBadge, 10) : undefined
-      });
-    }
+    const href = titleEl.getAttribute("href") || "";
+    const slug = href.split("/").filter(Boolean).pop() || "";
+    const title = titleEl.getAttribute("title") || titleEl.textContent?.trim() || "";
+    const poster = posterEl?.getAttribute("data-src") || posterEl?.getAttribute("src") || "";
+
+    // Some pages mix in non-anime cards (ad slots, "load more" tiles, slider
+    // clones used for seamless looping) alongside real ones with the same
+    // .film-detail markup - drop anything missing the essentials or that
+    // isn't a real, distinct entry rather than surfacing it as junk.
+    const isValid = slug.length > 0 && title.length > 1 && (poster.startsWith("http") || poster.startsWith("//"));
+    if (!isValid || seenIds.has(slug)) return;
+    seenIds.add(slug);
+
+    const subBadge = el.querySelector(".tick-sub")?.textContent?.trim();
+    const dubBadge = el.querySelector(".tick-dub")?.textContent?.trim();
+    const epBadge = el.querySelector(".tick-eps")?.textContent?.trim();
+
+    results.push({
+      id: slug,
+      title,
+      poster,
+      type: "TV",
+      subCount: subBadge ? parseInt(subBadge, 10) : (epBadge ? parseInt(epBadge, 10) : undefined),
+      dubCount: dubBadge ? parseInt(dubBadge, 10) : undefined
+    });
   });
 
   return results;

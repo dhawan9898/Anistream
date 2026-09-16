@@ -1,5 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
 <paths xmlns:android="http://schemas.android.com/apk/res/android">
-    <external-path name="my_images" path="." />
+    <!-- Scoped to this app's own sandboxed storage, not the whole external
+         storage root - nothing currently calls FileProvider.getUriForFile(),
+         but a broad "." path would grant access to arbitrary shared-storage
+         files to whoever holds the resulting content:// URI if that ever
+         changes. -->
+    <external-files-path name="my_images" path="." />
     <cache-path name="my_cache_images" path="." />
 </paths>
