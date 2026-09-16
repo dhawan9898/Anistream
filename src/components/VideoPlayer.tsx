@@ -95,6 +95,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
         }
       });
     } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+      // Native HLS support (Safari/iOS WebView) - Android's Chromium WebView has none, so hls.js above is the primary path there.
       video.src = streamUrl;
       video.addEventListener('loadedmetadata', () => {
         if (initialTime > 0) {

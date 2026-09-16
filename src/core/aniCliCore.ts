@@ -73,6 +73,8 @@ const UPSTREAM_HEADERS: Record<string, string> = {
 
 // Search anime
 export async function searchAnime(query: string): Promise<AnimeItem[]> {
+  if (!query.trim()) return FEATURED_ANIME;
+
   try {
     const endpoint = `${getApiBase()}/search?keyword=${encodeURIComponent(query)}`;
     const res = await fetch(endpoint, {
