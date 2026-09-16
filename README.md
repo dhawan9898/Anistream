@@ -14,11 +14,11 @@
 You can download the pre-compiled **AniStream v1.0 APK** directly from GitHub using the options below:
 
 ### Option 1: GitHub Releases (Direct Download)
-1. Navigate to the **[GitHub Releases Page](https://github.com/pystardust/ani-cli/releases)** of the repository.
+1. Navigate to the **[GitHub Releases Page](https://github.com/dhawan9898/Anistream/releases)** of the repository.
 2. Under the latest release (**v1.0**), locate the **Assets** section.
 3. Click on **`AniStream-v1.0.apk`** to download the APK file directly to your device.
-* **Direct APK Link**: [**AniStream-v1.0.apk**](https://github.com/pystardust/ani-cli/releases/download/v1.0/AniStream-v1.0.apk)
-* **Release Tag**: [GitHub Releases v1.0](https://github.com/pystardust/ani-cli/releases/tag/v1.0)
+* **Direct APK Link**: [**AniStream-v1.0.apk**](https://github.com/dhawan9898/Anistream/releases/download/v1.0/AniStream-v1.0.apk)
+* **Release Tag**: [GitHub Releases v1.0](https://github.com/dhawan9898/Anistream/releases/tag/v1.0)
 
 > [!TIP]
 > **Installing on Android**:
