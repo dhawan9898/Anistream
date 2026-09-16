@@ -1,0 +1,85 @@
+name: Build AniStream v1.0 APK
+
+on:
+  push:
+    branches: [ main, master ]
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build Android APK
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Source Code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+          cache-dependency-path: app/package-lock.json
+
+      - name: Setup Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: 17
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Dependencies
+        working-directory: ./app
+        run: npm ci
+
+      - name: Build Web Production Bundle
+        working-directory: ./app
+        run: npm run build
+
+      - name: Sync Capacitor Android Project
+        working-directory: ./app
+        run: npx cap sync android
+
+      - name: Make Gradlew Executable
+        run: chmod +x app/android/gradlew
+
+      - name: Build Android Debug APK
+        working-directory: ./app/android
+        run: ./gradlew assembleDebug --stacktrace
+
+      - name: Rename APK to AniStream-v1.0.apk
+        run: |
+          mkdir -p build-output
+          cp app/android/app/build/outputs/apk/debug/app-debug.apk build-output/AniStream-v1.0.apk
+
+      - name: Upload APK Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: AniStream-v1.0-APK
+          path: build-output/AniStream-v1.0.apk
+          retention-days: 30
+
+      - name: Create GitHub Release
+        if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: build-output/AniStream-v1.0.apk
+          tag_name: v1.0
+          name: AniStream v1.0 Release
+          body: |
+            ## AniStream v1.0 - Android Anime Streaming App (Powered by ani-cli)
+            
+            ### 🚀 Features in v1.0:
+            - **`ani-cli` Core Engine**: Direct scraping, ZokoAnime server decryption, and `otaku-embed-v1` XOR deobfuscation.
+            - **Cinematic Mobile Player**: Hls.js engine, 1080p/720p/480p quality selection, English subtitles.
+            - **Mobile Gestures**: Double-tap left (-10s) and right (+10s) seeking, floating Skip Intro (+85s) button.
+            - **Library & History**: Auto-saved watch progress, continue watching bar, and anime bookmarks.
+            
+            ### 📦 Download:
+            Download **`AniStream-v1.0.apk`** below and install on any Android device running Android 8.0 or later!
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

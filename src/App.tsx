@@ -1,0 +1,260 @@
+// App.tsx - Main Android Application Controller for AniStream
+import React, { useState } from 'react';
+import { Home as HomeIcon, Search as SearchIcon, Library, Loader2 } from 'lucide-react';
+import { HomeScreen } from './pages/HomeScreen';
+import { SearchScreen } from './pages/SearchScreen';
+import { AnimeDetailScreen } from './pages/AnimeDetailScreen';
+import { HistoryScreen } from './pages/HistoryScreen';
+import { VideoPlayer } from './components/VideoPlayer';
+import { 
+  getEpisodeStream, 
+  type AnimeItem, 
+  type EpisodeItem, 
+  type StreamSource,
+  FEATURED_ANIME
+} from './core/aniCliCore';
+import { saveWatchProgress, type WatchHistoryItem } from './services/historyService';
+
+type Tab = 'home' | 'search' | 'library';
+
+export const App: React.FC = () => {
+  const [currentTab, setCurrentTab] = useState<Tab>('home');
+  const [selectedAnime, setSelectedAnime] = useState<AnimeItem | null>(null);
+  
+  // Active player state
+  const [isPlaying, setIsPlaying] = useState<boolean>(false);
+  const [playingAnime, setPlayingAnime] = useState<AnimeItem | null>(null);
+  const [playingEpisode, setPlayingEpisode] = useState<EpisodeItem | null>(null);
+  const [playingMode, setPlayingMode] = useState<'sub' | 'dub'>('sub');
+  const [streamSource, setStreamSource] = useState<StreamSource | null>(null);
+  const [streamLoading, setStreamLoading] = useState<boolean>(false);
+  const [initialSeekTime, setInitialSeekTime] = useState<number>(0);
+
+  // Play an episode
+  const handlePlayEpisode = async (
+    anime: AnimeItem, 
+    episode: EpisodeItem, 
+    mode: 'sub' | 'dub' = 'sub',
+    startTime = 0
+  ) => {
+    setStreamLoading(true);
+    setPlayingAnime(anime);
+    setPlayingEpisode(episode);
+    setPlayingMode(mode);
+    setInitialSeekTime(startTime);
+
+    try {
+      const source = await getEpisodeStream(anime.title, episode.number, mode);
+      setStreamSource(source);
+      setIsPlaying(true);
+    } catch (err) {
+      console.error("Failed to load stream:", err);
+      alert("Could not load stream from ani-cli. Please try another episode or server.");
+    } finally {
+      setStreamLoading(false);
+    }
+  };
+
+  // Resume from continue watching
+  const handleResumeEpisode = (historyItem: WatchHistoryItem) => {
+    const matchedAnime = FEATURED_ANIME.find(a => a.id === historyItem.animeId) || {
+      id: historyItem.animeId,
+      title: historyItem.animeTitle,
+      poster: historyItem.poster,
+      type: 'TV'
+    };
+
+    const resumeEpisode: EpisodeItem = {
+      id: historyItem.episodeId,
+      number: historyItem.episodeNumber,
+      title: `Episode ${historyItem.episodeNumber}`
+    };
+
+    handlePlayEpisode(matchedAnime, resumeEpisode, historyItem.mode, historyItem.currentTime);
+  };
+
+  // Next episode handler
+  const handleNextEpisode = () => {
+    if (!playingEpisode || !playingAnime) return;
+    const nextEpNum = String(parseInt(playingEpisode.number, 10) + 1);
+    const nextEp: EpisodeItem = {
+      id: `${playingAnime.id}-ep-${nextEpNum}`,
+      number: nextEpNum,
+      title: `Episode ${nextEpNum}`
+    };
+    handlePlayEpisode(playingAnime, nextEp, playingMode, 0);
+  };
+
+  return (
+    <div style={{
+      width: '100vw',
+      height: '100vh',
+      display: 'flex',
+      flexDirection: 'column',
+      backgroundColor: 'var(--bg-main)',
+      overflow: 'hidden',
+      position: 'relative'
+    }}>
+      {/* Active Screen Rendering */}
+      {selectedAnime ? (
+        <AnimeDetailScreen
+          anime={selectedAnime}
+          onBack={() => setSelectedAnime(null)}
+          onPlayEpisode={(ep, mode) => handlePlayEpisode(selectedAnime, ep, mode)}
+        />
+      ) : currentTab === 'home' ? (
+        <HomeScreen
+          onSelectAnime={(anime) => setSelectedAnime(anime)}
+          onResumeEpisode={handleResumeEpisode}
+          onOpenSearch={() => setCurrentTab('search')}
+        />
+      ) : currentTab === 'search' ? (
+        <SearchScreen
+          onBack={() => setCurrentTab('home')}
+          onSelectAnime={(anime) => setSelectedAnime(anime)}
+        />
+      ) : (
+        <HistoryScreen
+          onResumeEpisode={handleResumeEpisode}
+          onSelectAnime={(anime) => setSelectedAnime(anime)}
+        />
+      )}
+
+      {/* Stream Loading Overlay */}
+      {streamLoading && (
+        <div style={{
+          position: 'fixed',
+          inset: 0,
+          backgroundColor: 'rgba(8,9,14,0.85)',
+          backdropFilter: 'blur(12px)',
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'center',
+          justifyContent: 'center',
+          gap: '16px',
+          zIndex: 10000
+        }}>
+          <div style={{
+            width: '60px',
+            height: '60px',
+            borderRadius: '50%',
+            background: 'var(--accent-gradient)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            boxShadow: 'var(--shadow-glow)'
+          }}>
+            <Loader2 size={32} color="#fff" className="animate-spin" />
+          </div>
+          <div style={{ textAlign: 'center' }}>
+            <h3 style={{ fontSize: '16px', fontWeight: 700, color: '#f8fafc' }}>
+              Resolving ani-cli Stream...
+            </h3>
+            <p style={{ fontSize: '13px', color: '#94a3b8', marginTop: '4px' }}>
+              Deobfuscating ZokoAnime server payload
+            </p>
+          </div>
+        </div>
+      )}
+
+      {/* Fullscreen Cinema Player */}
+      {isPlaying && streamSource && playingAnime && playingEpisode && (
+        <VideoPlayer
+          streamSource={streamSource}
+          animeTitle={playingAnime.title}
+          episode={playingEpisode}
+          mode={playingMode}
+          initialTime={initialSeekTime}
+          onBack={() => setIsPlaying(false)}
+          onNextEpisode={handleNextEpisode}
+          hasNextEpisode={true}
+          onProgressUpdate={(time, dur) => {
+            saveWatchProgress({
+              animeId: playingAnime.id,
+              animeTitle: playingAnime.title,
+              poster: playingAnime.poster,
+              episodeId: playingEpisode.id,
+              episodeNumber: playingEpisode.number,
+              currentTime: time,
+              duration: dur,
+              updatedAt: Date.now(),
+              mode: playingMode
+            });
+          }}
+        />
+      )}
+
+      {/* Bottom Mobile Glass Navigation Bar (hidden during player and detail view) */}
+      {!selectedAnime && !isPlaying && (
+        <div 
+          className="glass-nav"
+          style={{
+            position: 'fixed',
+            bottom: 0,
+            left: 0,
+            right: 0,
+            height: 'calc(62px + var(--safe-bottom))',
+            paddingBottom: 'var(--safe-bottom)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-around',
+            zIndex: 50
+          }}
+        >
+          <button
+            onClick={() => setCurrentTab('home')}
+            className="interactive"
+            style={{
+              background: 'none',
+              border: 'none',
+              display: 'flex',
+              flexDirection: 'column',
+              alignItems: 'center',
+              gap: '4px',
+              color: currentTab === 'home' ? '#6366f1' : '#64748b'
+            }}
+          >
+            <HomeIcon size={22} />
+            <span style={{ fontSize: '11px', fontWeight: currentTab === 'home' ? 700 : 500 }}>Home</span>
+          </button>
+
+          <button
+            onClick={() => setCurrentTab('search')}
+            className="interactive"
+            style={{
+              background: 'none',
+              border: 'none',
+              display: 'flex',
+              flexDirection: 'column',
+              alignItems: 'center',
+              gap: '4px',
+              color: currentTab === 'search' ? '#6366f1' : '#64748b'
+            }}
+          >
+            <SearchIcon size={22} />
+            <span style={{ fontSize: '11px', fontWeight: currentTab === 'search' ? 700 : 500 }}>Search</span>
+          </button>
+
+          <button
+            onClick={() => setCurrentTab('library')}
+            className="interactive"
+            style={{
+              background: 'none',
+              border: 'none',
+              display: 'flex',
+              flexDirection: 'column',
+              alignItems: 'center',
+              gap: '4px',
+              color: currentTab === 'library' ? '#6366f1' : '#64748b'
+            }}
+          >
+            <Library size={22} />
+            <span style={{ fontSize: '11px', fontWeight: currentTab === 'library' ? 700 : 500 }}>Library</span>
+          </button>
+        </div>
+      )}
+    </div>
+  );
+};
+
+export default App;
