@@ -177,8 +177,9 @@ export async function getEpisodes(animeId: string): Promise<EpisodeItem[]> {
 // Fetch servers and resolve stream
 export async function getEpisodeStream(
   animeTitleOrId: string, 
-  episodeNumber: string = '1',
-  mode: 'sub' | 'dub' = 'sub'
+  episodeIdOrNumber: string = '1',
+  mode: 'sub' | 'dub' = 'sub',
+  animeId?: string
 ): Promise<StreamSource> {
   // 1. First priority: Invoke real ani-cli shell core through the dev-only bridge.
   // That bridge shells out to a local ani-cli script and only exists while
@@ -186,8 +187,9 @@ export async function getEpisodeStream(
   // inside the built native app, so skip the attempt there entirely.
   if (!Capacitor.isNativePlatform()) {
     try {
-      const cleanQuery = animeTitleOrId.replace(/-[0-9]+$/, '').replace(/-/g, ' ');
-      const bridgeUrl = `/api/ani-cli/stream?query=${encodeURIComponent(cleanQuery)}&ep=${encodeURIComponent(episodeNumber)}&mode=${mode}`;
+      const cleanQuery = (animeId || animeTitleOrId).replace(/-[0-9]+$/, '').replace(/-/g, ' ');
+      const epNum = /^\d{1,4}$/.test(episodeIdOrNumber) ? episodeIdOrNumber : '1';
+      const bridgeUrl = `/api/ani-cli/stream?query=${encodeURIComponent(cleanQuery)}&ep=${encodeURIComponent(epNum)}&mode=${mode}`;
       console.log("[aniCliCore] Requesting stream from ani-cli:", bridgeUrl);
       const res = await fetch(bridgeUrl);
       if (res.ok) {
@@ -211,15 +213,34 @@ export async function getEpisodeStream(
 
   // 2. Secondary fallback: direct scrape
   try {
-    const numericId = animeTitleOrId.includes("-") ? animeTitleOrId.split("-").pop() : animeTitleOrId;
-    const endpoint = `${getApiBase()}/api/theme/episode/servers?episodeId=${numericId}`;
+    let targetEpisodeId = episodeIdOrNumber;
+    // If targetEpisodeId is not a numeric episode ID (e.g. from episode.id which is >= 3 digits),
+    // resolve from anime episode list
+    if (!/^\d{3,}$/.test(targetEpisodeId)) {
+      let numericAnimeId = (animeId || animeTitleOrId).includes("-") ? (animeId || animeTitleOrId).split("-").pop() : "";
+      if (!numericAnimeId || !/^\d+$/.test(numericAnimeId)) {
+        const found = await searchAnime(animeTitleOrId);
+        if (found.length > 0) {
+          numericAnimeId = found[0].id.split("-").pop() || "";
+        }
+      }
+      if (numericAnimeId && /^\d+$/.test(numericAnimeId)) {
+        const list = await getEpisodes(numericAnimeId);
+        const match = list.find(e => e.number === episodeIdOrNumber) || list[0];
+        if (match && match.id) {
+          targetEpisodeId = match.id;
+        }
+      }
+    }
+
+    const endpoint = `${getApiBase()}/api/theme/episode/servers?episodeId=${targetEpisodeId}`;
     const res = await fetch(endpoint, { headers: UPSTREAM_HEADERS });
     const data = await res.json();
     
     if (data.html) {
       const parser = new DOMParser();
       const doc = parser.parseFromString(data.html, "text/html");
-      const zokoServer = doc.querySelector(`[data-type="${mode}"][data-server-name="ZokoAnime"], [data-type="${mode}"][data-hash]`);
+      const zokoServer = doc.querySelector(`[data-type="${mode}"][data-server-name="ZokoAnime"], [data-server-name="ZokoAnime"][data-type="${mode}"], [data-type="${mode}"][data-hash]`);
       const hash = zokoServer?.getAttribute("data-hash");
 
       if (hash) {

@@ -1,11 +1,20 @@
 // VideoPlayer.tsx - Premium Mobile Video Player with HLS, Gestures, & Ani-cli controls
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import Hls from 'hls.js';
+import { Capacitor } from '@capacitor/core';
 import { 
   Play, Pause, RotateCcw, RotateCw, ArrowLeft, Settings, 
   Subtitles, Maximize, Minimize, SkipForward, FastForward, Volume2, VolumeX 
 } from 'lucide-react';
 import type { StreamSource, EpisodeItem } from '../core/aniCliCore';
+
+const resolvePlayableUrl = (url?: string, referer?: string): string => {
+  if (!url) return '';
+  if (!Capacitor.isNativePlatform()) return url;
+  if (url.includes('/_anime_proxy_')) return url;
+  const ref = referer || 'https://zokoanime.video/';
+  return `${window.location.origin}/_anime_proxy_?url=${encodeURIComponent(url)}&ref=${encodeURIComponent(ref)}`;
+};
 
 interface VideoPlayerProps {
   streamSource: StreamSource;
@@ -61,46 +70,35 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
       hlsRef.current = null;
     }
 
-    const streamUrl = streamSource.streamUrl;
+    const rawStreamUrl = streamSource.streamUrl;
+    const referer = streamSource.referer || 'https://zokoanime.video/';
+    const streamUrl = resolvePlayableUrl(rawStreamUrl, referer);
     setVideoTrackWarning(null);
 
-    // Diagnose "playing but no picture": Chromium's Android WebView shows a
-    // large audio-only glyph in that case (wrong codec, or an audio-only
-    // rendition got resolved). Surface it instead of a silently blank screen.
+    // Only surface no-video-track warning if playback has been running for a few seconds
+    // with continuous 0x0 video dimensions (to avoid false alarms during initial frame decoding)
     const checkVideoTrack = () => {
-      if (video.videoWidth === 0 && video.videoHeight === 0 && !video.paused) {
+      if (video.videoWidth === 0 && video.videoHeight === 0 && !video.paused && video.currentTime > 2) {
         console.warn('[VideoPlayer] Playback has no video track (videoWidth/videoHeight are 0). streamUrl:', streamUrl);
         setVideoTrackWarning('No video track in this stream (audio only or unsupported codec).');
+      } else if (video.videoWidth > 0 && video.videoHeight > 0) {
+        setVideoTrackWarning(null);
       }
     };
-    video.addEventListener('loadeddata', checkVideoTrack);
-    video.addEventListener('playing', checkVideoTrack);
+    video.addEventListener('timeupdate', checkVideoTrack);
 
     if (Hls.isSupported()) {
-      // The manifest/segments live on a CDN that only serves requests carrying
-      // its own embed page as Referer (that's why the anime plays in a browser
-      // but not here) - CapacitorHttp patches XHR to allow otherwise-forbidden
-      // headers like Referer/Origin/User-Agent through to native networking.
-      const referer = streamSource.referer;
-      const origin = referer.replace(/\/$/, '');
       const hls = new Hls({
-        enableWorker: true,
+        enableWorker: false,
         lowLatencyMode: true,
-        backBufferLength: 90,
-        xhrSetup: (xhr) => {
-          xhr.setRequestHeader('Referer', referer);
-          xhr.setRequestHeader('Origin', origin);
-        }
+        backBufferLength: 90
       });
       hls.loadSource(streamUrl);
       hls.attachMedia(video);
       hlsRef.current = hls;
 
       hls.on(Hls.Events.MANIFEST_PARSED, (_event, data) => {
-        console.log('[VideoPlayer] Manifest parsed, levels:', data.levels.map(l => ({
-          bitrate: l.bitrate, width: l.width, height: l.height,
-          videoCodec: l.videoCodec, audioCodec: l.audioCodec
-        })));
+        console.log('[VideoPlayer] Manifest parsed, levels count:', data.levels.length);
         if (data.levels.length > 0 && data.levels.every(l => !l.videoCodec && !l.width)) {
           setVideoTrackWarning('No video track in this stream (audio only or unsupported codec).');
         }
@@ -127,7 +125,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
         }
       });
     } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
-      // Native HLS support (Safari/iOS WebView) - Android's Chromium WebView has none, so hls.js above is the primary path there.
+      // Native HLS support (Safari/iOS WebView)
       video.src = streamUrl;
       video.addEventListener('loadedmetadata', () => {
         if (initialTime > 0) {
@@ -138,13 +136,12 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     }
 
     return () => {
-      video.removeEventListener('loadeddata', checkVideoTrack);
-      video.removeEventListener('playing', checkVideoTrack);
+      video.removeEventListener('timeupdate', checkVideoTrack);
       if (hlsRef.current) {
         hlsRef.current.destroy();
       }
     };
-  }, [streamSource.streamUrl, streamSource.referer]);
+  }, [streamSource.streamUrl, streamSource.referer, initialTime]);
 
   // Controls auto-hide logic
   const resetControlsTimer = useCallback(() => {
@@ -305,7 +302,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
             key={i}
             kind="subtitles"
             label={track.label}
-            src={track.src}
+            src={resolvePlayableUrl(track.src, streamSource.referer)}
             default={track.default}
           />
         ))}
@@ -538,7 +535,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
                   if (videoRef.current && item.url) {
                     const prevTime = videoRef.current.currentTime;
                     if (hlsRef.current) {
-                      hlsRef.current.loadSource(item.url);
+                      hlsRef.current.loadSource(resolvePlayableUrl(item.url, streamSource.referer));
                       hlsRef.current.once(Hls.Events.MANIFEST_PARSED, () => {
                         if (videoRef.current) {
                           videoRef.current.currentTime = prevTime;

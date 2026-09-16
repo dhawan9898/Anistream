@@ -44,7 +44,7 @@ export const App: React.FC = () => {
     setInitialSeekTime(startTime);
 
     try {
-      const source = await getEpisodeStream(anime.title, episode.number, mode);
+      const source = await getEpisodeStream(anime.id || anime.title, episode.id || episode.number, mode, anime.id);
       setStreamSource(source);
       setIsPlaying(true);
     } catch (err) {
