@@ -1,4 +1,4 @@
-name: Build AniStream v1.0 APK
+name: Build AniStream v2.0 APK
 
 on:
   push:
@@ -59,31 +59,33 @@ jobs:
       - name: Package APK for Release
         run: |
           mkdir -p build-output
-          cp android/app/build/outputs/apk/debug/app-debug.apk build-output/AniStream-v1.0.apk
+          cp android/app/build/outputs/apk/debug/app-debug.apk build-output/AniStream-v2.0.apk
 
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: AniStream-v1.0-APK
-          path: build-output/AniStream-v1.0.apk
+          name: AniStream-v2.0-APK
+          path: build-output/AniStream-v2.0.apk
           retention-days: 30
 
       - name: Create GitHub Release
         if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
         uses: softprops/action-gh-release@v2
         with:
-          files: build-output/AniStream-v1.0.apk
-          tag_name: v1.0
-          name: AniStream v1.0 Release
+          files: build-output/AniStream-v2.0.apk
+          tag_name: v2.0
+          name: AniStream v2.0 Release
           body: |
-            ## AniStream v1.0 - Android Anime Streaming App (Powered by ani-cli)
-            
+            ## AniStream v2.0 - Android Anime Streaming App (Powered by ani-cli)
+
             ### 🚀 Updates in this build:
-            - **Fixed Video Playback in APK**: Integrated native Android HLS stream proxy with custom Referer & full CORS headers.
-            - **Fixed Episode Server Resolution**: Accurately resolves episode data-ids for multi-episode anime series.
-            - **Reliable Subtitles & Multi-Quality Streams**: Proxied WebVTT subtitles and multi-resolution (1080p, 720p, 480p) streams.
-            
+            - **Redesigned UI**: Floating Apple-TV-style liquid glass dock navigation, specular glass panels, and smoother screen transitions.
+            - **Dark & Light Themes**: New theme toggle in Settings, applied app-wide with no flash on launch.
+            - **New Settings Screen**: Playback defaults (audio, quality), auto-skip intro, autoplay next episode, and data management.
+            - **Fixed Skip Intro**: Now jumps to a fixed point in the episode instead of behaving like a generic forward button, and respects the auto-skip preference.
+            - **Neutral Selection Styling**: Active tabs, toggles, and menus use frosted glass highlights instead of flat blue fills.
+
             ### 📦 Download:
-            Download **`AniStream-v1.0.apk`** below and install on any Android device running Android 8.0 or later!
+            Download **`AniStream-v2.0.apk`** below and install on any Android device running Android 8.0 or later!
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
