@@ -7,19 +7,13 @@ import {
 } from 'lucide-react';
 import type { StreamSource, EpisodeItem } from '../core/aniCliCore';
 import { getUserPreferences } from '../services/historyService';
+import { getOpeningSkipInterval, type SkipInterval } from '../services/aniSkipService';
 
 const resolvePlayableUrl = (url?: string, _referer?: string): string => {
   if (!url) return '';
   // Return direct URL directly so hls.js can load it without requiring a local proxy server
   return url;
 };
-
-// ani-cli streams carry no chapter/intro metadata, so we fall back to a
-// fixed window that covers a typical anime OP: the button (or auto-skip)
-// jumps to an absolute timestamp, not a relative offset from wherever
-// playback happens to be when it's triggered.
-const INTRO_WINDOW_START = 3;
-const INTRO_SKIP_TARGET = 88;
 
 interface VideoPlayerProps {
   streamSource: StreamSource;
@@ -66,17 +60,34 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   const [doubleTapFeedback, setDoubleTapFeedback] = useState<'left' | 'right' | null>(null);
   const [videoTrackWarning, setVideoTrackWarning] = useState<string | null>(null);
   const [autoSkipIntro, setAutoSkipIntro] = useState<boolean>(false);
+  const [introInterval, setIntroInterval] = useState<SkipInterval | null>(null);
   const autoSkippedRef = useRef<boolean>(false);
+  const introLookupRef = useRef<string | null>(null);
 
   useEffect(() => {
     getUserPreferences().then(p => setAutoSkipIntro(p.autoSkipIntro));
   }, []);
 
-  // A new episode/stream means a fresh intro window to (maybe) auto-skip.
+  // A new episode/stream means a fresh intro to (maybe) look up and auto-skip.
   useEffect(() => {
     autoSkippedRef.current = false;
+    introLookupRef.current = null;
     setShowSkipIntro(false);
+    setIntroInterval(null);
   }, [streamSource.streamUrl]);
+
+  // Real per-episode opening timestamps only become knowable once we have
+  // this episode's actual duration (AniSkip needs it to normalize its
+  // timestamps) - so look them up as soon as duration is known, once per
+  // stream. No result means we genuinely don't know where the intro ends,
+  // so no skip button is offered rather than guessing.
+  useEffect(() => {
+    if (!duration || duration <= 0) return;
+    if (introLookupRef.current === streamSource.streamUrl) return;
+    introLookupRef.current = streamSource.streamUrl;
+
+    getOpeningSkipInterval(animeTitle, episode.number, duration).then(setIntroInterval);
+  }, [duration, streamSource.streamUrl, animeTitle, episode.number]);
 
   // Initialize Hls / Video stream
   useEffect(() => {
@@ -223,7 +234,8 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   };
 
   const skipIntro = () => {
-    seekTo(INTRO_SKIP_TARGET);
+    if (!introInterval) return;
+    seekTo(introInterval.end);
     setShowSkipIntro(false);
     resetControlsTimer();
   };
@@ -260,13 +272,16 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     if (!video) return;
     setCurrentTime(video.currentTime);
 
-    // Offer the skip (or auto-skip) only while we're inside the intro
-    // window and haven't already reached/passed the skip target.
-    const inIntroWindow = video.currentTime >= INTRO_WINDOW_START && video.currentTime < INTRO_SKIP_TARGET;
+    // Offer the skip (or auto-skip) only inside this episode's real,
+    // looked-up opening interval - if we never found one, introInterval
+    // stays null and we never show a button or guess a timestamp.
+    const inIntroWindow = !!introInterval
+      && video.currentTime >= introInterval.start
+      && video.currentTime < introInterval.end;
 
     if (inIntroWindow && autoSkipIntro && !autoSkippedRef.current) {
       autoSkippedRef.current = true;
-      seekTo(INTRO_SKIP_TARGET);
+      seekTo(introInterval!.end);
       setShowSkipIntro(false);
       setSkippedIntroToast(true);
       setTimeout(() => setSkippedIntroToast(false), 1800);

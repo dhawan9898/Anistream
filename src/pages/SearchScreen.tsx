@@ -1,7 +1,7 @@
 // SearchScreen.tsx - Rapid anime search powered by ani-cli scraper
 import React, { useState, useEffect, useRef } from 'react';
-import { Search as SearchIcon, X, Loader2, ArrowLeft, TrendingUp } from 'lucide-react';
-import { searchAnime, FEATURED_ANIME, type AnimeItem } from '../core/aniCliCore';
+import { Search as SearchIcon, X, Loader2, ArrowLeft } from 'lucide-react';
+import { searchAnime, type AnimeItem } from '../core/aniCliCore';
 
 interface SearchScreenProps {
   onBack: () => void;
@@ -24,7 +24,7 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({
   onSelectAnime
 }) => {
   const [query, setQuery] = useState<string>('');
-  const [results, setResults] = useState<AnimeItem[]>(FEATURED_ANIME);
+  const [results, setResults] = useState<AnimeItem[]>([]);
   const [loading, setLoading] = useState<boolean>(false);
   const inputRef = useRef<HTMLInputElement | null>(null);
 
@@ -35,7 +35,7 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({
   const handleSearch = async (searchTerm: string) => {
     setQuery(searchTerm);
     if (!searchTerm.trim()) {
-      setResults(FEATURED_ANIME);
+      setResults([]);
       return;
     }
 
@@ -142,22 +142,27 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({
         })}
       </div>
 
-      {/* Results Header */}
-      <div style={{ padding: '0 20px 12px 20px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-          <TrendingUp size={16} color="var(--accent-primary)" />
+      {/* Results Header - only once there's an actual search to summarize */}
+      {query && !loading && results.length > 0 && (
+        <div style={{ padding: '0 20px 12px 20px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
           <span style={{ fontSize: '14px', fontWeight: 700, color: 'var(--text-primary)' }}>
-            {query ? `Results for "${query}"` : "Top Trending Anime"}
+            Results for "{query}"
           </span>
+          <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>{results.length} results</span>
         </div>
-        <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>{results.length} results</span>
-      </div>
+      )}
 
-      {/* Loading or Results Grid */}
+      {/* Loading, empty prompt, no-results, or the results grid */}
       {loading ? (
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '60px 0', gap: '10px', color: 'var(--text-secondary)' }}>
           <Loader2 size={24} className="animate-spin" />
           <span style={{ fontSize: '14px' }}>Searching ani-cli database...</span>
+        </div>
+      ) : !query ? (
+        <div style={{ textAlign: 'center', padding: '60px 20px', color: 'var(--text-secondary)' }}>
+          <SearchIcon size={40} color="var(--accent-primary)" style={{ margin: '0 auto 12px auto', opacity: 0.8 }} />
+          <p style={{ fontSize: '16px', fontWeight: 600, marginBottom: '6px', color: 'var(--text-primary)' }}>Search for anime or movies</p>
+          <p style={{ fontSize: '13px' }}>Type a title above, or tap a quick suggestion to get started.</p>
         </div>
       ) : results.length === 0 ? (
         <div style={{ textAlign: 'center', padding: '60px 20px', color: 'var(--text-secondary)' }}>
