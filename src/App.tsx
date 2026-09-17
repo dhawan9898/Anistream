@@ -1,23 +1,31 @@
 // App.tsx - Main Android Application Controller for AniStream
 import React, { useState, useEffect, useRef } from 'react';
-import { Home as HomeIcon, Search as SearchIcon, Library, Loader2 } from 'lucide-react';
+import { Home as HomeIcon, Search as SearchIcon, Library, Settings as SettingsIcon, Loader2 } from 'lucide-react';
 import { Capacitor } from '@capacitor/core';
 import { ExoPlayerPlugin } from './plugins/exoPlayerPlugin';
 import { HomeScreen } from './pages/HomeScreen';
 import { SearchScreen } from './pages/SearchScreen';
 import { AnimeDetailScreen } from './pages/AnimeDetailScreen';
 import { HistoryScreen } from './pages/HistoryScreen';
+import { SettingsScreen } from './pages/SettingsScreen';
 import { VideoPlayer } from './components/VideoPlayer';
-import { 
-  getEpisodeStream, 
-  type AnimeItem, 
-  type EpisodeItem, 
+import {
+  getEpisodeStream,
+  type AnimeItem,
+  type EpisodeItem,
   type StreamSource,
   FEATURED_ANIME
 } from './core/aniCliCore';
 import { saveWatchProgress, type WatchHistoryItem } from './services/historyService';
 
-type Tab = 'home' | 'search' | 'library';
+type Tab = 'home' | 'search' | 'library' | 'settings';
+
+const TABS: { id: Tab; label: string; icon: React.ComponentType<{ size?: number }> }[] = [
+  { id: 'home', label: 'Home', icon: HomeIcon },
+  { id: 'search', label: 'Search', icon: SearchIcon },
+  { id: 'library', label: 'Library', icon: Library },
+  { id: 'settings', label: 'Settings', icon: SettingsIcon }
+];
 
 export const App: React.FC = () => {
   const [currentTab, setCurrentTab] = useState<Tab>('home');
@@ -158,10 +166,12 @@ export const App: React.FC = () => {
       overflow: 'hidden',
       position: 'relative'
     }}>
-      {/* Active Screen Rendering - keyed + faded so switching screens doesn't hard-cut */}
+      {/* Active Screen Rendering - keyed + animated so switching screens doesn't
+          hard-cut: pushing into detail glides in from the right (like iOS
+          navigation), switching tabs fades/pops in place. */}
       <div
         key={selectedAnime ? `detail-${selectedAnime.id}` : currentTab}
-        className="animate-fade-in"
+        className={selectedAnime ? 'animate-slide-in' : 'animate-fade-in'}
         style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}
       >
         {selectedAnime ? (
@@ -181,11 +191,13 @@ export const App: React.FC = () => {
             onBack={() => setCurrentTab('home')}
             onSelectAnime={(anime) => setSelectedAnime(anime)}
           />
-        ) : (
+        ) : currentTab === 'library' ? (
           <HistoryScreen
             onResumeEpisode={handleResumeEpisode}
             onSelectAnime={(anime) => setSelectedAnime(anime)}
           />
+        ) : (
+          <SettingsScreen />
         )}
       </div>
 
@@ -253,73 +265,70 @@ export const App: React.FC = () => {
         />
       )}
 
-      {/* Bottom Mobile Glass Navigation Bar (hidden during player and detail view) */}
+      {/* Floating Apple-TV style glass dock (hidden during player and detail view).
+          Detached from the screen edge with a sliding liquid-glass indicator
+          that glides behind whichever tab is active. */}
       {!selectedAnime && !isPlaying && (
-        <div 
-          className="glass-nav"
+        <div
           style={{
             position: 'fixed',
-            bottom: 0,
-            left: 0,
-            right: 0,
-            height: 'calc(62px + var(--safe-bottom))',
-            paddingBottom: 'var(--safe-bottom)',
+            left: '20px',
+            right: '20px',
+            bottom: 'calc(16px + var(--safe-bottom))',
+            zIndex: 50,
             display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-around',
-            zIndex: 50
+            justifyContent: 'center'
           }}
         >
-          <button
-            onClick={() => setCurrentTab('home')}
-            className="interactive"
+          <div
+            className="glass-dock"
             style={{
-              background: 'none',
-              border: 'none',
+              position: 'relative',
+              width: '100%',
+              maxWidth: '360px',
+              height: '64px',
               display: 'flex',
-              flexDirection: 'column',
-              alignItems: 'center',
-              gap: '4px',
-              color: currentTab === 'home' ? '#6366f1' : '#64748b'
+              alignItems: 'stretch'
             }}
           >
-            <HomeIcon size={22} />
-            <span style={{ fontSize: '11px', fontWeight: currentTab === 'home' ? 700 : 500 }}>Home</span>
-          </button>
+            {/* Sliding liquid indicator */}
+            <div
+              className="dock-indicator"
+              style={{
+                left: 0,
+                width: `${100 / TABS.length}%`,
+                transform: `translateX(${TABS.findIndex(t => t.id === currentTab) * 100}%)`
+              }}
+            />
 
-          <button
-            onClick={() => setCurrentTab('search')}
-            className="interactive"
-            style={{
-              background: 'none',
-              border: 'none',
-              display: 'flex',
-              flexDirection: 'column',
-              alignItems: 'center',
-              gap: '4px',
-              color: currentTab === 'search' ? '#6366f1' : '#64748b'
-            }}
-          >
-            <SearchIcon size={22} />
-            <span style={{ fontSize: '11px', fontWeight: currentTab === 'search' ? 700 : 500 }}>Search</span>
-          </button>
-
-          <button
-            onClick={() => setCurrentTab('library')}
-            className="interactive"
-            style={{
-              background: 'none',
-              border: 'none',
-              display: 'flex',
-              flexDirection: 'column',
-              alignItems: 'center',
-              gap: '4px',
-              color: currentTab === 'library' ? '#6366f1' : '#64748b'
-            }}
-          >
-            <Library size={22} />
-            <span style={{ fontSize: '11px', fontWeight: currentTab === 'library' ? 700 : 500 }}>Library</span>
-          </button>
+            {TABS.map((tab) => {
+              const Icon = tab.icon;
+              const active = currentTab === tab.id;
+              return (
+                <button
+                  key={tab.id}
+                  onClick={() => setCurrentTab(tab.id)}
+                  className={`interactive dock-item ${active ? 'active' : ''}`}
+                  style={{
+                    position: 'relative',
+                    zIndex: 1,
+                    flex: 1,
+                    background: 'none',
+                    border: 'none',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: '3px',
+                    color: active ? '#fff' : '#8b93a7'
+                  }}
+                >
+                  <Icon size={20} />
+                  <span style={{ fontSize: '10px', fontWeight: active ? 700 : 500 }}>{tab.label}</span>
+                </button>
+              );
+            })}
+          </div>
         </div>
       )}
     </div>

@@ -80,12 +80,30 @@ body {
    soft inner top highlight to read as a curved, lit surface rather than a
    flat tinted panel. */
 .glass-panel {
+  position: relative;
   background: var(--bg-glass);
   backdrop-filter: blur(20px) saturate(180%);
   -webkit-backdrop-filter: blur(20px) saturate(180%);
   border: 1px solid var(--border-subtle);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.09), inset 0 0 0 1px rgba(255, 255, 255, 0.02);
-  transition: transform 0.4s cubic-bezier(0.22, 1, 0.36, 1), box-shadow 0.4s ease;
+  transition: transform 0.4s cubic-bezier(0.22, 1, 0.36, 1), box-shadow 0.4s ease, background-color 0.4s ease;
+  isolation: isolate;
+}
+
+/* Specular sheen: a soft diagonal highlight riding the top edge, the detail
+   that reads "curved liquid glass" instead of a flat tinted rectangle. */
+.glass-panel::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: linear-gradient(115deg, rgba(255,255,255,0.10) 0%, rgba(255,255,255,0.02) 22%, transparent 40%);
+  pointer-events: none;
+  z-index: 1;
+}
+
+.glass-panel:active {
+  transform: scale(0.98);
 }
 
 .glass-nav {
@@ -96,13 +114,30 @@ body {
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.07);
 }
 
+/* Floating Apple-TV style dock: detached from the screen edge, fully
+   rounded, and lifted with a deep ambient shadow so it reads as a physical
+   pane hovering above the content rather than a docked bar. */
+.glass-dock {
+  background: var(--bg-glass-heavy);
+  backdrop-filter: blur(30px) saturate(200%);
+  -webkit-backdrop-filter: blur(30px) saturate(200%);
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  border-radius: var(--radius-full);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.1),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.02),
+    0 16px 40px rgba(0, 0, 0, 0.55),
+    0 4px 14px rgba(0, 0, 0, 0.4);
+}
+
 .glass-pill {
+  position: relative;
   background: rgba(255, 255, 255, 0.08);
   backdrop-filter: blur(14px) saturate(180%);
   -webkit-backdrop-filter: blur(14px) saturate(180%);
   border: 1px solid rgba(255, 255, 255, 0.1);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.12);
-  transition: transform 0.35s cubic-bezier(0.22, 1, 0.36, 1), background-color 0.25s ease;
+  transition: transform 0.35s cubic-bezier(0.22, 1, 0.36, 1), background-color 0.25s ease, box-shadow 0.35s ease;
 }
 
 /* Interactive touch feedback - a slight spring overshoot on release reads as
@@ -124,17 +159,94 @@ body {
   to { opacity: 1; transform: translateY(0); }
 }
 
+@keyframes slideInRight {
+  from { opacity: 0; transform: translateX(28px) scale(0.99); }
+  to { opacity: 1; transform: translateX(0) scale(1); }
+}
+
+@keyframes popIn {
+  from { opacity: 0; transform: scale(0.94); }
+  to { opacity: 1; transform: scale(1); }
+}
+
 @keyframes pulseGlow {
   0%, 100% { box-shadow: 0 0 15px rgba(99, 102, 241, 0.3); }
   50% { box-shadow: 0 0 30px rgba(168, 85, 247, 0.5); }
+}
+
+@keyframes floatY {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-4px); }
 }
 
 .animate-fade-in {
   animation: fadeIn 0.35s cubic-bezier(0.16, 1, 0.3, 1) forwards;
 }
 
+/* Screen-push transition used for navigating "into" a view (detail, search,
+   settings) so it reads as gliding in from the right rather than a hard cut. */
+.animate-slide-in {
+  animation: slideInRight 0.4s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+.animate-pop-in {
+  animation: popIn 0.3s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+}
+
 .glow-active {
   box-shadow: 0 0 20px rgba(99, 102, 241, 0.45);
+}
+
+/* Floating dock nav item: the active tab's icon lifts and glows, echoing the
+   Apple TV focus engine's "floating" affordance. */
+.dock-item {
+  transition: transform 0.4s cubic-bezier(0.34, 1.56, 0.64, 1), color 0.3s ease;
+}
+.dock-item.active {
+  transform: translateY(-2px);
+}
+
+/* Sliding liquid indicator that glides behind the active dock icon. */
+.dock-indicator {
+  position: absolute;
+  top: 6px;
+  bottom: 6px;
+  border-radius: var(--radius-full);
+  background: var(--accent-gradient);
+  box-shadow: 0 0 18px rgba(99, 102, 241, 0.55), inset 0 1px 0 rgba(255,255,255,0.25);
+  transition: transform 0.5s cubic-bezier(0.22, 1, 0.36, 1), width 0.5s cubic-bezier(0.22, 1, 0.36, 1);
+  z-index: 0;
+}
+
+/* iOS-style toggle switch, styled to match the glass system. */
+.toggle-switch {
+  position: relative;
+  width: 46px;
+  height: 27px;
+  border-radius: var(--radius-full);
+  border: none;
+  flex-shrink: 0;
+  background: rgba(255, 255, 255, 0.14);
+  transition: background-color 0.35s cubic-bezier(0.22, 1, 0.36, 1);
+  cursor: pointer;
+}
+.toggle-switch.on {
+  background: var(--accent-gradient);
+  box-shadow: 0 0 14px rgba(99, 102, 241, 0.5);
+}
+.toggle-switch .knob {
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 21px;
+  height: 21px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.4);
+  transition: transform 0.35s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+.toggle-switch.on .knob {
+  transform: translateX(19px);
 }
 
 /* Input reset */
