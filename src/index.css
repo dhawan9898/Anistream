@@ -1,6 +1,8 @@
-/* index.css - Premium Glassmorphic Dark Design System for AniStream */
-:root {
+/* index.css - Premium Glassmorphic Design System for AniStream (dark + light) */
+:root,
+:root[data-theme="dark"] {
   --bg-main: #08090e;
+  --bg-main-rgb: 8, 9, 14;
   --bg-surface: #10121a;
   --bg-surface-hover: #171a26;
   --bg-glass: rgba(16, 18, 26, 0.72);
@@ -20,6 +22,16 @@
   --text-secondary: #94a3b8;
   --text-muted: #64748b;
 
+  /* Liquid-glass "selection" tokens: selection is shown as a frosted,
+     translucent, lifted pane (no brand color) so active states read as
+     glass catching light rather than a flat colored fill. */
+  --select-bg: rgba(255, 255, 255, 0.16);
+  --select-border: rgba(255, 255, 255, 0.32);
+  --select-text: #ffffff;
+  --select-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.4), inset 0 0 0 1px rgba(255, 255, 255, 0.06), 0 6px 18px rgba(0, 0, 0, 0.35);
+  --track-bg: rgba(255, 255, 255, 0.06);
+  --shadow-dock: 0 16px 40px rgba(0, 0, 0, 0.55), 0 4px 14px rgba(0, 0, 0, 0.4);
+
   --radius-sm: 8px;
   --radius-md: 14px;
   --radius-lg: 20px;
@@ -28,6 +40,51 @@
   --shadow-sm: 0 4px 12px rgba(0, 0, 0, 0.4);
   --shadow-lg: 0 12px 36px rgba(0, 0, 0, 0.6);
   --shadow-glow: 0 0 24px rgba(99, 102, 241, 0.3);
+
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+/* Light theme: same liquid-glass language, re-tuned so frosted panes sit on
+   a soft neutral backdrop instead of black - minimal, high-contrast text,
+   glass panels read as lifted white/silver panes rather than dark tint. */
+:root[data-theme="light"] {
+  --bg-main: #f1f2f6;
+  --bg-main-rgb: 241, 242, 246;
+  --bg-surface: #ffffff;
+  --bg-surface-hover: #eceef3;
+  --bg-glass: rgba(255, 255, 255, 0.62);
+  --bg-glass-heavy: rgba(255, 255, 255, 0.78);
+  --border-subtle: rgba(15, 23, 42, 0.08);
+  --border-glow: rgba(99, 102, 241, 0.25);
+
+  --accent-primary: #6366f1;
+  --accent-secondary: #a855f7;
+  --accent-cyan: #0891b2;
+  --accent-amber: #d97706;
+  --accent-gradient: linear-gradient(135deg, #6366f1 0%, #8b5cf6 50%, #ec4899 100%);
+  --accent-gradient-glow: linear-gradient(135deg, rgba(99,102,241,0.25) 0%, rgba(168,85,247,0.18) 100%);
+  --surface-gradient: linear-gradient(180deg, rgba(15, 23, 42, 0.03) 0%, rgba(15, 23, 42, 0.005) 100%);
+
+  --text-primary: #0f172a;
+  --text-secondary: #52607a;
+  --text-muted: #7b879c;
+
+  --select-bg: rgba(255, 255, 255, 0.85);
+  --select-border: rgba(15, 23, 42, 0.06);
+  --select-text: #0f172a;
+  --select-shadow: 0 6px 16px rgba(15, 23, 42, 0.16), inset 0 1px 0 rgba(255, 255, 255, 0.7);
+  --track-bg: rgba(15, 23, 42, 0.05);
+  --shadow-dock: 0 16px 36px rgba(15, 23, 42, 0.16), 0 4px 12px rgba(15, 23, 42, 0.08);
+
+  --radius-sm: 8px;
+  --radius-md: 14px;
+  --radius-lg: 20px;
+  --radius-full: 9999px;
+
+  --shadow-sm: 0 4px 12px rgba(15, 23, 42, 0.08);
+  --shadow-lg: 0 12px 32px rgba(15, 23, 42, 0.14);
+  --shadow-glow: 0 0 22px rgba(99, 102, 241, 0.22);
 
   --safe-top: env(safe-area-inset-top, 0px);
   --safe-bottom: env(safe-area-inset-bottom, 0px);
@@ -49,6 +106,7 @@ body {
   height: 100%;
   width: 100%;
   position: fixed;
+  transition: background-color 0.4s ease, color 0.4s ease;
 }
 
 #root {
@@ -112,6 +170,7 @@ body {
   -webkit-backdrop-filter: blur(28px) saturate(180%);
   border-top: 1px solid var(--border-subtle);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.07);
+  transition: background-color 0.4s ease, border-color 0.4s ease;
 }
 
 /* Floating Apple-TV style dock: detached from the screen edge, fully
@@ -121,13 +180,13 @@ body {
   background: var(--bg-glass-heavy);
   backdrop-filter: blur(30px) saturate(200%);
   -webkit-backdrop-filter: blur(30px) saturate(200%);
-  border: 1px solid rgba(255, 255, 255, 0.09);
+  border: 1px solid var(--border-subtle);
   border-radius: var(--radius-full);
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.1),
     inset 0 0 0 1px rgba(255, 255, 255, 0.02),
-    0 16px 40px rgba(0, 0, 0, 0.55),
-    0 4px 14px rgba(0, 0, 0, 0.4);
+    var(--shadow-dock);
+  transition: background-color 0.4s ease, border-color 0.4s ease, box-shadow 0.4s ease;
 }
 
 .glass-pill {
@@ -138,6 +197,36 @@ body {
   border: 1px solid rgba(255, 255, 255, 0.1);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.12);
   transition: transform 0.35s cubic-bezier(0.22, 1, 0.36, 1), background-color 0.25s ease, box-shadow 0.35s ease;
+}
+
+:root[data-theme="light"] .glass-pill {
+  background: rgba(15, 23, 42, 0.05);
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.6);
+}
+
+/* The video player is a dark cinema surface regardless of app theme (same
+   convention as most video apps), so its popovers force the dark glass
+   look rather than following the light/dark toggle. */
+.glass-panel-dark {
+  position: relative;
+  background: rgba(16, 18, 26, 0.88);
+  backdrop-filter: blur(20px) saturate(180%);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.09), 0 12px 36px rgba(0, 0, 0, 0.6);
+}
+
+/* Same idea for pills/buttons that float on top of a photo banner (hero
+   badges, poster overlay controls) - the photo always has a dark filter
+   under it, so these stay dark-glass regardless of the light/dark toggle. */
+.glass-pill-dark {
+  background: rgba(255, 255, 255, 0.08);
+  backdrop-filter: blur(14px) saturate(180%);
+  -webkit-backdrop-filter: blur(14px) saturate(180%);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.12);
+  color: #fff;
 }
 
 /* Interactive touch feedback - a slight spring overshoot on release reads as
@@ -206,16 +295,65 @@ body {
   transform: translateY(-2px);
 }
 
-/* Sliding liquid indicator that glides behind the active dock icon. */
+/* Sliding liquid indicator that glides behind the active dock icon. A frosted,
+   lifted pane of glass - not a brand-colored fill - so "selected" reads as
+   glass catching light, matching the rest of the liquid-glass language. */
 .dock-indicator {
   position: absolute;
   top: 6px;
   bottom: 6px;
   border-radius: var(--radius-full);
-  background: var(--accent-gradient);
-  box-shadow: 0 0 18px rgba(99, 102, 241, 0.55), inset 0 1px 0 rgba(255,255,255,0.25);
-  transition: transform 0.5s cubic-bezier(0.22, 1, 0.36, 1), width 0.5s cubic-bezier(0.22, 1, 0.36, 1);
+  background: var(--select-bg);
+  backdrop-filter: blur(18px) saturate(180%);
+  -webkit-backdrop-filter: blur(18px) saturate(180%);
+  border: 1px solid var(--select-border);
+  box-shadow: var(--select-shadow);
+  transition: transform 0.5s cubic-bezier(0.22, 1, 0.36, 1), width 0.5s cubic-bezier(0.22, 1, 0.36, 1), background-color 0.4s ease, border-color 0.4s ease;
   z-index: 0;
+}
+
+/* Segmented control (e.g. Sub/Dub, History/Saved): a frosted track with a
+   sliding glass pill for the active segment - the same neutral selection
+   language as the dock indicator, no brand color. */
+.seg-track {
+  display: flex;
+  background-color: var(--track-bg);
+  border-radius: var(--radius-full);
+  padding: 4px;
+  transition: background-color 0.4s ease;
+}
+.seg-pill {
+  flex: 1;
+  padding: 8px;
+  border-radius: var(--radius-full);
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 13px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  transition: background-color 0.35s ease, color 0.35s ease, box-shadow 0.35s ease;
+}
+.seg-pill.active {
+  background: var(--select-bg);
+  backdrop-filter: blur(14px) saturate(180%);
+  -webkit-backdrop-filter: blur(14px) saturate(180%);
+  border: 1px solid var(--select-border);
+  color: var(--select-text);
+  box-shadow: var(--select-shadow);
+}
+
+/* Chip / tag selection (quick tags, quality picker): unselected chips use
+   the standard glass-pill look; selected ones lift into a brighter frosted
+   pane instead of turning a brand color. */
+.chip.active {
+  background: var(--select-bg) !important;
+  border: 1px solid var(--select-border) !important;
+  color: var(--select-text) !important;
+  box-shadow: var(--select-shadow);
 }
 
 /* iOS-style toggle switch, styled to match the glass system. */
@@ -226,13 +364,14 @@ body {
   border-radius: var(--radius-full);
   border: none;
   flex-shrink: 0;
-  background: rgba(255, 255, 255, 0.14);
+  background: var(--track-bg);
   transition: background-color 0.35s cubic-bezier(0.22, 1, 0.36, 1);
   cursor: pointer;
 }
 .toggle-switch.on {
-  background: var(--accent-gradient);
-  box-shadow: 0 0 14px rgba(99, 102, 241, 0.5);
+  background: var(--select-bg);
+  border: 1px solid var(--select-border);
+  box-shadow: var(--select-shadow);
 }
 .toggle-switch .knob {
   position: absolute;
@@ -241,7 +380,7 @@ body {
   width: 21px;
   height: 21px;
   border-radius: 50%;
-  background: #fff;
+  background: #ffffff;
   box-shadow: 0 2px 6px rgba(0, 0, 0, 0.4);
   transition: transform 0.35s cubic-bezier(0.34, 1.56, 0.64, 1);
 }

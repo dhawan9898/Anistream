@@ -53,7 +53,7 @@ export const HistoryScreen: React.FC<HistoryScreenProps> = ({
         justifyContent: 'space-between',
         borderBottom: '1px solid var(--border-subtle)'
       }}>
-        <h1 style={{ fontSize: '22px', fontWeight: 800, color: '#f8fafc' }}>My Library</h1>
+        <h1 style={{ fontSize: '22px', fontWeight: 800, color: 'var(--text-primary)' }}>My Library</h1>
         
         {activeTab === 'history' && historyList.length > 0 && (
           <button
@@ -78,50 +78,17 @@ export const HistoryScreen: React.FC<HistoryScreenProps> = ({
 
       {/* Tabs */}
       <div style={{ padding: '16px 20px 8px 20px' }}>
-        <div style={{
-          display: 'flex',
-          backgroundColor: 'rgba(255, 255, 255, 0.06)',
-          borderRadius: 'var(--radius-full)',
-          padding: '4px'
-        }}>
+        <div className="seg-track">
           <button
             onClick={() => setActiveTab('history')}
-            className="interactive"
-            style={{
-              flex: 1,
-              padding: '8px',
-              borderRadius: 'var(--radius-full)',
-              border: 'none',
-              backgroundColor: activeTab === 'history' ? '#6366f1' : 'transparent',
-              color: '#fff',
-              fontSize: '13px',
-              fontWeight: 700,
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              gap: '6px'
-            }}
+            className={`interactive seg-pill ${activeTab === 'history' ? 'active' : ''}`}
           >
             <Clock size={16} />
             <span>History ({historyList.length})</span>
           </button>
           <button
             onClick={() => setActiveTab('bookmarks')}
-            className="interactive"
-            style={{
-              flex: 1,
-              padding: '8px',
-              borderRadius: 'var(--radius-full)',
-              border: 'none',
-              backgroundColor: activeTab === 'bookmarks' ? '#6366f1' : 'transparent',
-              color: '#fff',
-              fontSize: '13px',
-              fontWeight: 700,
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              gap: '6px'
-            }}
+            className={`interactive seg-pill ${activeTab === 'bookmarks' ? 'active' : ''}`}
           >
             <Bookmark size={16} />
             <span>Saved ({bookmarkedAnime.length})</span>
@@ -133,9 +100,9 @@ export const HistoryScreen: React.FC<HistoryScreenProps> = ({
       <div style={{ padding: '12px 20px' }}>
         {activeTab === 'history' ? (
           historyList.length === 0 ? (
-            <div style={{ textAlign: 'center', padding: '60px 20px', color: '#94a3b8' }}>
-              <Clock size={40} color="#6366f1" style={{ margin: '0 auto 12px auto', opacity: 0.8 }} />
-              <p style={{ fontSize: '16px', fontWeight: 600, color: '#e2e8f0', marginBottom: '6px' }}>No watch history</p>
+            <div style={{ textAlign: 'center', padding: '60px 20px', color: 'var(--text-secondary)' }}>
+              <Clock size={40} color="var(--accent-primary)" style={{ margin: '0 auto 12px auto', opacity: 0.8 }} />
+              <p style={{ fontSize: '16px', fontWeight: 600, color: 'var(--text-primary)', marginBottom: '6px' }}>No watch history</p>
               <p style={{ fontSize: '13px' }}>Anime episodes you stream will appear here so you can easily resume.</p>
             </div>
           ) : (
@@ -174,10 +141,10 @@ export const HistoryScreen: React.FC<HistoryScreenProps> = ({
                     </div>
 
                     <div style={{ flex: 1, minWidth: 0 }}>
-                      <h3 style={{ fontSize: '14px', fontWeight: 700, color: '#f8fafc', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                      <h3 style={{ fontSize: '14px', fontWeight: 700, color: 'var(--text-primary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                         {item.animeTitle}
                       </h3>
-                      <p style={{ fontSize: '12px', color: '#94a3b8', marginTop: '2px' }}>
+                      <p style={{ fontSize: '12px', color: 'var(--text-secondary)', marginTop: '2px' }}>
                         Episode {item.episodeNumber} • {progressPct}% watched
                       </p>
                     </div>
@@ -188,9 +155,9 @@ export const HistoryScreen: React.FC<HistoryScreenProps> = ({
           )
         ) : (
           bookmarkedAnime.length === 0 ? (
-            <div style={{ textAlign: 'center', padding: '60px 20px', color: '#94a3b8' }}>
-              <Bookmark size={40} color="#a855f7" style={{ margin: '0 auto 12px auto', opacity: 0.8 }} />
-              <p style={{ fontSize: '16px', fontWeight: 600, color: '#e2e8f0', marginBottom: '6px' }}>No bookmarks saved</p>
+            <div style={{ textAlign: 'center', padding: '60px 20px', color: 'var(--text-secondary)' }}>
+              <Bookmark size={40} color="var(--accent-secondary)" style={{ margin: '0 auto 12px auto', opacity: 0.8 }} />
+              <p style={{ fontSize: '16px', fontWeight: 600, color: 'var(--text-primary)', marginBottom: '6px' }}>No bookmarks saved</p>
               <p style={{ fontSize: '13px' }}>Tap the bookmark icon on any anime to save it to your library.</p>
             </div>
           ) : (
@@ -222,7 +189,7 @@ export const HistoryScreen: React.FC<HistoryScreenProps> = ({
                     <h3 style={{
                       fontSize: '14px',
                       fontWeight: 700,
-                      color: '#f8fafc',
+                      color: 'var(--text-primary)',
                       whiteSpace: 'nowrap',
                       overflow: 'hidden',
                       textOverflow: 'ellipsis'

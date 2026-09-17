@@ -60,10 +60,12 @@ export const AnimeDetailScreen: React.FC<AnimeDetailScreenProps> = ({
         <div style={{
           position: 'absolute',
           inset: 0,
-          background: 'linear-gradient(180deg, rgba(8,9,14,0.4) 0%, rgba(8,9,14,0.8) 70%, #08090e 100%)'
+          background: 'linear-gradient(180deg, rgba(8,9,14,0.4) 0%, rgba(8,9,14,0.8) 70%, var(--bg-main) 100%)'
         }} />
 
-        {/* Floating Top Nav */}
+        {/* Floating Top Nav - sits on the banner image, so (like the video
+            player's popovers) it keeps the dark-glass look regardless of
+            app theme rather than following the light/dark toggle. */}
         <div style={{
           position: 'absolute',
           top: 0,
@@ -77,7 +79,7 @@ export const AnimeDetailScreen: React.FC<AnimeDetailScreenProps> = ({
         }}>
           <button
             onClick={onBack}
-            className="interactive glass-pill"
+            className="interactive"
             style={{
               width: '40px',
               height: '40px',
@@ -85,7 +87,10 @@ export const AnimeDetailScreen: React.FC<AnimeDetailScreenProps> = ({
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
-              border: 'none',
+              border: '1px solid rgba(255, 255, 255, 0.1)',
+              backgroundColor: 'rgba(255, 255, 255, 0.08)',
+              backdropFilter: 'blur(14px) saturate(180%)',
+              WebkitBackdropFilter: 'blur(14px) saturate(180%)',
               color: '#fff'
             }}
           >
@@ -95,7 +100,7 @@ export const AnimeDetailScreen: React.FC<AnimeDetailScreenProps> = ({
           <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
             <button
               onClick={handleBookmarkToggle}
-              className="interactive glass-pill"
+              className="interactive"
               style={{
                 width: '40px',
                 height: '40px',
@@ -103,7 +108,10 @@ export const AnimeDetailScreen: React.FC<AnimeDetailScreenProps> = ({
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center',
-                border: 'none',
+                border: '1px solid rgba(255, 255, 255, 0.1)',
+                backgroundColor: 'rgba(255, 255, 255, 0.08)',
+                backdropFilter: 'blur(14px) saturate(180%)',
+                WebkitBackdropFilter: 'blur(14px) saturate(180%)',
                 color: isBookmarked ? '#f43f5e' : '#fff'
               }}
             >
@@ -137,51 +145,23 @@ export const AnimeDetailScreen: React.FC<AnimeDetailScreenProps> = ({
                 HD 1080p
               </span>
             </div>
-            <h1 style={{ fontSize: '20px', fontWeight: 800, color: '#f8fafc', lineHeight: '1.25' }}>
+            <h1 style={{ fontSize: '20px', fontWeight: 800, color: 'var(--text-primary)', lineHeight: '1.25' }}>
               {anime.title}
             </h1>
           </div>
         </div>
 
         {/* Sub / Dub Mode Switcher */}
-        <div style={{
-          display: 'flex',
-          backgroundColor: 'rgba(255, 255, 255, 0.06)',
-          borderRadius: 'var(--radius-full)',
-          padding: '4px',
-          marginBottom: '16px'
-        }}>
+        <div className="seg-track" style={{ marginBottom: '16px' }}>
           <button
             onClick={() => setMode('sub')}
-            className="interactive"
-            style={{
-              flex: 1,
-              padding: '8px',
-              borderRadius: 'var(--radius-full)',
-              border: 'none',
-              backgroundColor: mode === 'sub' ? '#6366f1' : 'transparent',
-              color: '#fff',
-              fontSize: '13px',
-              fontWeight: 700,
-              boxShadow: mode === 'sub' ? '0 0 16px rgba(99, 102, 241, 0.4)' : 'none'
-            }}
+            className={`interactive seg-pill ${mode === 'sub' ? 'active' : ''}`}
           >
             Subtitled (SUB)
           </button>
           <button
             onClick={() => setMode('dub')}
-            className="interactive"
-            style={{
-              flex: 1,
-              padding: '8px',
-              borderRadius: 'var(--radius-full)',
-              border: 'none',
-              backgroundColor: mode === 'dub' ? '#a855f7' : 'transparent',
-              color: '#fff',
-              fontSize: '13px',
-              fontWeight: 700,
-              boxShadow: mode === 'dub' ? '0 0 16px rgba(168, 85, 247, 0.4)' : 'none'
-            }}
+            className={`interactive seg-pill ${mode === 'dub' ? 'active' : ''}`}
           >
             Dubbed (DUB)
           </button>
@@ -190,7 +170,7 @@ export const AnimeDetailScreen: React.FC<AnimeDetailScreenProps> = ({
         {/* Description */}
         <p style={{
           fontSize: '13px',
-          color: '#94a3b8',
+          color: 'var(--text-secondary)',
           lineHeight: '1.5',
           marginBottom: '20px'
         }}>
@@ -226,8 +206,8 @@ export const AnimeDetailScreen: React.FC<AnimeDetailScreenProps> = ({
 
         {/* Episode List Header & Range Tabs */}
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '14px' }}>
-          <h2 style={{ fontSize: '18px', fontWeight: 800, color: '#f8fafc' }}>Episodes</h2>
-          <span style={{ fontSize: '13px', color: '#94a3b8' }}>
+          <h2 style={{ fontSize: '18px', fontWeight: 800, color: 'var(--text-primary)' }}>Episodes</h2>
+          <span style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>
             {episodes.length} episodes available
           </span>
         </div>
@@ -242,13 +222,11 @@ export const AnimeDetailScreen: React.FC<AnimeDetailScreenProps> = ({
                 <button
                   key={i}
                   onClick={() => setActiveTab(i)}
-                  className="interactive glass-pill"
+                  className={`interactive glass-pill chip ${activeTab === i ? 'active' : ''}`}
                   style={{
                     padding: '6px 14px',
                     borderRadius: 'var(--radius-full)',
-                    border: activeTab === i ? '1px solid #6366f1' : 'none',
-                    backgroundColor: activeTab === i ? 'rgba(99, 102, 241, 0.25)' : 'transparent',
-                    color: activeTab === i ? '#818cf8' : '#94a3b8',
+                    color: activeTab === i ? undefined : 'var(--text-secondary)',
                     fontSize: '12px',
                     fontWeight: 700,
                     whiteSpace: 'nowrap'
@@ -263,7 +241,7 @@ export const AnimeDetailScreen: React.FC<AnimeDetailScreenProps> = ({
 
         {/* Episodes Grid */}
         {loading ? (
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '40px 0', gap: '10px', color: '#94a3b8' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '40px 0', gap: '10px', color: 'var(--text-secondary)' }}>
             <Loader2 size={24} className="animate-spin" />
             <span style={{ fontSize: '14px' }}>Fetching episodes from ani-cli...</span>
           </div>
@@ -285,14 +263,13 @@ export const AnimeDetailScreen: React.FC<AnimeDetailScreenProps> = ({
                   flexDirection: 'column',
                   alignItems: 'center',
                   justifyContent: 'center',
-                  gap: '4px',
-                  border: '1px solid rgba(255,255,255,0.06)'
+                  gap: '4px'
                 }}
               >
-                <span style={{ fontSize: '15px', fontWeight: 800, color: '#f8fafc' }}>
+                <span style={{ fontSize: '15px', fontWeight: 800, color: 'var(--text-primary)' }}>
                   {ep.number}
                 </span>
-                <span style={{ fontSize: '10px', color: '#818cf8', textTransform: 'uppercase', fontWeight: 600 }}>
+                <span style={{ fontSize: '10px', color: 'var(--accent-primary)', textTransform: 'uppercase', fontWeight: 600 }}>
                   Play
                 </span>
               </button>

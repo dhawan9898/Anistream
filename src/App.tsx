@@ -17,6 +17,7 @@ import {
   FEATURED_ANIME
 } from './core/aniCliCore';
 import { saveWatchProgress, type WatchHistoryItem } from './services/historyService';
+import { getTheme, getStoredThemeSync, setTheme as persistTheme, type ThemeMode } from './services/themeService';
 
 type Tab = 'home' | 'search' | 'library' | 'settings';
 
@@ -30,7 +31,26 @@ const TABS: { id: Tab; label: string; icon: React.ComponentType<{ size?: number 
 export const App: React.FC = () => {
   const [currentTab, setCurrentTab] = useState<Tab>('home');
   const [selectedAnime, setSelectedAnime] = useState<AnimeItem | null>(null);
-  
+  const [theme, setThemeState] = useState<ThemeMode>(getStoredThemeSync());
+
+  // Apply the theme to <html> (index.html already set an initial value
+  // synchronously pre-paint) and reconcile it with the persisted preference,
+  // which may live in native storage and not match the localStorage guess.
+  useEffect(() => {
+    document.documentElement.setAttribute('data-theme', theme);
+    const meta = document.querySelector('meta[name="theme-color"]');
+    if (meta) meta.setAttribute('content', theme === 'light' ? '#f1f2f6' : '#0d0f17');
+  }, [theme]);
+
+  useEffect(() => {
+    getTheme().then(setThemeState);
+  }, []);
+
+  const handleSetTheme = (next: ThemeMode) => {
+    setThemeState(next);
+    persistTheme(next);
+  };
+
   // Active player state
   const [isPlaying, setIsPlaying] = useState<boolean>(false);
   const [playingAnime, setPlayingAnime] = useState<AnimeItem | null>(null);
@@ -197,7 +217,7 @@ export const App: React.FC = () => {
             onSelectAnime={(anime) => setSelectedAnime(anime)}
           />
         ) : (
-          <SettingsScreen />
+          <SettingsScreen theme={theme} onChangeTheme={handleSetTheme} />
         )}
       </div>
 
@@ -206,7 +226,7 @@ export const App: React.FC = () => {
         <div style={{
           position: 'fixed',
           inset: 0,
-          backgroundColor: 'rgba(8,9,14,0.85)',
+          backgroundColor: 'rgba(var(--bg-main-rgb), 0.85)',
           backdropFilter: 'blur(12px)',
           display: 'flex',
           flexDirection: 'column',
@@ -228,10 +248,10 @@ export const App: React.FC = () => {
             <Loader2 size={32} color="#fff" className="animate-spin" />
           </div>
           <div style={{ textAlign: 'center' }}>
-            <h3 style={{ fontSize: '16px', fontWeight: 700, color: '#f8fafc' }}>
+            <h3 style={{ fontSize: '16px', fontWeight: 700, color: 'var(--text-primary)' }}>
               Resolving ani-cli Stream...
             </h3>
-            <p style={{ fontSize: '13px', color: '#94a3b8', marginTop: '4px' }}>
+            <p style={{ fontSize: '13px', color: 'var(--text-secondary)', marginTop: '4px' }}>
               Deobfuscating ZokoAnime server payload
             </p>
           </div>
@@ -320,7 +340,7 @@ export const App: React.FC = () => {
                     alignItems: 'center',
                     justifyContent: 'center',
                     gap: '3px',
-                    color: active ? '#fff' : '#8b93a7'
+                    color: active ? 'var(--select-text)' : 'var(--text-muted)'
                   }}
                 >
                   <Icon size={20} />

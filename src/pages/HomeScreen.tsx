@@ -69,14 +69,16 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
             <Play size={16} color="#fff" fill="#fff" style={{ marginLeft: '2px' }} />
           </div>
           <div>
-            <span style={{ fontSize: '19px', fontWeight: 800, letterSpacing: '-0.5px' }}>Ani</span>
+            <span style={{ fontSize: '19px', fontWeight: 800, letterSpacing: '-0.5px', color: '#fff' }}>Ani</span>
             <span style={{ fontSize: '19px', fontWeight: 800, background: 'var(--accent-gradient)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>Stream</span>
           </div>
         </div>
 
+        {/* Sits on the hero banner image, so it keeps the dark-glass look
+            regardless of app theme (same reasoning as the hero text below). */}
         <button
           onClick={onOpenSearch}
-          className="interactive glass-pill"
+          className="interactive glass-pill-dark"
           style={{
             padding: '7px 14px',
             borderRadius: 'var(--radius-full)',
@@ -109,7 +111,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
         <div style={{
           position: 'absolute',
           inset: 0,
-          background: 'linear-gradient(180deg, rgba(8,9,14,0.3) 0%, rgba(8,9,14,0.6) 50%, #08090e 100%)',
+          background: 'linear-gradient(180deg, rgba(8,9,14,0.3) 0%, rgba(8,9,14,0.6) 50%, var(--bg-main) 100%)',
           display: 'flex',
           flexDirection: 'column',
           justifyContent: 'flex-end',
@@ -129,11 +131,11 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
             }}>
               #1 Trending
             </span>
-            <span className="glass-pill" style={{ fontSize: '11px', fontWeight: 600, padding: '3px 8px', borderRadius: '6px', color: '#cbd5e1' }}>
+            <span className="glass-pill-dark" style={{ fontSize: '11px', fontWeight: 600, padding: '3px 8px', borderRadius: '6px', color: '#cbd5e1' }}>
               {heroAnime.type || 'TV'}
             </span>
             {heroAnime.subCount && (
-              <span className="glass-pill" style={{ fontSize: '11px', fontWeight: 600, padding: '3px 8px', borderRadius: '6px', color: '#818cf8' }}>
+              <span className="glass-pill-dark" style={{ fontSize: '11px', fontWeight: 600, padding: '3px 8px', borderRadius: '6px', color: '#818cf8' }}>
                 SUB: {heroAnime.subCount}
               </span>
             )}
@@ -192,7 +194,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
 
             <button
               onClick={() => onSelectAnime(heroAnime)}
-              className="interactive glass-pill"
+              className="interactive glass-pill-dark"
               style={{
                 width: '46px',
                 height: '46px',
@@ -215,10 +217,10 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
         <div style={{ padding: '24px 20px 8px 20px' }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '14px' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-              <Clock size={18} color="#6366f1" />
-              <h2 style={{ fontSize: '17px', fontWeight: 700, color: '#f8fafc' }}>Continue Watching</h2>
+              <Clock size={18} color="var(--accent-primary)" />
+              <h2 style={{ fontSize: '17px', fontWeight: 700, color: 'var(--text-primary)' }}>Continue Watching</h2>
             </div>
-            <span style={{ fontSize: '12px', color: '#94a3b8' }}>{history.length} items</span>
+            <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>{history.length} items</span>
           </div>
 
           <div style={{
@@ -280,14 +282,14 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
                     <h4 style={{
                       fontSize: '13px',
                       fontWeight: 700,
-                      color: '#f8fafc',
+                      color: 'var(--text-primary)',
                       whiteSpace: 'nowrap',
                       overflow: 'hidden',
                       textOverflow: 'ellipsis'
                     }}>
                       {item.animeTitle}
                     </h4>
-                    <span style={{ fontSize: '11px', color: '#94a3b8' }}>
+                    <span style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>
                       Episode {item.episodeNumber} • {progressPct}% watched
                     </span>
                   </div>
@@ -303,7 +305,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '16px' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
             <Flame size={20} color="#f43f5e" />
-            <h2 style={{ fontSize: '18px', fontWeight: 800, color: '#f8fafc' }}>Popular Anime</h2>
+            <h2 style={{ fontSize: '18px', fontWeight: 800, color: 'var(--text-primary)' }}>Popular Anime</h2>
           </div>
           <button 
             onClick={onOpenSearch}
@@ -374,7 +376,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
                 <h3 style={{
                   fontSize: '14px',
                   fontWeight: 700,
-                  color: '#f8fafc',
+                  color: 'var(--text-primary)',
                   lineHeight: '1.3',
                   display: '-webkit-box',
                   WebkitLineClamp: 2,

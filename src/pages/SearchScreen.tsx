@@ -72,14 +72,14 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({
             alignItems: 'center',
             justifyContent: 'center',
             border: 'none',
-            color: '#fff',
+            color: 'var(--text-primary)',
             flexShrink: 0
           }}
         >
           <ArrowLeft size={20} />
         </button>
 
-        <div 
+        <div
           className="glass-panel"
           style={{
             flex: 1,
@@ -87,11 +87,10 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({
             alignItems: 'center',
             gap: '10px',
             padding: '10px 14px',
-            borderRadius: 'var(--radius-full)',
-            border: '1px solid rgba(255, 255, 255, 0.12)'
+            borderRadius: 'var(--radius-full)'
           }}
         >
-          <SearchIcon size={18} color="#94a3b8" />
+          <SearchIcon size={18} color="var(--text-muted)" />
           <input
             ref={inputRef}
             type="text"
@@ -102,7 +101,7 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({
               flex: 1,
               backgroundColor: 'transparent',
               border: 'none',
-              color: '#fff',
+              color: 'var(--text-primary)',
               fontSize: '14px',
               fontWeight: 500
             }}
@@ -111,7 +110,7 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({
             <button
               onClick={() => handleSearch('')}
               className="interactive"
-              style={{ background: 'none', border: 'none', color: '#94a3b8', display: 'flex' }}
+              style={{ background: 'none', border: 'none', color: 'var(--text-muted)', display: 'flex' }}
             >
               <X size={18} />
             </button>
@@ -121,47 +120,48 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({
 
       {/* Suggested Quick Tags */}
       <div style={{ padding: '14px 20px', display: 'flex', gap: '8px', overflowX: 'auto', scrollbarWidth: 'none' }}>
-        {POPULAR_TAGS.map((tag) => (
-          <button
-            key={tag}
-            onClick={() => handleSearch(tag)}
-            className="interactive glass-pill"
-            style={{
-              padding: '6px 14px',
-              borderRadius: 'var(--radius-full)',
-              border: query.toLowerCase() === tag.toLowerCase() ? '1px solid #6366f1' : 'none',
-              backgroundColor: query.toLowerCase() === tag.toLowerCase() ? 'rgba(99, 102, 241, 0.25)' : 'transparent',
-              color: query.toLowerCase() === tag.toLowerCase() ? '#818cf8' : '#94a3b8',
-              fontSize: '12px',
-              fontWeight: 600,
-              whiteSpace: 'nowrap'
-            }}
-          >
-            {tag}
-          </button>
-        ))}
+        {POPULAR_TAGS.map((tag) => {
+          const active = query.toLowerCase() === tag.toLowerCase();
+          return (
+            <button
+              key={tag}
+              onClick={() => handleSearch(tag)}
+              className={`interactive glass-pill chip ${active ? 'active' : ''}`}
+              style={{
+                padding: '6px 14px',
+                borderRadius: 'var(--radius-full)',
+                color: active ? undefined : 'var(--text-secondary)',
+                fontSize: '12px',
+                fontWeight: 600,
+                whiteSpace: 'nowrap'
+              }}
+            >
+              {tag}
+            </button>
+          );
+        })}
       </div>
 
       {/* Results Header */}
       <div style={{ padding: '0 20px 12px 20px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-          <TrendingUp size={16} color="#6366f1" />
-          <span style={{ fontSize: '14px', fontWeight: 700, color: '#e2e8f0' }}>
+          <TrendingUp size={16} color="var(--accent-primary)" />
+          <span style={{ fontSize: '14px', fontWeight: 700, color: 'var(--text-primary)' }}>
             {query ? `Results for "${query}"` : "Top Trending Anime"}
           </span>
         </div>
-        <span style={{ fontSize: '12px', color: '#64748b' }}>{results.length} results</span>
+        <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>{results.length} results</span>
       </div>
 
       {/* Loading or Results Grid */}
       {loading ? (
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '60px 0', gap: '10px', color: '#94a3b8' }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '60px 0', gap: '10px', color: 'var(--text-secondary)' }}>
           <Loader2 size={24} className="animate-spin" />
           <span style={{ fontSize: '14px' }}>Searching ani-cli database...</span>
         </div>
       ) : results.length === 0 ? (
-        <div style={{ textAlign: 'center', padding: '60px 20px', color: '#94a3b8' }}>
-          <p style={{ fontSize: '16px', fontWeight: 600, marginBottom: '6px', color: '#cbd5e1' }}>No anime found</p>
+        <div style={{ textAlign: 'center', padding: '60px 20px', color: 'var(--text-secondary)' }}>
+          <p style={{ fontSize: '16px', fontWeight: 600, marginBottom: '6px', color: 'var(--text-primary)' }}>No anime found</p>
           <p style={{ fontSize: '13px' }}>Try searching with a different title or keyword.</p>
         </div>
       ) : (
@@ -216,7 +216,7 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({
                 <h3 style={{
                   fontSize: '14px',
                   fontWeight: 700,
-                  color: '#f8fafc',
+                  color: 'var(--text-primary)',
                   lineHeight: '1.3',
                   display: '-webkit-box',
                   WebkitLineClamp: 2,

@@ -6,12 +6,20 @@ import {
   Subtitles, Maximize, Minimize, SkipForward, FastForward, Volume2, VolumeX 
 } from 'lucide-react';
 import type { StreamSource, EpisodeItem } from '../core/aniCliCore';
+import { getUserPreferences } from '../services/historyService';
 
 const resolvePlayableUrl = (url?: string, _referer?: string): string => {
   if (!url) return '';
   // Return direct URL directly so hls.js can load it without requiring a local proxy server
   return url;
 };
+
+// ani-cli streams carry no chapter/intro metadata, so we fall back to a
+// fixed window that covers a typical anime OP: the button (or auto-skip)
+// jumps to an absolute timestamp, not a relative offset from wherever
+// playback happens to be when it's triggered.
+const INTRO_WINDOW_START = 3;
+const INTRO_SKIP_TARGET = 88;
 
 interface VideoPlayerProps {
   streamSource: StreamSource;
@@ -54,8 +62,21 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   const [activeSubtitle, setActiveSubtitle] = useState<string | null>('English');
   const [isMuted, setIsMuted] = useState<boolean>(false);
   const [showSkipIntro, setShowSkipIntro] = useState<boolean>(false);
+  const [skippedIntroToast, setSkippedIntroToast] = useState<boolean>(false);
   const [doubleTapFeedback, setDoubleTapFeedback] = useState<'left' | 'right' | null>(null);
   const [videoTrackWarning, setVideoTrackWarning] = useState<string | null>(null);
+  const [autoSkipIntro, setAutoSkipIntro] = useState<boolean>(false);
+  const autoSkippedRef = useRef<boolean>(false);
+
+  useEffect(() => {
+    getUserPreferences().then(p => setAutoSkipIntro(p.autoSkipIntro));
+  }, []);
+
+  // A new episode/stream means a fresh intro window to (maybe) auto-skip.
+  useEffect(() => {
+    autoSkippedRef.current = false;
+    setShowSkipIntro(false);
+  }, [streamSource.streamUrl]);
 
   // Initialize Hls / Video stream
   useEffect(() => {
@@ -192,6 +213,21 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     resetControlsTimer();
   };
 
+  // Seeks to an absolute timestamp, clamped to the known duration (falls
+  // back to just clamping at 0 if duration isn't known yet).
+  const seekTo = (seconds: number) => {
+    const video = videoRef.current;
+    if (!video) return;
+    const max = video.duration && isFinite(video.duration) ? video.duration : Infinity;
+    video.currentTime = Math.max(0, Math.min(seconds, max));
+  };
+
+  const skipIntro = () => {
+    seekTo(INTRO_SKIP_TARGET);
+    setShowSkipIntro(false);
+    resetControlsTimer();
+  };
+
   // Double tap to seek (left side: -10s, right side: +10s)
   const handleTap = (e: React.MouseEvent<HTMLDivElement>) => {
     const now = Date.now();
@@ -224,11 +260,18 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     if (!video) return;
     setCurrentTime(video.currentTime);
 
-    // Show skip intro button between 0s and 120s
-    if (video.currentTime >= 5 && video.currentTime <= 120) {
-      setShowSkipIntro(true);
-    } else {
+    // Offer the skip (or auto-skip) only while we're inside the intro
+    // window and haven't already reached/passed the skip target.
+    const inIntroWindow = video.currentTime >= INTRO_WINDOW_START && video.currentTime < INTRO_SKIP_TARGET;
+
+    if (inIntroWindow && autoSkipIntro && !autoSkippedRef.current) {
+      autoSkippedRef.current = true;
+      seekTo(INTRO_SKIP_TARGET);
       setShowSkipIntro(false);
+      setSkippedIntroToast(true);
+      setTimeout(() => setSkippedIntroToast(false), 1800);
+    } else {
+      setShowSkipIntro(inIntroWindow && !autoSkipIntro);
     }
 
     // Buffer progress
@@ -403,13 +446,14 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
         </div>
       )}
 
-      {/* Skip Intro Floating Pill */}
+      {/* Skip Intro Floating Pill - jumps to a fixed timestamp (not a
+          relative +Ns hop), so it actually clears the opening wherever
+          playback happens to be when tapped. */}
       {showSkipIntro && (
         <button
           onClick={(e) => {
             e.stopPropagation();
-            seekBy(85);
-            setShowSkipIntro(false);
+            skipIntro();
           }}
           className="interactive glass-pill"
           style={{
@@ -424,14 +468,40 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
             color: '#fff',
             fontSize: '13px',
             fontWeight: 700,
-            border: '1px solid rgba(99, 102, 241, 0.5)',
-            boxShadow: '0 4px 20px rgba(0,0,0,0.7)',
+            boxShadow: '0 4px 20px rgba(0,0,0,0.5)',
             zIndex: 10
           }}
         >
-          <FastForward size={16} color="#6366f1" />
-          <span>Skip Intro (+85s)</span>
+          <FastForward size={16} />
+          <span>Skip Intro</span>
         </button>
+      )}
+
+      {/* Auto-skip confirmation toast (shown instead of the button when the
+          "Auto-Skip Intro" setting is on). */}
+      {skippedIntroToast && (
+        <div
+          className="glass-pill animate-pop-in"
+          style={{
+            position: 'absolute',
+            bottom: '110px',
+            right: '20px',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '8px',
+            padding: '10px 18px',
+            borderRadius: 'var(--radius-full)',
+            color: '#fff',
+            fontSize: '13px',
+            fontWeight: 700,
+            boxShadow: '0 4px 20px rgba(0,0,0,0.5)',
+            zIndex: 10,
+            pointerEvents: 'none'
+          }}
+        >
+          <FastForward size={16} />
+          <span>Intro skipped</span>
+        </div>
       )}
 
       {/* Controls Overlay */}
@@ -501,7 +571,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
                 alignItems: 'center',
                 gap: '6px',
                 border: 'none',
-                color: activeSubtitle ? '#6366f1' : '#94a3b8',
+                color: activeSubtitle ? '#ffffff' : '#94a3b8',
                 fontSize: '12px',
                 fontWeight: 600
               }}
@@ -535,7 +605,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
         {/* Quality Menu Overlay */}
         {showQualityMenu && (
           <div 
-            className="glass-panel"
+            className="glass-panel-dark"
             style={{
               position: 'absolute',
               top: '70px',
@@ -576,8 +646,8 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
                 style={{
                   padding: '8px 14px',
                   borderRadius: 'var(--radius-sm)',
-                  backgroundColor: selectedQuality === item.quality ? 'rgba(99, 102, 241, 0.25)' : 'transparent',
-                  color: selectedQuality === item.quality ? '#818cf8' : '#cbd5e1',
+                  backgroundColor: selectedQuality === item.quality ? 'rgba(255, 255, 255, 0.14)' : 'transparent',
+                  color: selectedQuality === item.quality ? '#ffffff' : '#cbd5e1',
                   fontSize: '13px',
                   fontWeight: selectedQuality === item.quality ? 700 : 500,
                   border: 'none',
@@ -593,7 +663,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
         {/* Subtitle Menu Overlay */}
         {showSubtitleMenu && (
           <div 
-            className="glass-panel"
+            className="glass-panel-dark"
             style={{
               position: 'absolute',
               top: '70px',
@@ -617,8 +687,8 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
               style={{
                 padding: '8px 14px',
                 borderRadius: 'var(--radius-sm)',
-                backgroundColor: activeSubtitle === null ? 'rgba(99, 102, 241, 0.25)' : 'transparent',
-                color: activeSubtitle === null ? '#818cf8' : '#cbd5e1',
+                backgroundColor: activeSubtitle === null ? 'rgba(255, 255, 255, 0.14)' : 'transparent',
+                color: activeSubtitle === null ? '#ffffff' : '#cbd5e1',
                 fontSize: '13px',
                 fontWeight: activeSubtitle === null ? 700 : 500,
                 border: 'none',
@@ -638,8 +708,8 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
                 style={{
                   padding: '8px 14px',
                   borderRadius: 'var(--radius-sm)',
-                  backgroundColor: activeSubtitle === s.label ? 'rgba(99, 102, 241, 0.25)' : 'transparent',
-                  color: activeSubtitle === s.label ? '#818cf8' : '#cbd5e1',
+                  backgroundColor: activeSubtitle === s.label ? 'rgba(255, 255, 255, 0.14)' : 'transparent',
+                  color: activeSubtitle === s.label ? '#ffffff' : '#cbd5e1',
                   fontSize: '13px',
                   fontWeight: activeSubtitle === s.label ? 700 : 500,
                   border: 'none',
