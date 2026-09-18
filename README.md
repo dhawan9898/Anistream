@@ -7,6 +7,15 @@
 
 **AniStream** is a high-performance, ad-free Android application with a silky-smooth cinema UI designed for streaming anime, using the scraping, decryption, and streaming mechanics of **`ani-cli`** as its core engine.
 
+> **📦 Merged into Stream Hub.** AniStream's anime engine (search, detail,
+> playback, sub/dub, skip-intro) has been merged into
+> [dhawan9898/stream.io](https://github.com/dhawan9898/stream.io) as the
+> "Anime" tab of a combined movies/TV/anime app called **Stream Hub** — see
+> the [`claude/merge-streaming-apps-cbqti4`](https://github.com/dhawan9898/stream.io/tree/claude/merge-streaming-apps-cbqti4)
+> branch there. This repository's code is unchanged and still builds and
+> runs standalone; new feature work for the anime engine should happen in
+> the merged app going forward.
+
 ---
 
 ## 📥 Download v1.0 APK
