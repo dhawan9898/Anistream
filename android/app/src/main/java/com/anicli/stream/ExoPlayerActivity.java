@@ -391,6 +391,14 @@ public class ExoPlayerActivity extends AppCompatActivity {
             for (int i = 0; i < group.length; i++) {
                 Format format = group.getTrackFormat(i);
                 if (currentSubtitleLabel.equals(format.id)) {
+                    // If ExoPlayer itself flags this track as unsupported
+                    // (e.g. a format/codec it can't decode), selecting it
+                    // will never render anything - log it so that's visible
+                    // in logcat instead of silently doing nothing.
+                    if (!group.isTrackSupported(i)) {
+                        Log.w(TAG, "Subtitle track '" + currentSubtitleLabel + "' (mimeType=" + format.sampleMimeType
+                                + ") is reported unsupported by ExoPlayer - it will not render.");
+                    }
                     player.setTrackSelectionParameters(
                             player.getTrackSelectionParameters().buildUpon()
                                     .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false)
@@ -402,6 +410,7 @@ public class ExoPlayerActivity extends AppCompatActivity {
                 }
             }
         }
+        Log.w(TAG, "Subtitle track '" + currentSubtitleLabel + "' not found in any text track group yet.");
     }
 
     // Populates qualityOptions from the "qualities" intent extra - but only
@@ -776,7 +785,7 @@ public class ExoPlayerActivity extends AppCompatActivity {
                 }
                 boolean isDefault = obj.optBoolean("default", i == 0);
                 MediaItem.SubtitleConfiguration config = new MediaItem.SubtitleConfiguration.Builder(Uri.parse(src))
-                        .setMimeType(MimeTypes.TEXT_VTT)
+                        .setMimeType(subtitleMimeType(src))
                         .setLanguage(label.toLowerCase(java.util.Locale.US))
                         .setLabel(label)
                         .setId(label)
@@ -793,6 +802,22 @@ public class ExoPlayerActivity extends AppCompatActivity {
             defaultSubtitleLabel = subtitleLabels.get(0);
         }
         return configs;
+    }
+
+    // Forcing every subtitle track to WebVTT regardless of its real format
+    // was an unverified assumption - if a track is actually SRT/ASS/TTML,
+    // parsing it as WebVTT silently yields zero cues (track selectable,
+    // nothing ever renders, no error). Infer the real format from the file
+    // extension instead, only defaulting to VTT when the extension doesn't
+    // say otherwise.
+    private static String subtitleMimeType(String url) {
+        String lower = url.toLowerCase(java.util.Locale.US);
+        int query = lower.indexOf('?');
+        String path = query >= 0 ? lower.substring(0, query) : lower;
+        if (path.endsWith(".srt")) return MimeTypes.APPLICATION_SUBRIP;
+        if (path.endsWith(".ssa") || path.endsWith(".ass")) return MimeTypes.TEXT_SSA;
+        if (path.endsWith(".ttml") || path.endsWith(".dfxp") || path.endsWith(".xml")) return MimeTypes.APPLICATION_TTML;
+        return MimeTypes.TEXT_VTT;
     }
 
     private void updateProgress() {
