@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Play, Flame, Clock, ChevronRight, Bookmark } from 'lucide-react';
-import { FEATURED_ANIME, getTrendingAnime, type AnimeItem } from '../core/aniCliCore';
+import { getTrendingAnime, type AnimeItem } from '../core/aniCliCore';
 import { getWatchHistory, type WatchHistoryItem } from '../services/historyService';
 
 interface HomeScreenProps {
@@ -16,12 +16,14 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
 }) => {
   const [featuredIndex, setFeaturedIndex] = useState<number>(0);
   const [history, setHistory] = useState<WatchHistoryItem[]>([]);
-  const [trending, setTrending] = useState<AnimeItem[]>(FEATURED_ANIME);
+  const [trending, setTrending] = useState<AnimeItem[]>([]);
+  const [loadingTrending, setLoadingTrending] = useState<boolean>(true);
 
   useEffect(() => {
     getTrendingAnime().then(list => {
       setTrending(list);
       setFeaturedIndex(0);
+      setLoadingTrending(false);
     });
   }, []);
 
@@ -37,7 +39,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
     getWatchHistory().then(setHistory);
   }, []);
 
-  const heroAnime = trending[featuredIndex] || trending[0] || FEATURED_ANIME[0];
+  const heroAnime = trending[featuredIndex] || trending[0];
 
   return (
     <div style={{ flex: 1, overflowY: 'auto', paddingBottom: '90px', position: 'relative' }}>
@@ -96,6 +98,12 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
       </div>
 
       {/* Cinematic Hero Carousel Banner */}
+      {!heroAnime ? (
+        <div
+          className="skeleton"
+          style={{ width: '100%', height: '420px', marginTop: '-60px' }}
+        />
+      ) : (
       <div style={{ position: 'relative', width: '100%', minHeight: '380px', marginTop: '-60px' }}>
         <img
           src={heroAnime.banner || heroAnime.poster}
@@ -211,6 +219,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
           </div>
         </div>
       </div>
+      )}
 
       {/* Continue Watching Section */}
       {history.length > 0 && (
@@ -322,7 +331,11 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
           gridTemplateColumns: 'repeat(2, 1fr)',
           gap: '14px'
         }}>
-          {trending.map((anime) => (
+          {loadingTrending ? (
+            Array.from({ length: 6 }).map((_, i) => (
+              <div key={i} className="skeleton" style={{ borderRadius: 'var(--radius-md)', paddingTop: '155%' }} />
+            ))
+          ) : trending.map((anime) => (
             <div
               key={anime.id}
               onClick={() => onSelectAnime(anime)}

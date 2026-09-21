@@ -268,6 +268,24 @@ body {
   50% { transform: translateY(-4px); }
 }
 
+@keyframes skeletonShimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
+/* Loading placeholder - never real (or fake-real) content, just an inert
+   shimmering block, so a slow fetch never reads as fabricated data. */
+.skeleton {
+  background: linear-gradient(
+    100deg,
+    var(--bg-glass) 30%,
+    rgba(255, 255, 255, 0.08) 50%,
+    var(--bg-glass) 70%
+  );
+  background-size: 200% 100%;
+  animation: skeletonShimmer 1.6s ease-in-out infinite;
+}
+
 .animate-fade-in {
   animation: fadeIn 0.35s cubic-bezier(0.16, 1, 0.3, 1) forwards;
 }

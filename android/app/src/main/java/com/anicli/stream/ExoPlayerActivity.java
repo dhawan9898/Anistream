@@ -284,9 +284,14 @@ public class ExoPlayerActivity extends AppCompatActivity {
         bg.setShape(GradientDrawable.RECTANGLE);
         bg.setCornerRadius(radiusDp * density);
         int a = Math.round(alpha * 255);
-        bg.setColor(Color.argb(a, 20, 20, 30));
-        bg.setStroke(Math.round(density), Color.argb(40, 255, 255, 255));
+        // A vertical gradient (lighter top edge fading to a darker base)
+        // reads as a curved glass surface catching light, instead of a flat
+        // tinted rectangle - matching the web UI's "liquid glass" panels.
+        bg.setOrientation(GradientDrawable.Orientation.TOP_BOTTOM);
+        bg.setColors(new int[]{Color.argb(a, 46, 46, 62), Color.argb(a, 16, 16, 24)});
+        bg.setStroke(Math.round(density), Color.argb(55, 255, 255, 255));
         view.setBackground(bg);
+        view.setElevation(3f * density);
     }
 
     private GradientDrawable edgeScrim(GradientDrawable.Orientation orientation) {
@@ -536,11 +541,17 @@ public class ExoPlayerActivity extends AppCompatActivity {
         LinearLayout sheet = new LinearLayout(this);
         sheet.setOrientation(LinearLayout.VERTICAL);
         GradientDrawable sheetBg = new GradientDrawable();
-        sheetBg.setColor(Color.parseColor("#1c1c24"));
+        // Same lighter-top-to-darker-base gradient as the pill buttons, plus
+        // a brighter top stroke as a specular edge - a flat single color
+        // read as a plain dropdown, not a glossy panel.
+        sheetBg.setOrientation(GradientDrawable.Orientation.TOP_BOTTOM);
+        sheetBg.setColors(new int[]{Color.parseColor("#2a2a38"), Color.parseColor("#16161e")});
+        sheetBg.setStroke(Math.round(density), Color.argb(60, 255, 255, 255));
         sheetBg.setCornerRadii(new float[]{
                 20f * density, 20f * density, 20f * density, 20f * density, 0f, 0f, 0f, 0f
         });
         sheet.setBackground(sheetBg);
+        sheet.setElevation(12f * density);
         sheet.setPadding(0, Math.round(10 * density), 0, Math.round(28 * density));
 
         View handle = new View(this);
