@@ -79,9 +79,11 @@ jobs:
             ## AniStream v3.0 - Android Anime Streaming App (Powered by ani-cli)
 
             ### 🚀 Updates in this build:
-            - **Real captions menu**: the in-app player now lists every subtitle language actually present in the stream and lets you pick one (or turn captions off), instead of a single on/off toggle.
+            - **Netflix-style captions/quality sheet**: replaced the small dropdown menu with a proper bottom sheet (dimmed background, rounded panel, big rows with checkmarks) for picking a subtitle language or quality.
+            - **Subtitle format fix**: every subtitle track was being force-parsed as WebVTT regardless of its real format, which silently renders nothing if the track is actually SRT/ASS/TTML. Now the format is detected from the file itself instead of assumed.
             - **Real quality menu**: prefers the actual adaptive renditions detected in the stream (switches in place, no reload) and only falls back to a per-URL quality list when it's a genuine choice - never a fake "1080p/720p/480p" list pointing at the same file.
-            - **Cleaner player controls**: the quality and subtitle menus dismiss on an outside tap instead of stacking or staying open indefinitely.
+
+            Captions were reported not rendering in the previous build; the subtitle format fix above is our best diagnosis of that from the available evidence, not a confirmed fix - please test and report back if captions still don't show.
 
             ### 📦 Download:
             Download **`AniStream-v3.0.apk`** below and install on any Android device running Android 8.0 or later!
