@@ -346,7 +346,6 @@ public class ExoPlayerActivity extends AppCompatActivity {
     // ever offer languages that were really provided - never a guess.
     private void showAudioSubtitlesMenu(View anchor) {
         PopupMenu menu = new PopupMenu(this, anchor);
-        menu.setGroupDividerEnabled(true);
 
         int offId = 0;
         menu.getMenu().add(0, offId, 0, currentSubtitleLabel == null ? "✓ Subtitles Off" : "Subtitles Off");
