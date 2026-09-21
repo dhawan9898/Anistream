@@ -1,8 +1,10 @@
 package com.anicli.stream;
 
+import android.app.Dialog;
 import android.content.Context;
 import android.content.Intent;
 import android.graphics.Color;
+import android.graphics.drawable.ColorDrawable;
 import android.graphics.drawable.GradientDrawable;
 import android.media.AudioManager;
 import android.net.Uri;
@@ -12,8 +14,10 @@ import android.os.Looper;
 import android.provider.Settings;
 import android.util.Log;
 import android.view.GestureDetector;
+import android.view.Gravity;
 import android.view.MotionEvent;
 import android.view.View;
+import android.view.Window;
 import android.view.WindowManager;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
@@ -21,7 +25,6 @@ import android.widget.SeekBar;
 import android.widget.TextView;
 
 import androidx.appcompat.app.AppCompatActivity;
-import androidx.appcompat.widget.PopupMenu;
 import androidx.media3.common.C;
 import androidx.media3.common.Format;
 import androidx.media3.common.MediaItem;
@@ -345,36 +348,14 @@ public class ExoPlayerActivity extends AppCompatActivity {
     // language actually present in this stream's subtitle list, so we only
     // ever offer languages that were really provided - never a guess.
     private void showAudioSubtitlesMenu(View anchor) {
-        PopupMenu menu = new PopupMenu(this, anchor);
-
-        int offId = 0;
-        menu.getMenu().add(0, offId, 0, currentSubtitleLabel == null ? "✓ Subtitles Off" : "Subtitles Off");
-
-        java.util.Map<Integer, String> idToLabel = new java.util.HashMap<>();
-        int nextId = 1;
+        java.util.List<MenuRow> rows = new java.util.ArrayList<>();
+        rows.add(new MenuRow("Off", currentSubtitleLabel == null, () -> selectSubtitle(null)));
         for (String label : subtitleLabels) {
-            int itemId = nextId++;
-            boolean selected = label.equals(currentSubtitleLabel);
-            menu.getMenu().add(0, itemId, itemId, (selected ? "✓ " : "") + label);
-            idToLabel.put(itemId, label);
+            rows.add(new MenuRow(label, label.equals(currentSubtitleLabel), () -> selectSubtitle(label)));
         }
-
         String otherMode = "sub".equals(currentMode) ? "Dub" : "Sub";
-        int audioId = nextId;
-        menu.getMenu().add(1, audioId, audioId, "Switch Audio to " + otherMode);
-
-        menu.setOnMenuItemClickListener(item -> {
-            int itemId = item.getItemId();
-            if (itemId == offId) {
-                selectSubtitle(null);
-            } else if (itemId == audioId) {
-                requestModeSwitch();
-            } else if (idToLabel.containsKey(itemId)) {
-                selectSubtitle(idToLabel.get(itemId));
-            }
-            return true;
-        });
-        menu.show();
+        rows.add(new MenuRow("Switch Audio to " + otherMode, false, this::requestModeSwitch));
+        showBottomSheetMenu("Subtitles", rows);
     }
 
     private void requestModeSwitch() {
@@ -471,18 +452,13 @@ public class ExoPlayerActivity extends AppCompatActivity {
     // trustworthy source of "supported quality", used whenever it's
     // available.
     private void showAdaptiveQualityMenu(View anchor) {
-        PopupMenu menu = new PopupMenu(this, anchor);
-        menu.getMenu().add(0, 0, 0, (currentVideoTrackIndex == -1 ? "✓ " : "") + "Auto");
+        java.util.List<MenuRow> rows = new java.util.ArrayList<>();
+        rows.add(new MenuRow("Auto", currentVideoTrackIndex == -1, () -> selectVideoQuality(-1)));
         for (VideoQualityOption option : videoQualityOptions) {
             boolean selected = option.trackIndex == currentVideoTrackIndex;
-            menu.getMenu().add(0, option.trackIndex + 1, option.trackIndex + 1, (selected ? "✓ " : "") + option.label);
+            rows.add(new MenuRow(option.label, selected, () -> selectVideoQuality(option.trackIndex)));
         }
-        menu.setOnMenuItemClickListener(item -> {
-            int id = item.getItemId();
-            selectVideoQuality(id == 0 ? -1 : id - 1);
-            return true;
-        });
-        menu.show();
+        showBottomSheetMenu("Video Quality", rows);
     }
 
     // Forces (or clears, for Auto) a specific rendition within the adaptive
@@ -523,17 +499,112 @@ public class ExoPlayerActivity extends AppCompatActivity {
     }
 
     private void showUrlQualityMenu(View anchor) {
-        PopupMenu menu = new PopupMenu(this, anchor);
-        for (int i = 0; i < qualityOptions.size(); i++) {
-            QualityOption option = qualityOptions.get(i);
-            boolean selected = option.label.equals(currentQualityLabel);
-            menu.getMenu().add(0, i, i, (selected ? "✓ " : "") + option.label);
+        java.util.List<MenuRow> rows = new java.util.ArrayList<>();
+        for (QualityOption option : qualityOptions) {
+            rows.add(new MenuRow(option.label, option.label.equals(currentQualityLabel), () -> switchQuality(option)));
         }
-        menu.setOnMenuItemClickListener(item -> {
-            switchQuality(qualityOptions.get(item.getItemId()));
-            return true;
+        showBottomSheetMenu("Video Quality", rows);
+    }
+
+    private static final class MenuRow {
+        final String label;
+        final boolean selected;
+        final Runnable onSelect;
+
+        MenuRow(String label, boolean selected, Runnable onSelect) {
+            this.label = label;
+            this.selected = selected;
+            this.onSelect = onSelect;
+        }
+    }
+
+    // Netflix-style bottom sheet: a dimmed scrim behind a rounded-top dark
+    // panel sliding up from the bottom, with big tappable rows and a
+    // checkmark on whichever one is active - not a tiny anchored dropdown.
+    private void showBottomSheetMenu(String title, java.util.List<MenuRow> rows) {
+        float density = getResources().getDisplayMetrics().density;
+
+        LinearLayout sheet = new LinearLayout(this);
+        sheet.setOrientation(LinearLayout.VERTICAL);
+        GradientDrawable sheetBg = new GradientDrawable();
+        sheetBg.setColor(Color.parseColor("#1c1c24"));
+        sheetBg.setCornerRadii(new float[]{
+                20f * density, 20f * density, 20f * density, 20f * density, 0f, 0f, 0f, 0f
         });
-        menu.show();
+        sheet.setBackground(sheetBg);
+        sheet.setPadding(0, Math.round(10 * density), 0, Math.round(28 * density));
+
+        View handle = new View(this);
+        LinearLayout.LayoutParams handleParams =
+                new LinearLayout.LayoutParams(Math.round(36 * density), Math.round(4 * density));
+        handleParams.gravity = Gravity.CENTER_HORIZONTAL;
+        handleParams.topMargin = Math.round(4 * density);
+        handleParams.bottomMargin = Math.round(18 * density);
+        handle.setLayoutParams(handleParams);
+        GradientDrawable handleBg = new GradientDrawable();
+        handleBg.setColor(Color.argb(90, 255, 255, 255));
+        handleBg.setCornerRadius(4f * density);
+        handle.setBackground(handleBg);
+        sheet.addView(handle);
+
+        TextView titleView = new TextView(this);
+        titleView.setText(title);
+        titleView.setTextColor(Color.WHITE);
+        titleView.setTextSize(17);
+        titleView.setTypeface(titleView.getTypeface(), android.graphics.Typeface.BOLD);
+        titleView.setPadding(Math.round(24 * density), 0, Math.round(24 * density), Math.round(10 * density));
+        sheet.addView(titleView);
+
+        Dialog dialog = new Dialog(this);
+        dialog.requestWindowFeature(Window.FEATURE_NO_TITLE);
+
+        android.util.TypedValue rowBg = new android.util.TypedValue();
+        getTheme().resolveAttribute(android.R.attr.selectableItemBackground, rowBg, true);
+
+        for (MenuRow row : rows) {
+            LinearLayout rowView = new LinearLayout(this);
+            rowView.setOrientation(LinearLayout.HORIZONTAL);
+            rowView.setGravity(Gravity.CENTER_VERTICAL);
+            rowView.setMinimumHeight(Math.round(48 * density));
+            rowView.setPadding(Math.round(24 * density), Math.round(12 * density), Math.round(24 * density), Math.round(12 * density));
+            rowView.setClickable(true);
+            rowView.setFocusable(true);
+            if (rowBg.resourceId != 0) {
+                rowView.setBackgroundResource(rowBg.resourceId);
+            }
+
+            TextView check = new TextView(this);
+            check.setText(row.selected ? "✓" : "");
+            check.setTextColor(Color.parseColor("#6366f1"));
+            check.setTextSize(16);
+            check.setTypeface(check.getTypeface(), android.graphics.Typeface.BOLD);
+            LinearLayout.LayoutParams checkParams =
+                    new LinearLayout.LayoutParams(Math.round(28 * density), LinearLayout.LayoutParams.WRAP_CONTENT);
+            check.setLayoutParams(checkParams);
+            rowView.addView(check);
+
+            TextView label = new TextView(this);
+            label.setText(row.label);
+            label.setTextColor(row.selected ? Color.WHITE : Color.parseColor("#cbd5e1"));
+            label.setTextSize(15);
+            if (row.selected) label.setTypeface(label.getTypeface(), android.graphics.Typeface.BOLD);
+            rowView.addView(label);
+
+            rowView.setOnClickListener(v -> {
+                row.onSelect.run();
+                dialog.dismiss();
+            });
+            sheet.addView(rowView);
+        }
+
+        dialog.setContentView(sheet);
+        Window window = dialog.getWindow();
+        if (window != null) {
+            window.setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));
+            window.setLayout(WindowManager.LayoutParams.MATCH_PARENT, WindowManager.LayoutParams.WRAP_CONTENT);
+            window.setGravity(Gravity.BOTTOM);
+        }
+        dialog.show();
     }
 
     // Rebuilds the player against a different quality rendition, resuming at
