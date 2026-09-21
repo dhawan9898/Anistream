@@ -53,7 +53,9 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   const [selectedQuality, setSelectedQuality] = useState<string>(streamSource.quality || '1080p');
   const [showQualityMenu, setShowQualityMenu] = useState<boolean>(false);
   const [showSubtitleMenu, setShowSubtitleMenu] = useState<boolean>(false);
-  const [activeSubtitle, setActiveSubtitle] = useState<string | null>('English');
+  const [activeSubtitle, setActiveSubtitle] = useState<string | null>(
+    () => streamSource.subtitles.find(s => s.default)?.label ?? streamSource.subtitles[0]?.label ?? null
+  );
   const [isMuted, setIsMuted] = useState<boolean>(false);
   const [showSkipIntro, setShowSkipIntro] = useState<boolean>(false);
   const [skippedIntroToast, setSkippedIntroToast] = useState<boolean>(false);
@@ -74,7 +76,22 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     introLookupRef.current = null;
     setShowSkipIntro(false);
     setIntroInterval(null);
-  }, [streamSource.streamUrl]);
+    setSelectedQuality(streamSource.quality || '1080p');
+    setActiveSubtitle(streamSource.subtitles.find(s => s.default)?.label ?? streamSource.subtitles[0]?.label ?? null);
+  }, [streamSource.streamUrl, streamSource.quality, streamSource.subtitles]);
+
+  // Keep the browser's native text tracks in sync with the chosen caption
+  // label - selecting a caption in the menu only updates state, so without
+  // this the video would keep whatever track was 'showing' by default.
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video) return;
+    const tracks = video.textTracks;
+    for (let i = 0; i < tracks.length; i++) {
+      const label = streamSource.subtitles[i]?.label;
+      tracks[i].mode = label && label === activeSubtitle ? 'showing' : 'disabled';
+    }
+  }, [activeSubtitle, streamSource.subtitles]);
 
   // Real per-episode opening timestamps only become knowable once we have
   // this episode's actual duration (AniSkip needs it to normalize its
@@ -238,6 +255,52 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     seekTo(introInterval.end);
     setShowSkipIntro(false);
     resetControlsTimer();
+  };
+
+  // Switches to a different quality rendition, preserving playback position
+  // and play/pause state. Works whether the current/new source is HLS or a
+  // direct MP4 (the two are not always the same across qualities).
+  const switchQuality = (item: { quality: string; url: string }) => {
+    const video = videoRef.current;
+    if (!video || !item.url) return;
+
+    setSelectedQuality(item.quality);
+    setShowQualityMenu(false);
+
+    const prevTime = video.currentTime;
+    const wasPlaying = !video.paused;
+    const newUrl = resolvePlayableUrl(item.url, streamSource.referer);
+    const isNewMp4 = newUrl.includes('.mp4') || !newUrl.includes('.m3u8');
+
+    const resume = () => {
+      video.currentTime = prevTime;
+      if (wasPlaying) video.play().catch(() => {});
+    };
+
+    if (isNewMp4) {
+      if (hlsRef.current) {
+        hlsRef.current.destroy();
+        hlsRef.current = null;
+      }
+      video.src = newUrl;
+      video.addEventListener('loadedmetadata', resume, { once: true });
+      video.load();
+    } else if (hlsRef.current) {
+      hlsRef.current.loadSource(newUrl);
+      hlsRef.current.once(Hls.Events.MANIFEST_PARSED, resume);
+    } else if (Hls.isSupported()) {
+      const hls = new Hls({
+        enableWorker: false,
+        xhrSetup: (xhr) => xhr.setRequestHeader('Referer', streamSource.referer)
+      });
+      hls.loadSource(newUrl);
+      hls.attachMedia(video);
+      hlsRef.current = hls;
+      hls.once(Hls.Events.MANIFEST_PARSED, resume);
+    } else {
+      video.src = newUrl;
+      video.addEventListener('loadedmetadata', resume, { once: true });
+    }
   };
 
   // Double tap to seek (left side: -10s, right side: +10s)
@@ -533,7 +596,11 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
           pointerEvents: showControls ? 'auto' : 'none',
           transition: 'opacity 0.25s ease'
         }}
-        onClick={(e) => e.stopPropagation()}
+        onClick={(e) => {
+          e.stopPropagation();
+          setShowQualityMenu(false);
+          setShowSubtitleMenu(false);
+        }}
       >
         {/* Top Header Bar */}
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
@@ -577,7 +644,11 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
           <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
             {/* Subtitles Button */}
             <button
-              onClick={() => setShowSubtitleMenu(prev => !prev)}
+              onClick={(e) => {
+                e.stopPropagation();
+                setShowSubtitleMenu(prev => !prev);
+                setShowQualityMenu(false);
+              }}
               className="interactive glass-pill"
               style={{
                 padding: '6px 12px',
@@ -597,7 +668,11 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
 
             {/* Quality Button */}
             <button
-              onClick={() => setShowQualityMenu(prev => !prev)}
+              onClick={(e) => {
+                e.stopPropagation();
+                setShowQualityMenu(prev => !prev);
+                setShowSubtitleMenu(false);
+              }}
               className="interactive glass-pill"
               style={{
                 padding: '6px 12px',
@@ -619,8 +694,9 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
 
         {/* Quality Menu Overlay */}
         {showQualityMenu && (
-          <div 
+          <div
             className="glass-panel-dark"
+            onClick={(e) => e.stopPropagation()}
             style={{
               position: 'absolute',
               top: '70px',
@@ -641,22 +717,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
             ).map((item) => (
               <button
                 key={item.quality}
-                onClick={() => {
-                  setSelectedQuality(item.quality);
-                  setShowQualityMenu(false);
-                  if (videoRef.current && item.url) {
-                    const prevTime = videoRef.current.currentTime;
-                    if (hlsRef.current) {
-                      hlsRef.current.loadSource(resolvePlayableUrl(item.url, streamSource.referer));
-                      hlsRef.current.once(Hls.Events.MANIFEST_PARSED, () => {
-                        if (videoRef.current) {
-                          videoRef.current.currentTime = prevTime;
-                          videoRef.current.play();
-                        }
-                      });
-                    }
-                  }
-                }}
+                onClick={() => switchQuality(item)}
                 className="interactive"
                 style={{
                   padding: '8px 14px',
@@ -677,8 +738,9 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
 
         {/* Subtitle Menu Overlay */}
         {showSubtitleMenu && (
-          <div 
+          <div
             className="glass-panel-dark"
+            onClick={(e) => e.stopPropagation()}
             style={{
               position: 'absolute',
               top: '70px',
