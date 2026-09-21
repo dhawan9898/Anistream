@@ -23,9 +23,12 @@ import android.widget.TextView;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.appcompat.widget.PopupMenu;
 import androidx.media3.common.C;
+import androidx.media3.common.Format;
 import androidx.media3.common.MediaItem;
 import androidx.media3.common.MimeTypes;
 import androidx.media3.common.Player;
+import androidx.media3.common.TrackSelectionOverride;
+import androidx.media3.common.Tracks;
 import androidx.media3.common.util.UnstableApi;
 import androidx.media3.datasource.DefaultHttpDataSource;
 import androidx.media3.exoplayer.ExoPlayer;
@@ -62,6 +65,7 @@ public class ExoPlayerActivity extends AppCompatActivity {
     private TextView btnRewind;
     private TextView btnForward;
     private TextView btnAudioSubs;
+    private TextView btnQuality;
     private TextView btnSkipIntro;
     private TextView textTitle;
     private TextView textEpisode;
@@ -84,12 +88,60 @@ public class ExoPlayerActivity extends AppCompatActivity {
     private String pendingReferer;
     private String pendingSubtitlesJson;
 
+    // Every subtitle label found in the current stream's subtitle list, in
+    // order - used to build the CC picker. currentSubtitleLabel is null when
+    // captions are off, otherwise the label of the track that should be
+    // showing (matched against Format.id, which parseSubtitles() sets to the
+    // same label, once ExoPlayer reports its track groups).
+    private final java.util.List<String> subtitleLabels = new java.util.ArrayList<>();
+    private String defaultSubtitleLabel;
+    private String currentSubtitleLabel;
+    private boolean subtitleSelectionInitialized = false;
+
+    // Quality can come from two places, preferred in this order:
+    //
+    // 1. Adaptive renditions ExoPlayer itself reports for the manifest
+    //    (real, verified - only set once tracks actually resolve to more
+    //    than one video Format in the same group). Selecting one applies a
+    //    TrackSelectionOverride in place, no reload needed.
+    // 2. The "qualities" list the JS side supplied (from the scraper), used
+    //    only as a fallback, and only when it actually contains more than
+    //    one distinct URL - the current scraper often lists the same URL
+    //    under several fake quality labels, which is not a real choice and
+    //    must not be offered as one.
+    private boolean useAdaptiveQualityMenu = false;
+    private androidx.media3.common.TrackGroup adaptiveVideoGroup;
+    private final java.util.List<VideoQualityOption> videoQualityOptions = new java.util.ArrayList<>();
+    private int currentVideoTrackIndex = -1; // -1 == Auto (adaptive)
+
+    private final java.util.List<QualityOption> qualityOptions = new java.util.ArrayList<>();
+    private String currentQualityLabel;
+
     private final Handler handler = new Handler(Looper.getMainLooper());
-    private boolean subtitlesEnabled = true;
     private boolean userSeeking = false;
     private String currentMode = "sub";
     private String animeTitle;
     private String episodeNumber;
+
+    private static final class QualityOption {
+        final String label;
+        final String url;
+
+        QualityOption(String label, String url) {
+            this.label = label;
+            this.url = url;
+        }
+    }
+
+    private static final class VideoQualityOption {
+        final String label;
+        final int trackIndex;
+
+        VideoQualityOption(String label, int trackIndex) {
+            this.label = label;
+            this.trackIndex = trackIndex;
+        }
+    }
 
     private AudioManager audioManager;
     private float currentBrightness = 0.5f;
@@ -135,6 +187,7 @@ public class ExoPlayerActivity extends AppCompatActivity {
         String videoUrl = intent.getStringExtra("url");
         String referer = intent.getStringExtra("referer");
         String subtitlesJson = intent.getStringExtra("subtitles");
+        String qualitiesJson = intent.getStringExtra("qualities");
         animeTitle = intent.getStringExtra("title");
         episodeNumber = intent.getStringExtra("episode");
         currentMode = intent.getStringExtra("mode");
@@ -146,6 +199,12 @@ public class ExoPlayerActivity extends AppCompatActivity {
 
         textTitle.setText(animeTitle != null ? animeTitle : "AniStream");
         textEpisode.setText("Ep " + (episodeNumber != null ? episodeNumber : "1") + " • " + currentMode.toUpperCase());
+
+        parseQualities(qualitiesJson, videoUrl);
+        // Only worth a button when there's an actual choice to make - real
+        // adaptive renditions (detected later, once tracks resolve) can still
+        // turn this on even if the URL list didn't qualify.
+        btnQuality.setVisibility(qualityOptions.size() > 1 ? View.VISIBLE : View.GONE);
 
         if (videoUrl != null && !videoUrl.isEmpty()) {
             pendingVideoUrl = videoUrl;
@@ -168,6 +227,7 @@ public class ExoPlayerActivity extends AppCompatActivity {
         btnRewind = findViewById(R.id.btn_rewind);
         btnForward = findViewById(R.id.btn_forward);
         btnAudioSubs = findViewById(R.id.btn_audio_subs);
+        btnQuality = findViewById(R.id.btn_quality);
         btnSkipIntro = findViewById(R.id.btn_skip_intro);
         textTitle = findViewById(R.id.text_title);
         textEpisode = findViewById(R.id.text_episode);
@@ -190,6 +250,7 @@ public class ExoPlayerActivity extends AppCompatActivity {
     private void styleGlassChrome() {
         pill(btnBack, 20f, 0.35f);
         pill(btnAudioSubs, 20f, 0.35f);
+        pill(btnQuality, 20f, 0.35f);
         pill(btnRewind, 29f, 0.32f);
         pill(btnForward, 29f, 0.32f);
         pill(btnSkipIntro, 24f, 0.55f);
@@ -248,6 +309,7 @@ public class ExoPlayerActivity extends AppCompatActivity {
             btnSkipIntro.setVisibility(View.GONE);
         });
         btnAudioSubs.setOnClickListener(this::showAudioSubtitlesMenu);
+        btnQuality.setOnClickListener(this::showQualityMenu);
         btnPlayNextNow.setOnClickListener(v -> triggerNextEpisode());
         btnRetry.setOnClickListener(v -> retryPlayback());
 
@@ -278,18 +340,38 @@ public class ExoPlayerActivity extends AppCompatActivity {
         });
     }
 
-    // Netflix combines audio + subtitle selection behind one icon; do the same
-    // instead of two separate top-bar buttons.
+    // Netflix combines audio + subtitle language selection behind one icon;
+    // do the same instead of two separate top-bar buttons. "Off" plus every
+    // language actually present in this stream's subtitle list, so we only
+    // ever offer languages that were really provided - never a guess.
     private void showAudioSubtitlesMenu(View anchor) {
         PopupMenu menu = new PopupMenu(this, anchor);
+        menu.setGroupDividerEnabled(true);
+
+        int offId = 0;
+        menu.getMenu().add(0, offId, 0, currentSubtitleLabel == null ? "✓ Subtitles Off" : "Subtitles Off");
+
+        java.util.Map<Integer, String> idToLabel = new java.util.HashMap<>();
+        int nextId = 1;
+        for (String label : subtitleLabels) {
+            int itemId = nextId++;
+            boolean selected = label.equals(currentSubtitleLabel);
+            menu.getMenu().add(0, itemId, itemId, (selected ? "✓ " : "") + label);
+            idToLabel.put(itemId, label);
+        }
+
         String otherMode = "sub".equals(currentMode) ? "Dub" : "Sub";
-        menu.getMenu().add(0, 1, 0, "Subtitles: " + (subtitlesEnabled ? "On" : "Off"));
-        menu.getMenu().add(0, 2, 1, "Switch Audio to " + otherMode);
+        int audioId = nextId;
+        menu.getMenu().add(1, audioId, audioId, "Switch Audio to " + otherMode);
+
         menu.setOnMenuItemClickListener(item -> {
-            if (item.getItemId() == 1) {
-                toggleSubtitles();
-            } else if (item.getItemId() == 2) {
+            int itemId = item.getItemId();
+            if (itemId == offId) {
+                selectSubtitle(null);
+            } else if (itemId == audioId) {
                 requestModeSwitch();
+            } else if (idToLabel.containsKey(itemId)) {
+                selectSubtitle(idToLabel.get(itemId));
             }
             return true;
         });
@@ -302,14 +384,172 @@ public class ExoPlayerActivity extends AppCompatActivity {
         finish();
     }
 
-    private void toggleSubtitles() {
+    private void selectSubtitle(String label) {
+        currentSubtitleLabel = label;
+        if (player != null) {
+            applySubtitleSelection(player.getCurrentTracks());
+        }
+    }
+
+    // Finds the text track group whose Format.id matches currentSubtitleLabel
+    // (parseSubtitles() gives every subtitle config an id equal to its label)
+    // and selects only that one, or disables text tracks entirely when
+    // currentSubtitleLabel is null ("Off").
+    private void applySubtitleSelection(Tracks tracks) {
         if (player == null) return;
-        subtitlesEnabled = !subtitlesEnabled;
-        player.setTrackSelectionParameters(
+        if (currentSubtitleLabel == null) {
+            player.setTrackSelectionParameters(
+                    player.getTrackSelectionParameters().buildUpon()
+                            .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true)
+                            .clearOverridesOfType(C.TRACK_TYPE_TEXT)
+                            .build()
+            );
+            return;
+        }
+        for (Tracks.Group group : tracks.getGroups()) {
+            if (group.getType() != C.TRACK_TYPE_TEXT) continue;
+            for (int i = 0; i < group.length; i++) {
+                Format format = group.getTrackFormat(i);
+                if (currentSubtitleLabel.equals(format.id)) {
+                    player.setTrackSelectionParameters(
+                            player.getTrackSelectionParameters().buildUpon()
+                                    .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false)
+                                    .clearOverridesOfType(C.TRACK_TYPE_TEXT)
+                                    .addOverride(new TrackSelectionOverride(group.getMediaTrackGroup(), i))
+                                    .build()
+                    );
+                    return;
+                }
+            }
+        }
+    }
+
+    // Populates qualityOptions from the "qualities" intent extra - but only
+    // when it lists more than one genuinely distinct URL. The scraper this
+    // app talks to currently repeats the same URL under several fake labels
+    // ("1080p"/"720p"/"480p"/"Auto" all pointing at one file); offering that
+    // as a choice would be exactly the kind of fake button we're trying not
+    // to ship, so a single-URL list is treated as no choice at all.
+    private void parseQualities(String qualitiesJson, String currentUrl) {
+        qualityOptions.clear();
+        currentQualityLabel = null;
+        if (qualitiesJson == null || qualitiesJson.isEmpty()) return;
+        java.util.List<QualityOption> parsed = new java.util.ArrayList<>();
+        java.util.Set<String> distinctUrls = new java.util.HashSet<>();
+        try {
+            JSONArray arr = new JSONArray(qualitiesJson);
+            for (int i = 0; i < arr.length(); i++) {
+                JSONObject obj = arr.getJSONObject(i);
+                String url = obj.optString("url", "");
+                String quality = obj.optString("quality", "");
+                if (url.isEmpty() || quality.isEmpty()) continue;
+                parsed.add(new QualityOption(quality, url));
+                distinctUrls.add(url);
+            }
+        } catch (Exception e) {
+            Log.w(TAG, "Failed to parse qualities JSON", e);
+            return;
+        }
+        if (distinctUrls.size() <= 1) return;
+        qualityOptions.addAll(parsed);
+        for (QualityOption option : qualityOptions) {
+            if (option.url.equals(currentUrl)) currentQualityLabel = option.label;
+        }
+        if (currentQualityLabel == null) {
+            currentQualityLabel = qualityOptions.get(0).label;
+        }
+    }
+
+    private void showQualityMenu(View anchor) {
+        if (useAdaptiveQualityMenu) {
+            showAdaptiveQualityMenu(anchor);
+        } else if (qualityOptions.size() > 1) {
+            showUrlQualityMenu(anchor);
+        }
+    }
+
+    // Real ExoPlayer-detected renditions of the same manifest - the
+    // trustworthy source of "supported quality", used whenever it's
+    // available.
+    private void showAdaptiveQualityMenu(View anchor) {
+        PopupMenu menu = new PopupMenu(this, anchor);
+        menu.getMenu().add(0, 0, 0, (currentVideoTrackIndex == -1 ? "✓ " : "") + "Auto");
+        for (VideoQualityOption option : videoQualityOptions) {
+            boolean selected = option.trackIndex == currentVideoTrackIndex;
+            menu.getMenu().add(0, option.trackIndex + 1, option.trackIndex + 1, (selected ? "✓ " : "") + option.label);
+        }
+        menu.setOnMenuItemClickListener(item -> {
+            int id = item.getItemId();
+            selectVideoQuality(id == 0 ? -1 : id - 1);
+            return true;
+        });
+        menu.show();
+    }
+
+    // Forces (or clears, for Auto) a specific rendition within the adaptive
+    // video track group - no player rebuild needed, ExoPlayer just switches
+    // renditions like it would on its own for bandwidth changes.
+    private void selectVideoQuality(int trackIndex) {
+        if (player == null || adaptiveVideoGroup == null) return;
+        currentVideoTrackIndex = trackIndex;
+        androidx.media3.common.TrackSelectionParameters.Builder builder =
                 player.getTrackSelectionParameters().buildUpon()
-                        .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, !subtitlesEnabled)
-                        .build()
-        );
+                        .setTrackTypeDisabled(C.TRACK_TYPE_VIDEO, false)
+                        .clearOverridesOfType(C.TRACK_TYPE_VIDEO);
+        if (trackIndex >= 0) {
+            builder.addOverride(new TrackSelectionOverride(adaptiveVideoGroup, trackIndex));
+        }
+        player.setTrackSelectionParameters(builder.build());
+    }
+
+    // Checked on every onTracksChanged - the very first time ExoPlayer
+    // reports a video track group with more than one Format in it, that's a
+    // real adaptive ladder, so switch the quality button over to it
+    // permanently for this player instance.
+    private void maybeResolveAdaptiveQuality(Tracks tracks) {
+        if (useAdaptiveQualityMenu) return;
+        for (Tracks.Group group : tracks.getGroups()) {
+            if (group.getType() != C.TRACK_TYPE_VIDEO || group.length <= 1) continue;
+            adaptiveVideoGroup = group.getMediaTrackGroup();
+            videoQualityOptions.clear();
+            for (int i = 0; i < group.length; i++) {
+                Format format = group.getTrackFormat(i);
+                videoQualityOptions.add(new VideoQualityOption(
+                        format.height > 0 ? format.height + "p" : "Track " + (i + 1), i));
+            }
+            useAdaptiveQualityMenu = true;
+            btnQuality.setVisibility(View.VISIBLE);
+            return;
+        }
+    }
+
+    private void showUrlQualityMenu(View anchor) {
+        PopupMenu menu = new PopupMenu(this, anchor);
+        for (int i = 0; i < qualityOptions.size(); i++) {
+            QualityOption option = qualityOptions.get(i);
+            boolean selected = option.label.equals(currentQualityLabel);
+            menu.getMenu().add(0, i, i, (selected ? "✓ " : "") + option.label);
+        }
+        menu.setOnMenuItemClickListener(item -> {
+            switchQuality(qualityOptions.get(item.getItemId()));
+            return true;
+        });
+        menu.show();
+    }
+
+    // Rebuilds the player against a different quality rendition, resuming at
+    // the same position and play state instead of restarting from 0:00. Only
+    // reachable via showUrlQualityMenu, i.e. only when the URLs genuinely
+    // differ - see parseQualities().
+    private void switchQuality(QualityOption option) {
+        if (player == null || option.label.equals(currentQualityLabel)) return;
+        long resumePosition = Math.max(player.getCurrentPosition(), 0);
+        boolean wasPlaying = player.isPlaying();
+        currentQualityLabel = option.label;
+        pendingVideoUrl = option.url;
+        player.release();
+        player = null;
+        initializePlayer(option.url, pendingReferer, pendingSubtitlesJson, resumePosition, wasPlaying);
     }
 
     private void triggerNextEpisode() {
@@ -357,6 +597,21 @@ public class ExoPlayerActivity extends AppCompatActivity {
     }
 
     private void initializePlayer(String videoUrl, String referer, String subtitlesJson) {
+        initializePlayer(videoUrl, referer, subtitlesJson, 0L, true);
+    }
+
+    // startPositionMs/playWhenReady let a quality switch rebuild the player
+    // without restarting playback from 0:00.
+    private void initializePlayer(String videoUrl, String referer, String subtitlesJson, long startPositionMs, boolean playWhenReady) {
+        // Adaptive rendition info belongs to the ExoPlayer instance that
+        // reported it - a fresh instance (retry, or a URL-based quality
+        // switch) needs to re-resolve it from scratch rather than keep
+        // pointing at a TrackGroup from the old one.
+        useAdaptiveQualityMenu = false;
+        adaptiveVideoGroup = null;
+        videoQualityOptions.clear();
+        currentVideoTrackIndex = -1;
+
         Map<String, String> headers = new HashMap<>();
         headers.put("Referer", referer);
         headers.put("User-Agent", "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36");
@@ -371,6 +626,10 @@ public class ExoPlayerActivity extends AppCompatActivity {
         MediaItem.Builder mediaItemBuilder = new MediaItem.Builder().setUri(uri);
 
         java.util.List<MediaItem.SubtitleConfiguration> subtitleConfigs = parseSubtitles(subtitlesJson);
+        if (!subtitleSelectionInitialized) {
+            currentSubtitleLabel = defaultSubtitleLabel;
+            subtitleSelectionInitialized = true;
+        }
         if (!subtitleConfigs.isEmpty()) {
             mediaItemBuilder.setSubtitleConfigurations(subtitleConfigs);
         }
@@ -387,7 +646,10 @@ public class ExoPlayerActivity extends AppCompatActivity {
         playerView.setPlayer(player);
         player.setMediaSource(mediaSource);
         player.prepare();
-        player.setPlayWhenReady(true);
+        if (startPositionMs > 0) {
+            player.seekTo(startPositionMs);
+        }
+        player.setPlayWhenReady(playWhenReady);
 
         player.addListener(new Player.Listener() {
             @Override
@@ -404,18 +666,30 @@ public class ExoPlayerActivity extends AppCompatActivity {
             }
 
             @Override
+            public void onTracksChanged(Tracks tracks) {
+                applySubtitleSelection(tracks);
+                maybeResolveAdaptiveQuality(tracks);
+            }
+
+            @Override
             public void onPlayerError(androidx.media3.common.PlaybackException error) {
                 Log.e(TAG, "Playback error", error);
                 showPlaybackError("Couldn't play this stream. The server may be blocking it or the format isn't supported.");
             }
         });
 
+        // A quality switch calls this again on the same activity - avoid
+        // stacking a second concurrent progress-update loop on top of the
+        // still-running one.
+        handler.removeCallbacks(progressTicker);
         handler.post(progressTicker);
         showControls();
     }
 
     private java.util.List<MediaItem.SubtitleConfiguration> parseSubtitles(String subtitlesJson) {
         java.util.List<MediaItem.SubtitleConfiguration> configs = new java.util.ArrayList<>();
+        subtitleLabels.clear();
+        defaultSubtitleLabel = null;
         if (subtitlesJson == null || subtitlesJson.isEmpty()) return configs;
         try {
             JSONArray arr = new JSONArray(subtitlesJson);
@@ -424,17 +698,29 @@ public class ExoPlayerActivity extends AppCompatActivity {
                 String src = obj.optString("src", "");
                 if (src.isEmpty()) continue;
                 String label = obj.optString("label", "English");
+                // Track ids double as the menu's selection key (matched
+                // against Format.id later), so duplicate labels need to stay
+                // distinguishable.
+                while (subtitleLabels.contains(label)) {
+                    label = label + " (2)";
+                }
                 boolean isDefault = obj.optBoolean("default", i == 0);
                 MediaItem.SubtitleConfiguration config = new MediaItem.SubtitleConfiguration.Builder(Uri.parse(src))
                         .setMimeType(MimeTypes.TEXT_VTT)
-                        .setLanguage(label.toLowerCase())
+                        .setLanguage(label.toLowerCase(java.util.Locale.US))
                         .setLabel(label)
+                        .setId(label)
                         .setSelectionFlags(isDefault ? C.SELECTION_FLAG_DEFAULT : 0)
                         .build();
                 configs.add(config);
+                subtitleLabels.add(label);
+                if (isDefault && defaultSubtitleLabel == null) defaultSubtitleLabel = label;
             }
         } catch (Exception e) {
             Log.w(TAG, "Failed to parse subtitles JSON", e);
+        }
+        if (defaultSubtitleLabel == null && !subtitleLabels.isEmpty()) {
+            defaultSubtitleLabel = subtitleLabels.get(0);
         }
         return configs;
     }

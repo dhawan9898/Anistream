@@ -1,6 +1,11 @@
 import { registerPlugin, type PluginListenerHandle } from '@capacitor/core';
 import type { SubtitleTrack } from '../core/aniCliCore';
 
+export interface QualityOption {
+  quality: string;
+  url: string;
+}
+
 export interface ModeSwitchRequestedEvent {
   title: string;
   episode: string;
@@ -20,6 +25,7 @@ export interface ExoPlayerPluginInterface {
     referer?: string;
     mode?: 'sub' | 'dub';
     subtitles?: SubtitleTrack[];
+    qualities?: QualityOption[];
   }): Promise<{ success: boolean }>;
 
   addListener(

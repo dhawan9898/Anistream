@@ -25,6 +25,7 @@ public class ExoPlayerPlugin extends Plugin {
         String referer = call.getString("referer", "https://zokoanime.video/");
         String mode = call.getString("mode", "sub");
         JSArray subtitles = call.getArray("subtitles");
+        JSArray qualities = call.getArray("qualities");
 
         if (url == null || url.isEmpty()) {
             call.reject("Must provide a video URL");
@@ -40,6 +41,7 @@ public class ExoPlayerPlugin extends Plugin {
         intent.putExtra("referer", referer);
         intent.putExtra("mode", mode);
         intent.putExtra("subtitles", subtitles != null ? subtitles.toString() : null);
+        intent.putExtra("qualities", qualities != null ? qualities.toString() : null);
 
         getActivity().startActivity(intent);
 

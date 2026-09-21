@@ -129,7 +129,8 @@ export const App: React.FC = () => {
             episode: episode.number,
             referer: source.referer,
             mode,
-            subtitles: source.subtitles
+            subtitles: source.subtitles,
+            qualities: source.qualities
           });
         } catch (e) {
           console.warn("[App] ExoPlayer plugin call failed, falling back to Web player:", e);
