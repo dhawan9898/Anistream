@@ -6,6 +6,11 @@ on:
     tags:
       - 'v*'
   workflow_dispatch:
+    inputs:
+      release_tag:
+        description: 'Tag to publish this build under (e.g. v4.2) - leave empty to just build, no release'
+        required: false
+        default: ''
 
 permissions:
   contents: write
@@ -69,12 +74,16 @@ jobs:
           retention-days: 30
 
       - name: Create GitHub Release
-        if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
+        # A real tag push (refs/tags/vX.Y) always releases under that tag. A
+        # manual run only releases when explicitly given a release_tag input
+        # - never under whatever branch happened to be dispatched, which
+        # used to create a bogus release/tag named after the branch itself.
+        if: startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch' && inputs.release_tag != '')
         uses: softprops/action-gh-release@v2
         with:
           files: build-output/AniStream-v4.2.apk
-          tag_name: ${{ github.ref_name }}
-          name: AniStream ${{ github.ref_name }} Release
+          tag_name: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || inputs.release_tag }}
+          name: AniStream ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || inputs.release_tag }} Release
           body: |
             ## AniStream v4.2 - Android Anime Streaming App (Powered by ani-cli)
 
