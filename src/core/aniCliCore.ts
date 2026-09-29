@@ -295,9 +295,23 @@ export async function getEpisodeStream(
     if (data.html) {
       const parser = new DOMParser();
       const doc = parser.parseFromString(data.html, "text/html");
+
+      // Ground truth instead of another guess: log every server entry this
+      // episode's HTML actually lists, so it's visible whether "ZokoAnime"
+      // exists at all, what else is offered, and (crucially) whether this
+      // is even the same server list from one episode/anime to the next -
+      // if it is, the site itself is the reason, not this selector.
+      const serverEls = Array.from(doc.querySelectorAll('[data-type][data-hash], [data-type][data-server-name]'));
+      console.error(`[aniCliCore] episodeId=${targetEpisodeId} mode=${mode} servers found:`,
+        JSON.stringify(serverEls.map(el => ({
+          type: el.getAttribute('data-type'),
+          serverName: el.getAttribute('data-server-name'),
+          hash: el.getAttribute('data-hash')?.slice(0, 24)
+        }))));
+
       // Prefer a genuine ZokoAnime entry, but fall back to any other server
       // offering this mode if one isn't listed - removing that fallback
-      // entirely (tried in the previous fix) turned out wrong: ZokoAnime
+      // entirely (tried in an earlier fix) turned out wrong: ZokoAnime
       // apparently isn't reliably present in this site's current markup, so
       // every request fell through to the demo clip instead, which is worse
       // (always the same placeholder) than occasionally picking a
@@ -315,6 +329,7 @@ export async function getEpisodeStream(
 
       if (hash) {
         const embedUrl = atob(hash);
+        console.error(`[aniCliCore] episodeId=${targetEpisodeId} mode=${mode} resolved embedUrl:`, embedUrl);
         const refr = embedUrl.replace(/^(https?:\/\/[^/]*).*/, '$1/');
         const embedRes = await fetch(embedUrl, { headers: UPSTREAM_HEADERS });
         if (!embedRes.ok) {
@@ -333,6 +348,12 @@ export async function getEpisodeStream(
               label: s.lang || s.label || "English",
               default: s.default === true
             }));
+
+            // The single most important line for diagnosing "same/wrong
+            // video every time": if this URL is identical across different
+            // anime/episodes, the site itself is serving the same content
+            // (or something upstream of this point is), not this selector.
+            console.error(`[aniCliCore] episodeId=${targetEpisodeId} mode=${mode} RESOLVED STREAM URL:`, parsed.src);
 
             return {
               streamUrl: parsed.src,
