@@ -1,4 +1,4 @@
-name: Build AniStream v4.2 APK
+name: Build AniStream v4.3 APK
 
 on:
   push:
@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
     inputs:
       release_tag:
-        description: 'Tag to publish this build under (e.g. v4.2) - leave empty to just build, no release'
+        description: 'Tag to publish this build under (e.g. v4.3) - leave empty to just build, no release'
         required: false
         default: ''
 
@@ -64,13 +64,13 @@ jobs:
       - name: Package APK for Release
         run: |
           mkdir -p build-output
-          cp android/app/build/outputs/apk/debug/app-debug.apk build-output/AniStream-v4.2.apk
+          cp android/app/build/outputs/apk/debug/app-debug.apk build-output/AniStream-v4.3.apk
 
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: AniStream-v4.2-APK
-          path: build-output/AniStream-v4.2.apk
+          name: AniStream-v4.3-APK
+          path: build-output/AniStream-v4.3.apk
           retention-days: 30
 
       - name: Create GitHub Release
@@ -81,21 +81,18 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch' && inputs.release_tag != '')
         uses: softprops/action-gh-release@v2
         with:
-          files: build-output/AniStream-v4.2.apk
+          files: build-output/AniStream-v4.3.apk
           tag_name: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || inputs.release_tag }}
           name: AniStream ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || inputs.release_tag }} Release
           body: |
-            ## AniStream v4.2 - Android Anime Streaming App (Powered by ani-cli)
+            ## AniStream v4.3 - Android Anime Streaming App (Powered by ani-cli)
 
-            ### 🚀 Highlights & Bug Fixes in v4.2:
+            ### 🚀 What's new in v4.3:
 
-            - **Smoother playback, fewer stalls**:
-              - Tuned the native player's buffer to hold ~30-60s of read-ahead (up from ExoPlayer's ~15-50s defaults) and raised the segment read timeout, trading a little memory and a slightly slower initial join for real cushion against network hiccups mid-episode.
-              - The web fallback player's HLS.js buffer is tuned the same way, and no longer runs in low-latency mode (that setting is for live broadcasts chasing the live edge - these are VOD episodes, so it was only making stalls more likely for no benefit).
-            - **Buffering is now visible instead of a silent freeze**: both the native and web players show a spinner the instant playback stalls for lack of data (initial load or a mid-episode hiccup), and hide it the instant it can resume - a stall now reads as "still loading", not a frozen app.
-            - **Watch history now updates on native playback**: the native player had no way to report its position back to the app at all, so "Continue Watching"/history never updated while watching through it (the real playback path on-device). It now reports position periodically (and on backing out) the same way it already reports other in-player events.
+            - **Skip Intro / Skip Outro that actually shows up**: the player now uses the opening/ending intervals the stream server itself returns with the episode sources (the same data HiAnime's own skip buttons use). AniSkip is kept only as a fallback for episodes the server hasn't tagged, so far more episodes get working skip buttons.
+            - **Floating episode picker**: the in-player episode list is now a floating window centered over the video - a grid of episode tiles with the current episode highlighted and scrolled into view, dismissed with ✕, a tap outside, or Back.
 
             ### 📦 Download:
-            Download **`AniStream-v4.2.apk`** below and install or update on any Android device running Android 8.0 or later!
+            Download **`AniStream-v4.3.apk`** below and install or update on any Android device running Android 8.0 or later!
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
