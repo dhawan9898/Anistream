@@ -35,9 +35,8 @@ import androidx.media3.common.Tracks;
 import androidx.media3.common.util.UnstableApi;
 import androidx.media3.datasource.DefaultHttpDataSource;
 import androidx.media3.exoplayer.ExoPlayer;
-import androidx.media3.exoplayer.hls.HlsMediaSource;
+import androidx.media3.exoplayer.source.DefaultMediaSourceFactory;
 import androidx.media3.exoplayer.source.MediaSource;
-import androidx.media3.exoplayer.source.ProgressiveMediaSource;
 import androidx.media3.ui.PlayerView;
 
 import org.json.JSONArray;
@@ -714,6 +713,12 @@ public class ExoPlayerActivity extends AppCompatActivity {
 
         Uri uri = Uri.parse(videoUrl);
         MediaItem.Builder mediaItemBuilder = new MediaItem.Builder().setUri(uri);
+        if (videoUrl.contains(".m3u8")) {
+            // DefaultMediaSourceFactory infers HLS vs progressive from the
+            // URI's file extension; force it for proxied/query-string URLs
+            // where ".m3u8" isn't the last path segment sniffed.
+            mediaItemBuilder.setMimeType(MimeTypes.APPLICATION_M3U8);
+        }
 
         java.util.List<MediaItem.SubtitleConfiguration> subtitleConfigs = parseSubtitles(subtitlesJson);
         if (!subtitleSelectionInitialized) {
@@ -725,12 +730,15 @@ public class ExoPlayerActivity extends AppCompatActivity {
         }
         MediaItem mediaItem = mediaItemBuilder.build();
 
-        MediaSource mediaSource;
-        if (videoUrl.contains(".m3u8")) {
-            mediaSource = new HlsMediaSource.Factory(dataSourceFactory).createMediaSource(mediaItem);
-        } else {
-            mediaSource = new ProgressiveMediaSource.Factory(dataSourceFactory).createMediaSource(mediaItem);
-        }
+        // Side-loaded subtitles (MediaItem.subtitleConfigurations) are only
+        // merged in automatically by DefaultMediaSourceFactory - it wraps
+        // the underlying HLS/progressive source in a MergingMediaSource with
+        // one SingleSampleMediaSource per subtitle track. Building HLS or
+        // Progressive sources directly (as this used to do) silently drops
+        // subtitleConfigurations entirely: the track never loads, so it can
+        // never render, no matter what format it actually is. This was the
+        // real reason captions never showed up.
+        MediaSource mediaSource = new DefaultMediaSourceFactory(dataSourceFactory).createMediaSource(mediaItem);
 
         player = new ExoPlayer.Builder(this).build();
         playerView.setPlayer(player);
