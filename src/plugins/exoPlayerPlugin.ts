@@ -23,6 +23,14 @@ export interface EpisodeSelectedEvent {
   selectedNumber: string;
 }
 
+export interface ProgressUpdateEvent {
+  title: string;
+  episode: string;
+  mode: 'sub' | 'dub';
+  positionMs: number;
+  durationMs: number;
+}
+
 export interface PlayEpisodeOption {
   id: string;
   number: string;
@@ -54,6 +62,11 @@ export interface ExoPlayerPluginInterface {
   addListener(
     eventName: 'episodeSelected',
     listenerFunc: (event: EpisodeSelectedEvent) => void
+  ): Promise<PluginListenerHandle>;
+
+  addListener(
+    eventName: 'progressUpdate',
+    listenerFunc: (event: ProgressUpdateEvent) => void
   ): Promise<PluginListenerHandle>;
 }
 

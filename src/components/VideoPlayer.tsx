@@ -4,7 +4,7 @@ import Hls from 'hls.js';
 import {
   Play, Pause, RotateCcw, RotateCw, ArrowLeft, Settings,
   Subtitles, Maximize, Minimize, SkipForward, FastForward, Volume2, VolumeX,
-  ListVideo, Check
+  ListVideo, Check, Loader2
 } from 'lucide-react';
 import type { StreamSource, EpisodeItem } from '../core/aniCliCore';
 import { getUserPreferences } from '../services/historyService';
@@ -50,6 +50,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   const lastTapRef = useRef<{ time: number; x: number }>({ time: 0, x: 0 });
 
   const [isPlaying, setIsPlaying] = useState<boolean>(false);
+  const [isBuffering, setIsBuffering] = useState<boolean>(false);
   const [currentTime, setCurrentTime] = useState<number>(0);
   const [duration, setDuration] = useState<number>(0);
   const [buffered, setBuffered] = useState<number>(0);
@@ -145,6 +146,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     const streamUrl = resolvePlayableUrl(rawStreamUrl, referer);
     setVideoTrackWarning(null);
     setStreamError(null);
+    setIsBuffering(false);
 
     // Only surface no-video-track warning if playback has been running for a few seconds
     // with continuous 0x0 video dimensions (to avoid false alarms during initial frame decoding)
@@ -157,6 +159,16 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
       }
     };
     video.addEventListener('timeupdate', checkVideoTrack);
+
+    // "waiting" fires whenever playback stalls for lack of data - whether
+    // that's the very first load or a mid-episode network hiccup - and
+    // "playing"/"canplay" fire the instant it can resume, so a spinner tied
+    // to these always reflects "is it actually stuck right now".
+    const handleWaiting = () => setIsBuffering(true);
+    const handleResumed = () => setIsBuffering(false);
+    video.addEventListener('waiting', handleWaiting);
+    video.addEventListener('playing', handleResumed);
+    video.addEventListener('canplay', handleResumed);
 
     const isMp4 = streamUrl.toLowerCase().split('?')[0].endsWith('.mp4');
 
@@ -172,8 +184,14 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     } else if (Hls.isSupported()) {
       const hls = new Hls({
         enableWorker: false,
-        lowLatencyMode: true,
+        // These are VOD episodes, not a live broadcast - lowLatencyMode
+        // trims buffers to chase the live edge, which only makes stalls
+        // more likely here for no benefit. A bigger forward buffer instead
+        // gives real cushion against network hiccups.
         backBufferLength: 90,
+        maxBufferLength: 60,
+        maxMaxBufferLength: 120,
+        maxBufferSize: 120 * 1000 * 1000,
         xhrSetup: (xhr, _url) => {
           // CapacitorHttp intercepts this and allows setting custom headers like Referer
           xhr.setRequestHeader('Referer', referer);
@@ -223,6 +241,9 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
 
     return () => {
       video.removeEventListener('timeupdate', checkVideoTrack);
+      video.removeEventListener('waiting', handleWaiting);
+      video.removeEventListener('playing', handleResumed);
+      video.removeEventListener('canplay', handleResumed);
       if (hlsRef.current) {
         hlsRef.current.destroy();
       }
@@ -322,6 +343,10 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     } else if (Hls.isSupported()) {
       const hls = new Hls({
         enableWorker: false,
+        backBufferLength: 90,
+        maxBufferLength: 60,
+        maxMaxBufferLength: 120,
+        maxBufferSize: 120 * 1000 * 1000,
         xhrSetup: (xhr) => xhr.setRequestHeader('Referer', streamSource.referer)
       });
       hls.loadSource(newUrl);
@@ -544,6 +569,25 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
           />
         ))}
       </video>
+
+      {/* Buffering spinner - shown whenever the video stalls for lack of
+          data (initial load or a mid-episode network hiccup), hidden the
+          instant it can resume, so a stall always reads as "still loading"
+          rather than a frozen player. */}
+      {isBuffering && !streamError && (
+        <div
+          style={{
+            position: 'absolute',
+            top: '50%',
+            left: '50%',
+            transform: 'translate(-50%, -50%)',
+            zIndex: 15,
+            pointerEvents: 'none'
+          }}
+        >
+          <Loader2 size={48} color="#fff" className="animate-spin" />
+        </div>
+      )}
 
       {/* No-video-track warning (audio plays, no picture) */}
       {videoTrackWarning && (

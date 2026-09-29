@@ -122,10 +122,32 @@ export const App: React.FC = () => {
       if (!selected) return; // not a real episode from the list - never guess one
       handlePlayEpisode(anime, selected, playingModeRef.current, 0);
     });
+    // The native player is the only place playback position lives - unlike
+    // the web <VideoPlayer>, which reports progress via its own
+    // onProgressUpdate prop, native has no such prop path (it isn't even
+    // mounted while native plays), so watch history only gets saved if we
+    // save it here, from this bridged event.
+    const progressHandle = ExoPlayerPlugin.addListener('progressUpdate', ({ positionMs, durationMs }) => {
+      const anime = playingAnimeRef.current;
+      const episode = playingEpisodeRef.current;
+      if (!anime || !episode || durationMs <= 0) return;
+      saveWatchProgress({
+        animeId: anime.id,
+        animeTitle: anime.title,
+        poster: anime.poster,
+        episodeId: episode.id,
+        episodeNumber: episode.number,
+        currentTime: positionMs / 1000,
+        duration: durationMs / 1000,
+        updatedAt: Date.now(),
+        mode: playingModeRef.current
+      });
+    });
     return () => {
       modeHandle.then(h => h.remove());
       nextEpHandle.then(h => h.remove());
       episodeSelectedHandle.then(h => h.remove());
+      progressHandle.then(h => h.remove());
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);

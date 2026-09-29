@@ -35,6 +35,7 @@ import androidx.media3.common.Tracks;
 import androidx.media3.common.util.UnstableApi;
 import androidx.media3.datasource.DefaultHttpDataSource;
 import androidx.media3.datasource.HttpDataSource;
+import androidx.media3.exoplayer.DefaultLoadControl;
 import androidx.media3.exoplayer.ExoPlayer;
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory;
 import androidx.media3.ui.PlayerView;
@@ -52,6 +53,16 @@ public class ExoPlayerActivity extends AppCompatActivity {
     private static final long CONTROLS_HIDE_DELAY_MS = 3_500;
     private static final long NEXT_EPISODE_THRESHOLD_MS = 20_000;
     private static final int NEXT_EPISODE_COUNTDOWN_SECONDS = 12;
+    private static final long PROGRESS_REPORT_INTERVAL_MS = 5_000;
+
+    // Larger than ExoPlayer's own defaults (15s/50s/2.5s/5s) - trades a
+    // little extra memory and a slightly slower initial join for a much
+    // bigger cushion against mid-playback stalls on the flaky/proxied CDNs
+    // this app streams from.
+    private static final int MIN_BUFFER_MS = 30_000;
+    private static final int MAX_BUFFER_MS = 60_000;
+    private static final int BUFFER_FOR_PLAYBACK_MS = 2_500;
+    private static final int BUFFER_FOR_PLAYBACK_AFTER_REBUFFER_MS = 5_000;
 
     private PlayerView playerView;
     private ExoPlayer player;
@@ -73,6 +84,7 @@ public class ExoPlayerActivity extends AppCompatActivity {
     private TextView textCurrentTime;
     private TextView textRemainingTime;
     private TextView gestureIndicator;
+    private View bufferingSpinner;
     private SeekBar seekBar;
 
     private LinearLayout nextEpisodeCard;
@@ -268,6 +280,7 @@ public class ExoPlayerActivity extends AppCompatActivity {
         textCurrentTime = findViewById(R.id.text_current_time);
         textRemainingTime = findViewById(R.id.text_remaining_time);
         gestureIndicator = findViewById(R.id.gesture_indicator);
+        bufferingSpinner = findViewById(R.id.buffering_spinner);
         seekBar = findViewById(R.id.seek_bar);
         nextEpisodeCard = findViewById(R.id.next_episode_card);
         textNextEpisodeCountdown = findViewById(R.id.text_next_episode_countdown);
@@ -836,7 +849,7 @@ public class ExoPlayerActivity extends AppCompatActivity {
                 .setDefaultRequestProperties(headers)
                 .setAllowCrossProtocolRedirects(true)
                 .setConnectTimeoutMs(15000)
-                .setReadTimeoutMs(30000);
+                .setReadTimeoutMs(45000);
 
         Uri uri = Uri.parse(videoUrl);
         MediaItem.Builder mediaItemBuilder = new MediaItem.Builder().setUri(uri);
@@ -861,8 +874,16 @@ public class ExoPlayerActivity extends AppCompatActivity {
         MediaItem mediaItem = mediaItemBuilder.build();
         DefaultMediaSourceFactory mediaSourceFactory = new DefaultMediaSourceFactory(dataSourceFactory);
 
+        // Bigger read-ahead buffer than ExoPlayer's defaults - fewer visible
+        // stalls on the flaky/proxied CDNs this app streams from, at the
+        // cost of a little extra memory and a slightly slower initial join.
+        DefaultLoadControl loadControl = new DefaultLoadControl.Builder()
+                .setBufferDurationsMs(MIN_BUFFER_MS, MAX_BUFFER_MS, BUFFER_FOR_PLAYBACK_MS, BUFFER_FOR_PLAYBACK_AFTER_REBUFFER_MS)
+                .build();
+
         player = new ExoPlayer.Builder(this)
                 .setMediaSourceFactory(mediaSourceFactory)
+                .setLoadControl(loadControl)
                 .build();
         playerView.setPlayer(player);
         player.setMediaItem(mediaItem);
@@ -881,6 +902,11 @@ public class ExoPlayerActivity extends AppCompatActivity {
 
             @Override
             public void onPlaybackStateChanged(int state) {
+                // STATE_BUFFERING covers both the initial load and any
+                // mid-playback stall - showing a spinner for exactly that
+                // state (and nothing else) means a stall always reads as
+                // "still loading", never a frozen/broken player.
+                bufferingSpinner.setVisibility(state == Player.STATE_BUFFERING ? View.VISIBLE : View.GONE);
                 if (state == Player.STATE_READY) {
                     textRemainingTime.setText("-" + formatTime(Math.max(player.getDuration(), 0)));
                     maybeFetchSkipTimes();
@@ -1007,6 +1033,32 @@ public class ExoPlayerActivity extends AppCompatActivity {
         }
 
         updateNextEpisodePrompt(duration, position);
+        maybeReportProgress(position, duration);
+    }
+
+    // Watch history lives in JS (Preferences storage) - the native player has
+    // no way to write it directly, so it has to report its position back
+    // over the bridge periodically, the same way it already reports discrete
+    // events (mode switch, next episode, episode picks). Throttled to once
+    // every few seconds; onStop() forces one final report so backing out or
+    // backgrounding mid-episode still saves the real position.
+    private long lastProgressReportRealtimeMs = 0;
+
+    private void maybeReportProgress(long position, long duration) {
+        if (duration <= 0) return;
+        long now = android.os.SystemClock.elapsedRealtime();
+        if (now - lastProgressReportRealtimeMs < PROGRESS_REPORT_INTERVAL_MS) return;
+        lastProgressReportRealtimeMs = now;
+        ExoPlayerPlugin.notifyProgressUpdate(animeTitle, episodeNumber, currentMode, position, duration);
+    }
+
+    private void reportProgressNow() {
+        if (player == null) return;
+        long duration = Math.max(player.getDuration(), 0);
+        long position = Math.max(player.getCurrentPosition(), 0);
+        if (duration <= 0) return;
+        lastProgressReportRealtimeMs = android.os.SystemClock.elapsedRealtime();
+        ExoPlayerPlugin.notifyProgressUpdate(animeTitle, episodeNumber, currentMode, position, duration);
     }
 
     // Netflix-style binge flow: in the last stretch of the episode, slide in a
@@ -1167,6 +1219,7 @@ public class ExoPlayerActivity extends AppCompatActivity {
     @Override
     protected void onStop() {
         super.onStop();
+        reportProgressNow();
         if (player != null) {
             player.pause();
         }

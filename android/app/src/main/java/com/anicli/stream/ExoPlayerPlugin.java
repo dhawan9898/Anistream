@@ -79,4 +79,18 @@ public class ExoPlayerPlugin extends Plugin {
         data.put("selectedNumber", selectedNumber);
         activeInstance.notifyListeners("episodeSelected", data);
     }
+
+    // The native player is the only place playback position actually lives -
+    // JS (and its watch-history storage) only finds out by being told,
+    // periodically, the same way the other in-player actions are reported.
+    static void notifyProgressUpdate(String title, String episode, String mode, long positionMs, long durationMs) {
+        if (activeInstance == null) return;
+        JSObject data = new JSObject();
+        data.put("title", title);
+        data.put("episode", episode);
+        data.put("mode", mode);
+        data.put("positionMs", positionMs);
+        data.put("durationMs", durationMs);
+        activeInstance.notifyListeners("progressUpdate", data);
+    }
 }

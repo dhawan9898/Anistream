@@ -33,6 +33,18 @@
         android:layout_height="180dp"
         android:layout_gravity="bottom" />
 
+    <!-- Buffering spinner - shown whenever ExoPlayer reports STATE_BUFFERING
+         (initial load or a mid-playback stall), hidden the instant it's
+         ready again, so a stall always reads as "still loading" rather than
+         a frozen/broken player. -->
+    <ProgressBar
+        android:id="@+id/buffering_spinner"
+        android:layout_width="56dp"
+        android:layout_height="56dp"
+        android:layout_gravity="center"
+        android:indeterminateTint="#6366f1"
+        android:visibility="gone" />
+
     <!-- Gesture feedback indicator (volume / brightness) -->
     <TextView
         android:id="@+id/gesture_indicator"

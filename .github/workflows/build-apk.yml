@@ -1,4 +1,4 @@
-name: Build AniStream v4.1 APK
+name: Build AniStream v4.2 APK
 
 on:
   push:
@@ -59,38 +59,34 @@ jobs:
       - name: Package APK for Release
         run: |
           mkdir -p build-output
-          cp android/app/build/outputs/apk/debug/app-debug.apk build-output/AniStream-v4.1.apk
+          cp android/app/build/outputs/apk/debug/app-debug.apk build-output/AniStream-v4.2.apk
 
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: AniStream-v4.1-APK
-          path: build-output/AniStream-v4.1.apk
+          name: AniStream-v4.2-APK
+          path: build-output/AniStream-v4.2.apk
           retention-days: 30
 
       - name: Create GitHub Release
         if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
         uses: softprops/action-gh-release@v2
         with:
-          files: build-output/AniStream-v4.1.apk
+          files: build-output/AniStream-v4.2.apk
           tag_name: ${{ github.ref_name }}
           name: AniStream ${{ github.ref_name }} Release
           body: |
-            ## AniStream v4.1 - Android Anime Streaming App (Powered by ani-cli)
+            ## AniStream v4.2 - Android Anime Streaming App (Powered by ani-cli)
 
-            ### 🚀 Highlights & Bug Fixes in v4.1:
+            ### 🚀 Highlights & Bug Fixes in v4.2:
 
-            - **Video Playback ("Content Malformed") Fixed**:
-              - Refactored native Android ExoPlayer to use `DefaultMediaSourceFactory` with explicit `MimeTypes.APPLICATION_M3U8` and `setSubtitleConfigurations`.
-              - Fixed dev-server `/stream-proxy` M3U8 tag URI rewriting (`URI="..."`) and relative segment URL calculations so sub-playlists, audio tracks, init segments, and AES-128 encryption keys proxy cleanly without resolving to `index.html`.
-              - Corrected HLS format detection in web player component.
-            - **Seamless App Updates (No Reinstall Required)**:
-              - Configured persistent signing using `release.keystore` across debug and release builds.
-              - Incremented `versionCode` to 5 (`versionName` 4.1). Existing installations can now update directly in-place without losing watch history or data.
-            - **Featured Feed & Scraper Updates**:
-              - Updated featured anime IDs to valid `hianime.at` numeric IDs and added automatic title-search recovery for episode list resolving.
+            - **Smoother playback, fewer stalls**:
+              - Tuned the native player's buffer to hold ~30-60s of read-ahead (up from ExoPlayer's ~15-50s defaults) and raised the segment read timeout, trading a little memory and a slightly slower initial join for real cushion against network hiccups mid-episode.
+              - The web fallback player's HLS.js buffer is tuned the same way, and no longer runs in low-latency mode (that setting is for live broadcasts chasing the live edge - these are VOD episodes, so it was only making stalls more likely for no benefit).
+            - **Buffering is now visible instead of a silent freeze**: both the native and web players show a spinner the instant playback stalls for lack of data (initial load or a mid-episode hiccup), and hide it the instant it can resume - a stall now reads as "still loading", not a frozen app.
+            - **Watch history now updates on native playback**: the native player had no way to report its position back to the app at all, so "Continue Watching"/history never updated while watching through it (the real playback path on-device). It now reports position periodically (and on backing out) the same way it already reports other in-player events.
 
             ### 📦 Download:
-            Download **`AniStream-v4.1.apk`** below and install or update on any Android device running Android 8.0 or later!
+            Download **`AniStream-v4.2.apk`** below and install or update on any Android device running Android 8.0 or later!
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
