@@ -79,13 +79,18 @@ jobs:
             ## AniStream v3.0 - Android Anime Streaming App (Powered by ani-cli)
 
             ### 🚀 Updates in this build:
-            - **Netflix-style captions/quality sheet**: replaced the small dropdown menu with a proper bottom sheet (dimmed background, rounded panel, big rows with checkmarks) for picking a subtitle language or quality.
-            - **Glossier player chrome**: buttons and the new bottom sheet now use a gradient + elevation/shadow instead of a flat single color, matching the rest of the app's glass look.
-            - **Subtitle format fix**: every subtitle track was being force-parsed as WebVTT regardless of its real format, which silently renders nothing if the track is actually SRT/ASS/TTML. Now the format is detected from the file itself instead of assumed.
-            - **Real quality menu**: prefers the actual adaptive renditions detected in the stream (switches in place, no reload) and only falls back to a per-URL quality list when it's a genuine choice - never a fake "1080p/720p/480p" list pointing at the same file.
-            - **Fixed homepage flash of fake data**: the home screen used to flash a hardcoded mock anime list (stock photos, made-up counts) for a moment before real trending data loaded. Now shows a loading skeleton instead - verified locally that the mock content never appears.
 
-            Captions were reported not rendering in the previous build; the subtitle format fix above is our best diagnosis of that from the available evidence, not a confirmed fix - please test and report back if captions still don't show.
+            **Captions - root cause found and fixed:** the player was building its video source directly from `HlsMediaSource`/`ProgressiveMediaSource`, bypassing the only ExoPlayer component that actually merges side-loaded subtitles into playback (`DefaultMediaSourceFactory`). The subtitle track was silently never loaded at all, regardless of format - which is why picking a listed language never showed anything. Switched to `DefaultMediaSourceFactory`, which is the correct, documented way to attach external subtitles. This is a structural fix (not a guess about format/network like earlier attempts) - please verify captions now actually render.
+
+            - **Netflix-style captions/quality sheet**: a proper bottom sheet (dimmed background, rounded panel, big rows with checkmarks) instead of a small dropdown.
+            - **Glossier player chrome**: gradient + elevation/shadow on buttons and the sheet instead of flat color.
+            - **Real quality menu**: prefers actual adaptive renditions detected in the stream; never shows a fake "1080p/720p/480p" list pointing at the same file.
+            - **Fixed homepage flash of fake data**: mock anime list no longer flashes before real trending data loads - now a loading skeleton.
+            - **hasNextEpisode / Next Episode fixed**: previously hardcoded to always-true with a fabricated episode id; now looks up the real next episode from the actual episode list, so it can't try to play an episode that doesn't exist.
+            - **Settings preferences now actually work**: "Autoplay Next Episode" and "Default Audio" were saved but never read anywhere - now wired in. "Default Quality" is applied when a stream genuinely offers more than one rendition.
+            - **No more silent fake-video fallback**: a broken stream used to silently swap in an unrelated sample video with no indication anything failed; now shows a real error message.
+            - **Native dialogs replaced**: `window.confirm()`/`alert()` (jarring native browser popups) replaced with a themed in-app modal everywhere.
+            - Assorted correctness/consistency fixes: stable list keys (was using array index), fabricated "SUB 12" placeholder removed, light-theme badge contrast fixed, consistent danger-red color token, Settings loading state and version string fixed.
 
             ### 📦 Download:
             Download **`AniStream-v3.0.apk`** below and install on any Android device running Android 8.0 or later!
