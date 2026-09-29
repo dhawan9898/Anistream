@@ -342,13 +342,13 @@ export async function getEpisodeStream(
     `showing a demo stream instead of the real episode. See warnings above for which step failed.`
   );
   return {
-    streamUrl: "https://storage.googleapis.com/shaka-demo-assets/angel-one/hls.m3u8",
+    streamUrl: "https://storage.googleapis.com/cloud-samples-data/video/animals.mp4",
     quality: "Demo",
     referer: "https://hianime.at/",
     subtitles: [],
-    masterUrl: "https://storage.googleapis.com/shaka-demo-assets/angel-one/hls.m3u8",
+    masterUrl: "https://storage.googleapis.com/cloud-samples-data/video/animals.mp4",
     qualities: [
-      { quality: "Demo", url: "https://storage.googleapis.com/shaka-demo-assets/angel-one/hls.m3u8" }
+      { quality: "Demo", url: "https://storage.googleapis.com/cloud-samples-data/video/animals.mp4" }
     ],
     isFallback: true
   };
