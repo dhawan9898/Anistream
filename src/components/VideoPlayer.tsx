@@ -70,10 +70,6 @@ interface VideoPlayerProps {
   onSelectEpisode?: (ep: EpisodeItem) => void;
   // Re-resolves the same episode in the other audio language (sub <-> dub).
   onSwitchMode?: (mode: 'sub' | 'dub') => void;
-  // The stream failed for good (after retries). The parent tries another
-  // server and, if it finds one, swaps in a new streamSource (resolves
-  // true); false means none was left and the error dialog is shown.
-  onStreamFailed?: (positionSec: number) => Promise<boolean>;
 }
 
 const PLAYBACK_SPEEDS = [0.5, 0.75, 1, 1.25, 1.5];
@@ -96,8 +92,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   initialTime = 0,
   episodeList,
   onSelectEpisode,
-  onSwitchMode,
-  onStreamFailed
+  onSwitchMode
 }) => {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -159,14 +154,12 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   const lastDurationRef = useRef<number>(0);
   const loadedUrlRef = useRef<string>('');
   const lastProgressSaveRef = useRef<number>(0);
-  const onStreamFailedRef = useRef(onStreamFailed);
   const onProgressUpdateRef = useRef(onProgressUpdate);
   // Layout effect so the ref is current before the stream effect below
   // captures it for a new stream.
   useLayoutEffect(() => {
     onProgressUpdateRef.current = onProgressUpdate;
-    onStreamFailedRef.current = onStreamFailed;
-  }, [onProgressUpdate, onStreamFailed]);
+  }, [onProgressUpdate]);
 
   // Every short-lived UI timeout goes through here so none can fire (and
   // set state) after the player has closed.
@@ -342,33 +335,16 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
         .catch(() => { if (!disposed) setIsPlaying(false); });
     };
 
-    const showFailure = (message: string) => {
-      if (disposed) return;
-      setIsPlaying(false);
-      setIsBuffering(false);
-      setStreamError(message);
-    };
-
-    // A dead stream (e.g. the CDN 404s a segment) first falls back to
-    // another server for the same episode, resuming at this position; the
-    // error dialog only appears when no other server is left.
     const failStream = (message: string) => {
       if (disposed) return;
       if (hlsRef.current) {
         hlsRef.current.destroy();
         hlsRef.current = null;
       }
-      const fallback = onStreamFailedRef.current;
-      if (!fallback) {
-        showFailure(message);
-        return;
-      }
-      setIsBuffering(true);
-      fallback(lastPositionRef.current)
-        .then(found => { if (!found) showFailure(message); })
-        .catch(() => showFailure(message));
+      setIsPlaying(false);
+      setIsBuffering(false);
+      setStreamError(message);
     };
-    failStreamRef.current = failStream;
 
     const isMp4 = streamUrl.toLowerCase().split('?')[0].endsWith('.mp4');
     const nativeHls = !Hls.isSupported() && !!video.canPlayType('application/vnd.apple.mpegurl');
@@ -404,27 +380,12 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
       hls.on(Hls.Events.ERROR, (_event, data) => {
         console.warn('[VideoPlayer] hls.js error:', data.type, data.details, 'fatal:', data.fatal);
         if (!data.fatal || disposed) return;
-        const status = data.response?.code;
-        // A 4xx (except 429) is the CDN saying the file isn't there - no
-        // retry will change that, so go straight to the server fallback.
-        const definitive = typeof status === 'number' && status >= 400 && status < 500 && status !== 429;
-        const manifestFailed = data.details === Hls.ErrorDetails.MANIFEST_LOAD_ERROR
-          || data.details === Hls.ErrorDetails.MANIFEST_LOAD_TIMEOUT
-          || data.details === Hls.ErrorDetails.MANIFEST_PARSING_ERROR;
-        if (data.type === Hls.ErrorTypes.NETWORK_ERROR && definitive) {
-          failStream(`This stream failed to load (HTTP ${status}).`);
-        } else if (data.type === Hls.ErrorTypes.NETWORK_ERROR && data.details !== Hls.ErrorDetails.MANIFEST_PARSING_ERROR
-          && networkRetries < MAX_NETWORK_RETRIES) {
+        if (data.type === Hls.ErrorTypes.NETWORK_ERROR && networkRetries < MAX_NETWORK_RETRIES) {
           const delay = 1000 * 2 ** networkRetries;
           networkRetries++;
           setIsBuffering(true);
           retryTimer = window.setTimeout(() => {
-            if (disposed) return;
-            // startLoad() only resumes segment loading - a playlist that
-            // never loaded has to be requested again, or the player just
-            // spins forever.
-            if (manifestFailed) hls.loadSource(streamUrl);
-            else hls.startLoad(Math.max(0, video.currentTime));
+            if (!disposed) hls.startLoad(Math.max(0, video.currentTime));
           }, delay);
         } else if (data.type === Hls.ErrorTypes.MEDIA_ERROR && mediaRecoveries < 2) {
           // Decoder/buffer hiccup: first try a plain MSE recovery, then the
@@ -467,10 +428,6 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
       video.load();
     };
   }, [streamSource.streamUrl, streamSource.referer, initialTime, reloadToken]);
-
-  // The element-level error handler (direct MP4 / native HLS) goes through
-  // the same fallback path as hls.js failures.
-  const failStreamRef = useRef<((message: string) => void) | null>(null);
 
   const retryStream = () => {
     resumeAtRef.current = lastPositionRef.current;
@@ -806,12 +763,8 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     // playback failure.
     if (!videoRef.current?.getAttribute('src')) return;
     console.warn('[VideoPlayer] Native video playback error');
-    if (failStreamRef.current) {
-      failStreamRef.current('This stream failed to load.');
-    } else {
-      setIsPlaying(false);
-      setStreamError('This stream failed to load.');
-    }
+    setIsPlaying(false);
+    setStreamError('This stream failed to load.');
   };
 
   const handleSeek = (e: React.ChangeEvent<HTMLInputElement>) => {

@@ -223,17 +223,6 @@ public class ExoPlayerActivity extends AppCompatActivity {
     private int autoRetryCount = 0;
     private long lastKnownPositionMs = 0;
     private final Runnable autoRetryRunnable = this::retryPlayback;
-    // Unrecoverable stream errors (e.g. the CDN answering 404 for a segment)
-    // ask JS for another server of the same episode. If no answer (play()
-    // or fail()) arrives within this long, the error is shown here instead.
-    private static final long SERVER_FALLBACK_TIMEOUT_MS = 90_000;
-    private String pendingFallbackMessage;
-    // The current stream is the built-in demo clip (no server to fall back to).
-    private boolean currentIsDemoClip = false;
-    private final Runnable serverFallbackTimeout = () -> {
-        if (pendingFallbackMessage != null) showPlaybackError(pendingFallbackMessage);
-    };
-
     // A retry that fires while the app is in the background must not start
     // playing audio there (onStop paused the player on purpose).
     private boolean activityStopped = false;
@@ -323,10 +312,6 @@ public class ExoPlayerActivity extends AppCompatActivity {
             return;
         }
 
-        // A new stream arrived (possibly the server fallback's answer).
-        cancelServerFallback();
-        currentIsDemoClip = isFallback;
-
         // Fresh episode: reset everything that belonged to the previous one.
         errorOverlay.setVisibility(View.GONE);
         nextEpisodeTriggered = false;
@@ -368,7 +353,6 @@ public class ExoPlayerActivity extends AppCompatActivity {
     // Black screen + spinner + title while JS resolves a stream - replaces
     // the old full-screen "Resolving..." overlay in the app.
     private void showLoadingState() {
-        cancelServerFallback();
         releasePlayer();
         playerView.setPlayer(null);
         errorOverlay.setVisibility(View.GONE);
@@ -398,7 +382,6 @@ public class ExoPlayerActivity extends AppCompatActivity {
 
     // JS couldn't resolve a stream for the requested episode.
     void showLoadFailure(String message) {
-        cancelServerFallback();
         releasePlayer();
         bufferingSpinner.setVisibility(View.GONE);
         textErrorMessage.setText(message);
@@ -1192,9 +1175,7 @@ public class ExoPlayerActivity extends AppCompatActivity {
 
     // A failed stream used to just hang on a black screen with an infinite
     // buffering spinner - show what happened and let the user retry or back out.
-    void showPlaybackError(String message) {
-        pendingFallbackMessage = null;
-        bufferingSpinner.setVisibility(View.GONE);
+    private void showPlaybackError(String message) {
         handler.removeCallbacksAndMessages(null);
         textErrorMessage.setText(message);
         btnRetry.setText("Retry");
@@ -1214,67 +1195,6 @@ public class ExoPlayerActivity extends AppCompatActivity {
         }
         if (pendingVideoUrl != null) {
             initializePlayer(pendingVideoUrl, pendingReferer, pendingSubtitlesJson, Math.max(0L, resumeAt), !activityStopped);
-        }
-    }
-
-    // Hands an unrecoverable stream failure to JS, which tries the other
-    // servers for this episode and answers with play() (new stream, same
-    // position) or fail(). The demo clip has no alternative to look for.
-    private void requestServerFallback(String message) {
-        String failedUrl = pendingVideoUrl;
-        releasePlayer();
-        if (failedUrl == null || currentIsDemoClip || !ExoPlayerPlugin.notifyStreamFailed(
-                animeTitle, episodeNumber, currentMode, failedUrl, lastKnownPositionMs, message)) {
-            showPlaybackError(message);
-            return;
-        }
-        Log.w(TAG, "Stream failed, asking JS for another server: " + message);
-        pendingFallbackMessage = message;
-        errorOverlay.setVisibility(View.GONE);
-        bufferingSpinner.setVisibility(View.VISIBLE);
-        handler.removeCallbacks(serverFallbackTimeout);
-        handler.postDelayed(serverFallbackTimeout, SERVER_FALLBACK_TIMEOUT_MS);
-    }
-
-    private void cancelServerFallback() {
-        pendingFallbackMessage = null;
-        handler.removeCallbacks(serverFallbackTimeout);
-    }
-
-    // URI of the HTTP request that failed, if the error was an HTTP status.
-    private static String failedRequestUri(androidx.media3.common.PlaybackException error) {
-        Throwable cause = error.getCause();
-        while (cause != null) {
-            if (cause instanceof HttpDataSource.InvalidResponseCodeException) {
-                HttpDataSource.InvalidResponseCodeException httpEx = (HttpDataSource.InvalidResponseCodeException) cause;
-                return httpEx.dataSpec != null && httpEx.dataSpec.uri != null ? httpEx.dataSpec.uri.toString() : null;
-            }
-            cause = cause.getCause();
-        }
-        return null;
-    }
-
-    // Removes the subtitle whose file is `uri` from the current stream's
-    // subtitle list. Returns false if `uri` isn't one of its subtitles.
-    private boolean dropSubtitle(String uri) {
-        if (pendingSubtitlesJson == null || pendingSubtitlesJson.isEmpty()) return false;
-        try {
-            JSONArray arr = new JSONArray(pendingSubtitlesJson);
-            JSONArray kept = new JSONArray();
-            boolean removed = false;
-            for (int i = 0; i < arr.length(); i++) {
-                JSONObject obj = arr.getJSONObject(i);
-                if (uri.equals(obj.optString("src", ""))) {
-                    removed = true;
-                } else {
-                    kept.put(obj);
-                }
-            }
-            if (!removed) return false;
-            pendingSubtitlesJson = kept.toString();
-            return true;
-        } catch (Exception e) {
-            return false;
         }
     }
 
@@ -1423,14 +1343,6 @@ public class ExoPlayerActivity extends AppCompatActivity {
                     long position = player.getCurrentPosition();
                     if (position > 0) lastKnownPositionMs = position;
                 }
-                // A side-loaded subtitle file that 404s is fatal to ExoPlayer
-                // (a browser just ignores it) - drop that track and carry on.
-                String failedUri = failedRequestUri(error);
-                if (failedUri != null && dropSubtitle(failedUri)) {
-                    Log.w(TAG, "Subtitle failed to load, continuing without it: " + failedUri);
-                    retryPlayback();
-                    return;
-                }
                 if (isTransientError(error) && autoRetryCount < MAX_AUTO_RETRIES) {
                     long delayMs = 1000L << autoRetryCount;
                     autoRetryCount++;
@@ -1440,7 +1352,7 @@ public class ExoPlayerActivity extends AppCompatActivity {
                     handler.postDelayed(autoRetryRunnable, delayMs);
                     return;
                 }
-                requestServerFallback(describePlaybackError(error));
+                showPlaybackError(describePlaybackError(error));
             }
         });
 
