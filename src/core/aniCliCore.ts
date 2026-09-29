@@ -295,7 +295,14 @@ export async function getEpisodeStream(
     if (data.html) {
       const parser = new DOMParser();
       const doc = parser.parseFromString(data.html, "text/html");
-      const zokoServer = doc.querySelector(`[data-type="${mode}"][data-server-name="ZokoAnime"], [data-server-name="ZokoAnime"][data-type="${mode}"], [data-type="${mode}"][data-hash]`);
+      // Only ever match a genuine ZokoAnime server entry - a bare
+      // [data-type][data-hash] selector (no server-name check) used to be
+      // included here as a catch-all, but that matches *any* server with a
+      // hash for this mode, including unrelated/wrong ones. When ZokoAnime
+      // genuinely isn't listed, falling through to the labeled demo stream
+      // below is correct; silently grabbing a different server's content
+      // and playing it as if it were the requested anime is not.
+      const zokoServer = doc.querySelector(`[data-type="${mode}"][data-server-name="ZokoAnime"]`);
       const hash = zokoServer?.getAttribute("data-hash");
 
       if (hash) {
