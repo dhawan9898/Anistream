@@ -216,6 +216,7 @@ public class ExoPlayerActivity extends AppCompatActivity {
         String subtitlesJson = intent.getStringExtra("subtitles");
         String qualitiesJson = intent.getStringExtra("qualities");
         String episodesJson = intent.getStringExtra("episodes");
+        boolean isFallback = intent.getBooleanExtra("isFallback", false);
         animeTitle = intent.getStringExtra("title");
         episodeNumber = intent.getStringExtra("episode");
         currentMode = intent.getStringExtra("mode");
@@ -226,7 +227,11 @@ public class ExoPlayerActivity extends AppCompatActivity {
         }
 
         textTitle.setText(animeTitle != null ? animeTitle : "AniStream");
-        textEpisode.setText("Ep " + (episodeNumber != null ? episodeNumber : "1") + " • " + currentMode.toUpperCase());
+        // isFallback means every real source failed and this is the app's
+        // built-in demo clip, not the real episode - never let that look
+        // like real content.
+        textEpisode.setText("Ep " + (episodeNumber != null ? episodeNumber : "1") + " • " + currentMode.toUpperCase()
+                + (isFallback ? " • DEMO - SOURCE UNAVAILABLE" : ""));
 
         parseQualities(qualitiesJson, videoUrl);
         // Only worth a button when there's an actual choice to make - real

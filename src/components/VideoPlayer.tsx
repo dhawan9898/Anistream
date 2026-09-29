@@ -823,6 +823,18 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
               }}>
                 {mode.toUpperCase()}
               </span>
+              {streamSource.isFallback && (
+                <span style={{
+                  fontSize: '10px',
+                  fontWeight: 700,
+                  backgroundColor: 'var(--accent-danger, #ef4444)',
+                  color: '#fff',
+                  padding: '1px 6px',
+                  borderRadius: '4px'
+                }}>
+                  DEMO - SOURCE UNAVAILABLE
+                </span>
+              )}
             </div>
           </div>
         </div>

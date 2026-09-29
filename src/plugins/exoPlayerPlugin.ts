@@ -38,6 +38,7 @@ export interface ExoPlayerPluginInterface {
     subtitles?: SubtitleTrack[];
     qualities?: QualityOption[];
     episodes?: PlayEpisodeOption[];
+    isFallback?: boolean;
   }): Promise<{ success: boolean }>;
 
   addListener(

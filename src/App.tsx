@@ -188,7 +188,8 @@ export const App: React.FC = () => {
             mode,
             subtitles: source.subtitles,
             qualities: source.qualities,
-            episodes: resolvedEpisodeList.map(e => ({ id: e.id, number: e.number }))
+            episodes: resolvedEpisodeList.map(e => ({ id: e.id, number: e.number })),
+            isFallback: source.isFallback
           });
         } catch (e) {
           console.warn("[App] ExoPlayer plugin call failed, falling back to Web player:", e);

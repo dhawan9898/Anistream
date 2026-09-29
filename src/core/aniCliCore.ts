@@ -33,6 +33,10 @@ export interface StreamSource {
   referer: string;
   masterUrl?: string;
   qualities?: { quality: string; url: string }[];
+  // True only when every real source failed and streamUrl is the built-in
+  // demo clip - callers must make this visible, never present it as if it
+  // were the real episode.
+  isFallback?: boolean;
 }
 
 // 1. Deobfuscator using exact ani-cli XOR algorithm: "otaku-embed-v1"
@@ -268,8 +272,11 @@ export async function getEpisodeStream(
 
     const endpoint = `${getApiBase()}/api/theme/episode/servers?episodeId=${targetEpisodeId}`;
     const res = await fetch(endpoint, { headers: UPSTREAM_HEADERS });
+    if (!res.ok) {
+      console.warn(`[aniCliCore] Direct scrape: servers endpoint returned HTTP ${res.status} for episodeId=${targetEpisodeId}`);
+    }
     const data = await res.json();
-    
+
     if (data.html) {
       const parser = new DOMParser();
       const doc = parser.parseFromString(data.html, "text/html");
@@ -280,6 +287,9 @@ export async function getEpisodeStream(
         const embedUrl = atob(hash);
         const refr = embedUrl.replace(/^(https?:\/\/[^/]*).*/, '$1/');
         const embedRes = await fetch(embedUrl, { headers: UPSTREAM_HEADERS });
+        if (!embedRes.ok) {
+          console.warn(`[aniCliCore] Direct scrape: embed page returned HTTP ${embedRes.status} for ${embedUrl}`);
+        }
         const embedHtml = await embedRes.text();
         const pMatch = embedHtml.match(/window\.__P\s*=\s*"([^"]+)"/);
 
@@ -308,31 +318,39 @@ export async function getEpisodeStream(
               ]
             };
           }
+          console.warn("[aniCliCore] Direct scrape: embed payload had no 'src' field", parsed);
+        } else {
+          console.warn("[aniCliCore] Direct scrape: embed page had no window.__P payload (site markup may have changed)");
         }
+      } else {
+        console.warn("[aniCliCore] Direct scrape: no ZokoAnime server entry found in servers HTML for mode", mode);
       }
+    } else {
+      console.warn("[aniCliCore] Direct scrape: servers endpoint response had no 'html' field", data);
     }
   } catch (err) {
-    console.warn("Could not fetch direct remote stream, using high-speed streaming source:", err);
+    console.warn("[aniCliCore] Direct scrape threw - falling back to demo stream:", err);
   }
 
-  // Guaranteed fallback open-source MP4 video stream so the player ALWAYS works smoothly
+  // Every real source failed. Rather than silently substitute unrelated
+  // content under the real anime's title, say so loudly in the console (the
+  // only place a fallback like this can be diagnosed from, since it always
+  // "succeeds" from the player's point of view) and return a clearly-marked
+  // demo stream so the *player* itself is still provably working.
+  console.error(
+    `[aniCliCore] All real stream sources failed for "${animeTitleOrId}" ep ${episodeIdOrNumber} (${mode}) - ` +
+    `showing a demo stream instead of the real episode. See warnings above for which step failed.`
+  );
   return {
-    streamUrl: "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4",
-    quality: "1080p",
+    streamUrl: "https://storage.googleapis.com/shaka-demo-assets/angel-one/hls.m3u8",
+    quality: "Demo",
     referer: "https://hianime.at/",
-    subtitles: [
-      {
-        src: "https://raw.githubusercontent.com/brenopolanski/html5-video-webvtt-example/master/subtitles.vtt",
-        label: "English",
-        default: true
-      }
-    ],
+    subtitles: [],
+    masterUrl: "https://storage.googleapis.com/shaka-demo-assets/angel-one/hls.m3u8",
     qualities: [
-      { quality: "1080p", url: "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4" },
-      { quality: "720p", url: "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4" },
-      { quality: "480p", url: "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4" },
-      { quality: "Auto", url: "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4" }
-    ]
+      { quality: "Demo", url: "https://storage.googleapis.com/shaka-demo-assets/angel-one/hls.m3u8" }
+    ],
+    isFallback: true
   };
 }
 

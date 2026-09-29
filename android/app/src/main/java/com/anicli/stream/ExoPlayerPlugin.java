@@ -27,6 +27,7 @@ public class ExoPlayerPlugin extends Plugin {
         JSArray subtitles = call.getArray("subtitles");
         JSArray qualities = call.getArray("qualities");
         JSArray episodes = call.getArray("episodes");
+        boolean isFallback = call.getBoolean("isFallback", false);
 
         if (url == null || url.isEmpty()) {
             call.reject("Must provide a video URL");
@@ -44,6 +45,7 @@ public class ExoPlayerPlugin extends Plugin {
         intent.putExtra("subtitles", subtitles != null ? subtitles.toString() : null);
         intent.putExtra("qualities", qualities != null ? qualities.toString() : null);
         intent.putExtra("episodes", episodes != null ? episodes.toString() : null);
+        intent.putExtra("isFallback", isFallback);
 
         getActivity().startActivity(intent);
 
