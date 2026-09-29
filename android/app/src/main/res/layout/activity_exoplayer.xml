@@ -202,6 +202,24 @@
             android:textSize="13sp"
             android:visibility="gone" />
 
+        <!-- Skip outro pill -->
+        <TextView
+            android:id="@+id/btn_skip_outro"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="bottom|end"
+            android:layout_marginEnd="20dp"
+            android:layout_marginBottom="96dp"
+            android:paddingStart="18dp"
+            android:paddingEnd="18dp"
+            android:paddingTop="10dp"
+            android:paddingBottom="10dp"
+            android:text="Skip Outro"
+            android:textColor="#ffffff"
+            android:textStyle="bold"
+            android:textSize="13sp"
+            android:visibility="gone" />
+
         <!-- Bottom bar: scrubber + current time (left) / remaining time (right), Netflix-style -->
         <LinearLayout
             android:layout_width="match_parent"

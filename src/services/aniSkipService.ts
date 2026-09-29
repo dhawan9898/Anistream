@@ -44,36 +44,49 @@ async function resolveMalId(title: string): Promise<number | null> {
   }
 }
 
-// Returns the opening's [start, end] in seconds for this exact anime +
-// episode, or null when no real data exists - callers should treat null as
-// "don't offer to skip" rather than falling back to a guess.
-export async function getOpeningSkipInterval(
+export interface EpisodeSkipIntervals {
+  opening: SkipInterval | null;
+  ending: SkipInterval | null;
+}
+
+function extractInterval(data: any, skipType: 'op' | 'ed'): SkipInterval | null {
+  const result = (data?.results || []).find((r: any) => r?.skipType === skipType);
+  const interval = result?.interval;
+  if (!interval || typeof interval.startTime !== 'number' || typeof interval.endTime !== 'number' || interval.endTime <= interval.startTime) {
+    return null;
+  }
+  return { start: interval.startTime, end: interval.endTime };
+}
+
+// Returns this exact anime + episode's opening and ending [start, end] in
+// seconds (either may be null when no real data exists for that one) -
+// callers should treat a null half as "don't offer to skip it" rather than
+// falling back to a guess.
+export async function getEpisodeSkipIntervals(
   title: string,
   episodeNumber: string,
   episodeLengthSeconds: number
-): Promise<SkipInterval | null> {
+): Promise<EpisodeSkipIntervals> {
+  const none: EpisodeSkipIntervals = { opening: null, ending: null };
   const epNum = parseInt(episodeNumber, 10);
   if (!title || !isFinite(epNum) || epNum <= 0 || !episodeLengthSeconds || episodeLengthSeconds <= 0) {
-    return null;
+    return none;
   }
 
   const malId = await resolveMalId(title);
-  if (!malId) return null;
+  if (!malId) return none;
 
   try {
-    const url = `https://api.aniskip.com/v2/skip-times/${malId}/${epNum}?types[]=op&episodeLength=${Math.round(episodeLengthSeconds)}`;
+    const url = `https://api.aniskip.com/v2/skip-times/${malId}/${epNum}?types[]=op&types[]=ed&episodeLength=${Math.round(episodeLengthSeconds)}`;
     const res = await fetchWithTimeout(url);
     if (!res.ok) throw new Error(`AniSkip lookup failed (${res.status})`);
     const data = await res.json();
-    const opResult = (data?.results || []).find((r: any) => r?.skipType === 'op');
-    const interval = opResult?.interval;
-
-    if (!interval || typeof interval.startTime !== 'number' || typeof interval.endTime !== 'number' || interval.endTime <= interval.startTime) {
-      return null;
-    }
-    return { start: interval.startTime, end: interval.endTime };
+    return {
+      opening: extractInterval(data, 'op'),
+      ending: extractInterval(data, 'ed')
+    };
   } catch (err) {
     console.warn('[aniSkipService] Skip-time lookup failed:', err);
-    return null;
+    return none;
   }
 }

@@ -8,7 +8,7 @@ import {
 } from 'lucide-react';
 import type { StreamSource, EpisodeItem } from '../core/aniCliCore';
 import { getUserPreferences } from '../services/historyService';
-import { getOpeningSkipInterval, type SkipInterval } from '../services/aniSkipService';
+import { getEpisodeSkipIntervals, type SkipInterval } from '../services/aniSkipService';
 
 const resolvePlayableUrl = (url?: string, _referer?: string): string => {
   if (!url) return '';
@@ -71,12 +71,14 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   const [isMuted, setIsMuted] = useState<boolean>(false);
   const [showSkipIntro, setShowSkipIntro] = useState<boolean>(false);
   const [skippedIntroToast, setSkippedIntroToast] = useState<boolean>(false);
+  const [showSkipOutro, setShowSkipOutro] = useState<boolean>(false);
   const [doubleTapFeedback, setDoubleTapFeedback] = useState<'left' | 'right' | null>(null);
   const [videoTrackWarning, setVideoTrackWarning] = useState<string | null>(null);
   const [streamError, setStreamError] = useState<string | null>(null);
   const [autoSkipIntro, setAutoSkipIntro] = useState<boolean>(false);
   const [autoPlayNext, setAutoPlayNext] = useState<boolean>(true);
   const [introInterval, setIntroInterval] = useState<SkipInterval | null>(null);
+  const [outroInterval, setOutroInterval] = useState<SkipInterval | null>(null);
   const autoSkippedRef = useRef<boolean>(false);
   const introLookupRef = useRef<string | null>(null);
 
@@ -87,12 +89,14 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     });
   }, []);
 
-  // A new episode/stream means a fresh intro to (maybe) look up and auto-skip.
+  // A new episode/stream means a fresh intro/outro to (maybe) look up and auto-skip.
   useEffect(() => {
     autoSkippedRef.current = false;
     introLookupRef.current = null;
     setShowSkipIntro(false);
+    setShowSkipOutro(false);
     setIntroInterval(null);
+    setOutroInterval(null);
     setSelectedQuality(streamSource.quality || '1080p');
     setActiveSubtitle(streamSource.subtitles.find(s => s.default)?.label ?? streamSource.subtitles[0]?.label ?? null);
   }, [streamSource.streamUrl, streamSource.quality, streamSource.subtitles]);
@@ -110,17 +114,20 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     }
   }, [activeSubtitle, streamSource.subtitles]);
 
-  // Real per-episode opening timestamps only become knowable once we have
-  // this episode's actual duration (AniSkip needs it to normalize its
+  // Real per-episode opening/ending timestamps only become knowable once we
+  // have this episode's actual duration (AniSkip needs it to normalize its
   // timestamps) - so look them up as soon as duration is known, once per
-  // stream. No result means we genuinely don't know where the intro ends,
-  // so no skip button is offered rather than guessing.
+  // stream. No result for a half means we genuinely don't know where it is,
+  // so no skip button is offered for it rather than guessing.
   useEffect(() => {
     if (!duration || duration <= 0) return;
     if (introLookupRef.current === streamSource.streamUrl) return;
     introLookupRef.current = streamSource.streamUrl;
 
-    getOpeningSkipInterval(animeTitle, episode.number, duration).then(setIntroInterval);
+    getEpisodeSkipIntervals(animeTitle, episode.number, duration).then(({ opening, ending }) => {
+      setIntroInterval(opening);
+      setOutroInterval(ending);
+    });
   }, [duration, streamSource.streamUrl, animeTitle, episode.number]);
 
   // Initialize Hls / Video stream
@@ -274,6 +281,13 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     resetControlsTimer();
   };
 
+  const skipOutro = () => {
+    if (!outroInterval) return;
+    seekTo(outroInterval.end);
+    setShowSkipOutro(false);
+    resetControlsTimer();
+  };
+
   // Switches to a different quality rendition, preserving playback position
   // and play/pause state. Works whether the current/new source is HLS or a
   // direct MP4 (the two are not always the same across qualities).
@@ -422,6 +436,13 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     } else {
       setShowSkipIntro(inIntroWindow && !autoSkipIntro);
     }
+
+    // Same idea for the ending - real per-episode data only, manual skip
+    // only (there's no "auto-skip outro" preference to honor here).
+    const inOutroWindow = !!outroInterval
+      && video.currentTime >= outroInterval.start
+      && video.currentTime < outroInterval.end;
+    setShowSkipOutro(inOutroWindow);
 
     // Buffer progress
     if (video.buffered.length > 0) {
@@ -716,6 +737,36 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
         </div>
       )}
 
+      {/* Skip Outro Floating Pill - same idea as Skip Intro, jumps to the
+          real per-episode ending timestamp when one was found. */}
+      {showSkipOutro && (
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            skipOutro();
+          }}
+          className="interactive glass-pill"
+          style={{
+            position: 'absolute',
+            bottom: '110px',
+            right: '20px',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '8px',
+            padding: '10px 18px',
+            borderRadius: 'var(--radius-full)',
+            color: '#fff',
+            fontSize: '13px',
+            fontWeight: 700,
+            boxShadow: '0 4px 20px rgba(0,0,0,0.5)',
+            zIndex: 10
+          }}
+        >
+          <FastForward size={16} />
+          <span>Skip Outro</span>
+        </button>
+      )}
+
       {/* Controls Overlay */}
       <div 
         style={{
@@ -916,11 +967,16 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
             </button>
           </div>
 
-          {/* Episode Menu - scrollable, opens upward above the toolbar */}
+          {/* Episode Menu - scrollable, opens upward above the toolbar.
+              Stops touch events here from reaching the container's volume-
+              swipe gesture handler, which would otherwise fight a finger
+              scrolling this list. */}
           {showEpisodeMenu && episodeList && onSelectEpisode && (
             <div
               className="glass-panel-dark"
               onClick={(e) => e.stopPropagation()}
+              onTouchStart={(e) => e.stopPropagation()}
+              onTouchMove={(e) => e.stopPropagation()}
               style={{
                 position: 'absolute',
                 bottom: 'calc(100% + 8px)',

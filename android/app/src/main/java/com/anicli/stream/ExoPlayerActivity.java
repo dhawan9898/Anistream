@@ -35,8 +35,11 @@ import androidx.media3.common.Tracks;
 import androidx.media3.common.util.UnstableApi;
 import androidx.media3.datasource.DefaultHttpDataSource;
 import androidx.media3.exoplayer.ExoPlayer;
-import androidx.media3.exoplayer.source.DefaultMediaSourceFactory;
+import androidx.media3.exoplayer.hls.HlsMediaSource;
 import androidx.media3.exoplayer.source.MediaSource;
+import androidx.media3.exoplayer.source.MergingMediaSource;
+import androidx.media3.exoplayer.source.ProgressiveMediaSource;
+import androidx.media3.exoplayer.source.SingleSampleMediaSource;
 import androidx.media3.ui.PlayerView;
 
 import org.json.JSONArray;
@@ -48,9 +51,6 @@ import java.util.Map;
 @UnstableApi
 public class ExoPlayerActivity extends AppCompatActivity {
     private static final String TAG = "ExoPlayerActivity";
-    private static final long SKIP_INTRO_START_MS = 5_000;
-    private static final long SKIP_INTRO_END_MS = 120_000;
-    private static final long SKIP_INTRO_JUMP_MS = 85_000;
     private static final long SEEK_STEP_MS = 10_000;
     private static final long CONTROLS_HIDE_DELAY_MS = 3_500;
     private static final long NEXT_EPISODE_THRESHOLD_MS = 20_000;
@@ -70,6 +70,7 @@ public class ExoPlayerActivity extends AppCompatActivity {
     private TextView btnQuality;
     private TextView btnEpisodes;
     private TextView btnSkipIntro;
+    private TextView btnSkipOutro;
     private TextView textTitle;
     private TextView textEpisode;
     private TextView textCurrentTime;
@@ -124,6 +125,13 @@ public class ExoPlayerActivity extends AppCompatActivity {
     // picker and report a selection back to JS) - only populated when the JS
     // side actually supplied one, never guessed.
     private final java.util.List<EpisodeOption> episodeOptions = new java.util.ArrayList<>();
+
+    // Real per-episode intro/ending timestamps from AniSkip, fetched once the
+    // player reports a duration - null means no real data was found for that
+    // half, so its button never shows (never a guessed range).
+    private AniSkipClient.SkipInterval introInterval;
+    private AniSkipClient.SkipInterval outroInterval;
+    private boolean skipTimesFetched = false;
 
     private final Handler handler = new Handler(Looper.getMainLooper());
     private boolean userSeeking = false;
@@ -252,6 +260,7 @@ public class ExoPlayerActivity extends AppCompatActivity {
         btnQuality = findViewById(R.id.btn_quality);
         btnEpisodes = findViewById(R.id.btn_episodes);
         btnSkipIntro = findViewById(R.id.btn_skip_intro);
+        btnSkipOutro = findViewById(R.id.btn_skip_outro);
         textTitle = findViewById(R.id.text_title);
         textEpisode = findViewById(R.id.text_episode);
         textCurrentTime = findViewById(R.id.text_current_time);
@@ -278,6 +287,7 @@ public class ExoPlayerActivity extends AppCompatActivity {
         pill(btnRewind, 29f, 0.32f);
         pill(btnForward, 29f, 0.32f);
         pill(btnSkipIntro, 24f, 0.55f);
+        pill(btnSkipOutro, 24f, 0.55f);
         pill(gestureIndicator, 24f, 0.55f);
         pill(nextEpisodeCard, 14f, 0.6f);
         pill(errorOverlay, 16f, 0.75f);
@@ -334,8 +344,16 @@ public class ExoPlayerActivity extends AppCompatActivity {
         btnRewind.setOnClickListener(v -> seekBy(-SEEK_STEP_MS));
         btnForward.setOnClickListener(v -> seekBy(SEEK_STEP_MS));
         btnSkipIntro.setOnClickListener(v -> {
-            seekBy(SKIP_INTRO_JUMP_MS);
+            if (player != null && introInterval != null) {
+                player.seekTo(Math.max(0, introInterval.endMs));
+            }
             btnSkipIntro.setVisibility(View.GONE);
+        });
+        btnSkipOutro.setOnClickListener(v -> {
+            if (player != null && outroInterval != null) {
+                player.seekTo(Math.max(0, outroInterval.endMs));
+            }
+            btnSkipOutro.setVisibility(View.GONE);
         });
         btnAudioSubs.setOnClickListener(this::showAudioSubtitlesMenu);
         btnQuality.setOnClickListener(this::showQualityMenu);
@@ -639,11 +657,27 @@ public class ExoPlayerActivity extends AppCompatActivity {
         android.util.TypedValue rowBg = new android.util.TypedValue();
         getTheme().resolveAttribute(android.R.attr.selectableItemBackground, rowBg, true);
 
+        // Rows go inside a ScrollView, not directly in the sheet - a long
+        // list (e.g. an anime with 20+ episodes) would otherwise just grow
+        // the dialog past the screen edge with no way to reach the rest of
+        // it, since a plain LinearLayout never scrolls on its own.
+        android.widget.ScrollView scrollView = new android.widget.ScrollView(this);
+        LinearLayout rowsContainer = new LinearLayout(this);
+        rowsContainer.setOrientation(LinearLayout.VERTICAL);
+
+        int rowHeightPx = Math.round(48 * density);
+        int maxHeightPx = Math.round(getResources().getDisplayMetrics().heightPixels * 0.5f);
+        boolean needsCap = rows.size() * rowHeightPx > maxHeightPx;
+        scrollView.setLayoutParams(new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                needsCap ? maxHeightPx : LinearLayout.LayoutParams.WRAP_CONTENT
+        ));
+
         for (MenuRow row : rows) {
             LinearLayout rowView = new LinearLayout(this);
             rowView.setOrientation(LinearLayout.HORIZONTAL);
             rowView.setGravity(Gravity.CENTER_VERTICAL);
-            rowView.setMinimumHeight(Math.round(48 * density));
+            rowView.setMinimumHeight(rowHeightPx);
             rowView.setPadding(Math.round(24 * density), Math.round(12 * density), Math.round(24 * density), Math.round(12 * density));
             rowView.setClickable(true);
             rowView.setFocusable(true);
@@ -672,8 +706,11 @@ public class ExoPlayerActivity extends AppCompatActivity {
                 row.onSelect.run();
                 dialog.dismiss();
             });
-            sheet.addView(rowView);
+            rowsContainer.addView(rowView);
         }
+
+        scrollView.addView(rowsContainer);
+        sheet.addView(scrollView);
 
         dialog.setContentView(sheet);
         Window window = dialog.getWindow();
@@ -771,12 +808,21 @@ public class ExoPlayerActivity extends AppCompatActivity {
                 .setReadTimeoutMs(30000);
 
         Uri uri = Uri.parse(videoUrl);
-        MediaItem.Builder mediaItemBuilder = new MediaItem.Builder().setUri(uri);
+        MediaItem mediaItem = new MediaItem.Builder().setUri(uri).build();
+
+        // Build the main video source with the exact same direct
+        // HLS/Progressive branching this app always used (proven reliable -
+        // no auto-detection involved), then merge in subtitles explicitly
+        // via SingleSampleMediaSource instead of leaning on
+        // DefaultMediaSourceFactory's own type-inference for the main
+        // source too. DefaultMediaSourceFactory infers HLS vs progressive
+        // from the URL's file extension, which real/proxied stream URLs
+        // don't always carry - safer to keep that decision explicit.
+        MediaSource videoSource;
         if (videoUrl.contains(".m3u8")) {
-            // DefaultMediaSourceFactory infers HLS vs progressive from the
-            // URI's file extension; force it for proxied/query-string URLs
-            // where ".m3u8" isn't the last path segment sniffed.
-            mediaItemBuilder.setMimeType(MimeTypes.APPLICATION_M3U8);
+            videoSource = new HlsMediaSource.Factory(dataSourceFactory).createMediaSource(mediaItem);
+        } else {
+            videoSource = new ProgressiveMediaSource.Factory(dataSourceFactory).createMediaSource(mediaItem);
         }
 
         java.util.List<MediaItem.SubtitleConfiguration> subtitleConfigs = parseSubtitles(subtitlesJson);
@@ -784,20 +830,19 @@ public class ExoPlayerActivity extends AppCompatActivity {
             currentSubtitleLabel = defaultSubtitleLabel;
             subtitleSelectionInitialized = true;
         }
-        if (!subtitleConfigs.isEmpty()) {
-            mediaItemBuilder.setSubtitleConfigurations(subtitleConfigs);
-        }
-        MediaItem mediaItem = mediaItemBuilder.build();
 
-        // Side-loaded subtitles (MediaItem.subtitleConfigurations) are only
-        // merged in automatically by DefaultMediaSourceFactory - it wraps
-        // the underlying HLS/progressive source in a MergingMediaSource with
-        // one SingleSampleMediaSource per subtitle track. Building HLS or
-        // Progressive sources directly (as this used to do) silently drops
-        // subtitleConfigurations entirely: the track never loads, so it can
-        // never render, no matter what format it actually is. This was the
-        // real reason captions never showed up.
-        MediaSource mediaSource = new DefaultMediaSourceFactory(dataSourceFactory).createMediaSource(mediaItem);
+        MediaSource mediaSource;
+        if (subtitleConfigs.isEmpty()) {
+            mediaSource = videoSource;
+        } else {
+            MediaSource[] sources = new MediaSource[subtitleConfigs.size() + 1];
+            sources[0] = videoSource;
+            for (int i = 0; i < subtitleConfigs.size(); i++) {
+                sources[i + 1] = new SingleSampleMediaSource.Factory(dataSourceFactory)
+                        .createMediaSource(subtitleConfigs.get(i), C.TIME_UNSET);
+            }
+            mediaSource = new MergingMediaSource(sources);
+        }
 
         player = new ExoPlayer.Builder(this).build();
         playerView.setPlayer(player);
@@ -819,6 +864,7 @@ public class ExoPlayerActivity extends AppCompatActivity {
             public void onPlaybackStateChanged(int state) {
                 if (state == Player.STATE_READY) {
                     textRemainingTime.setText("-" + formatTime(Math.max(player.getDuration(), 0)));
+                    maybeFetchSkipTimes();
                 }
             }
 
@@ -898,6 +944,22 @@ public class ExoPlayerActivity extends AppCompatActivity {
         return MimeTypes.TEXT_VTT;
     }
 
+    // Looks up this exact anime + episode's real opening/ending timestamps
+    // once the player reports a real duration (needed for AniSkip's
+    // episodeLength query param) - only once per episode, not on every
+    // progress tick.
+    private void maybeFetchSkipTimes() {
+        if (skipTimesFetched || player == null) return;
+        long durationMs = player.getDuration();
+        if (durationMs <= 0) return;
+        skipTimesFetched = true;
+        AniSkipClient.fetchSkipIntervals(animeTitle, episodeNumber, durationMs / 1000, handler,
+                (opening, ending) -> {
+                    introInterval = opening;
+                    outroInterval = ending;
+                });
+    }
+
     private void updateProgress() {
         if (player == null || userSeeking) return;
         long duration = Math.max(player.getDuration(), 0);
@@ -909,11 +971,20 @@ public class ExoPlayerActivity extends AppCompatActivity {
         }
         textCurrentTime.setText(formatTime(position));
 
-        boolean shouldShowSkip = position >= SKIP_INTRO_START_MS && position <= SKIP_INTRO_END_MS;
-        if (shouldShowSkip && btnSkipIntro.getVisibility() != View.VISIBLE) {
+        boolean shouldShowIntro = introInterval != null
+                && position >= introInterval.startMs && position < introInterval.endMs;
+        if (shouldShowIntro && btnSkipIntro.getVisibility() != View.VISIBLE) {
             btnSkipIntro.setVisibility(View.VISIBLE);
-        } else if (!shouldShowSkip && btnSkipIntro.getVisibility() == View.VISIBLE) {
+        } else if (!shouldShowIntro && btnSkipIntro.getVisibility() == View.VISIBLE) {
             btnSkipIntro.setVisibility(View.GONE);
+        }
+
+        boolean shouldShowOutro = outroInterval != null
+                && position >= outroInterval.startMs && position < outroInterval.endMs;
+        if (shouldShowOutro && btnSkipOutro.getVisibility() != View.VISIBLE) {
+            btnSkipOutro.setVisibility(View.VISIBLE);
+        } else if (!shouldShowOutro && btnSkipOutro.getVisibility() == View.VISIBLE) {
+            btnSkipOutro.setVisibility(View.GONE);
         }
 
         updateNextEpisodePrompt(duration, position);
