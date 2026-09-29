@@ -95,18 +95,40 @@ public class ExoPlayerPlugin extends Plugin {
     @PluginMethod
     public void fail(PluginCall call) {
         String message = call.getString("message", "Couldn't load this episode.");
+        // retry: the stream itself was fine to try again (e.g. server
+        // fallback found nothing) - offer Retry instead of only Go Back.
+        boolean retry = call.getBoolean("retry", false);
         ExoPlayerActivity activity = ExoPlayerActivity.current();
         if (activity == null) {
             call.reject("Player is not open");
             return;
         }
-        activity.runOnUiThread(() -> activity.showLoadFailure(message));
+        activity.runOnUiThread(() -> {
+            if (retry) activity.showPlaybackError(message);
+            else activity.showLoadFailure(message);
+        });
         call.resolve();
     }
 
     static void notifyPlayerClosed() {
         if (activeInstance == null) return;
         activeInstance.notifyListeners("playerClosed", new JSObject());
+    }
+
+    // The open stream failed in a way retrying can't fix - JS looks for
+    // another server for the same episode. Returns false when no JS
+    // listener can be reached (the player then shows the error itself).
+    static boolean notifyStreamFailed(String title, String episode, String mode, String url, long positionMs, String message) {
+        if (activeInstance == null) return false;
+        JSObject data = new JSObject();
+        data.put("title", title);
+        data.put("episode", episode);
+        data.put("mode", mode);
+        data.put("url", url);
+        data.put("positionMs", positionMs);
+        data.put("message", message);
+        activeInstance.notifyListeners("streamFailed", data);
+        return true;
     }
 
     static void notifyModeSwitchRequested(String title, String episode, String newMode) {

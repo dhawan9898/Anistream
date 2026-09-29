@@ -23,7 +23,7 @@ steps as [`ani-cli`](https://github.com/pystardust/ani-cli).
 7. [CI builds & releases](#7-ci-builds--releases)
 8. [Architecture](#8-architecture)
 9. [Troubleshooting](#9-troubleshooting)
-10. [What's new in v6.0](#10-whats-new-in-v60)
+10. [What's new in v6.1 / v6.0](#10-whats-new-in-v61--v60)
 11. [License](#11-license)
 
 ---
@@ -207,6 +207,7 @@ Network requests to the site go through a small in-memory cache (5 min for pages
 
 | Symptom | What to try |
 |---------|-------------|
+| "Couldn't play this stream … HTTP 404" | That episode's files are missing on the video host (CDN) for **every** server, since the app has already switched servers on its own before showing this. Tap **Retry** later, or try the other audio (SUB/DUB). |
 | "DEMO - SOURCE UNAVAILABLE" | Every server for that episode failed. Try the other audio (SUB/DUB) from **Audio & Subtitles**, or try again later. |
 | "Couldn't reach the server" in Search | No connection, or the site is down or blocked on your network. Tap **Retry**. |
 | Audio but no picture | The server sent an unsupported codec. Pick another episode or audio type. |
@@ -215,7 +216,16 @@ Network requests to the site go through a small in-memory cache (5 min for pages
 
 ---
 
-## 10. What's new in v6.0
+## 10. What's new in v6.1 / v6.0
+
+### v6.1
+
+- **Dead-stream fallback during playback**: if the video host answers 404 (or another error that retrying can't fix) for an episode's playlist or segments, the player now switches to the next server for the same episode and resumes at the same position, on Android and web. The error only appears when no server works. Before, one server with missing files for one episode (while the next episode played fine) always ended in "Couldn't play this stream".
+- **Streams are checked before playing (Android)**: each candidate server's playlist, first variant and first segment are probed, and servers whose files are gone are skipped up front.
+- **Dead subtitle files no longer kill playback (Android)**: subtitle files that 404 are dropped before playback, and a subtitle that fails mid-episode is removed while the video keeps playing.
+- **Web player no longer hangs on a dead playlist**: a playlist that failed to load used to leave the spinner running forever. It is now reloaded on transient errors, and 4xx answers fail over immediately.
+
+### v6.0
 
 **Playback reliability**
 - Server fallback: if the first mirror is dead, the other servers for the same audio type are tried before falling back to the demo clip.

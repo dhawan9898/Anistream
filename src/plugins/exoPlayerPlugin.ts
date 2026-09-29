@@ -31,6 +31,18 @@ export interface ProgressUpdateEvent {
   durationMs: number;
 }
 
+// The open stream failed in a way retrying it won't fix (e.g. the CDN
+// returned 404 for a segment). JS should find another server for the same
+// episode and play() it at positionMs, or fail({ retry: true }).
+export interface StreamFailedEvent {
+  title: string;
+  episode: string;
+  mode: 'sub' | 'dub';
+  url: string;
+  positionMs: number;
+  message: string;
+}
+
 export interface PlayEpisodeOption {
   id: string;
   number: string;
@@ -59,8 +71,10 @@ export interface ExoPlayerPluginInterface {
   // If the player is already open it just shows its spinner again.
   open(options: { title?: string; episode?: string; mode?: 'sub' | 'dub' }): Promise<void>;
 
-  // Shows a playback error inside the open player (stream resolution failed).
-  fail(options: { message: string }): Promise<void>;
+  // Shows a playback error inside the open player (stream resolution
+  // failed). retry: offer "Retry" (replay the current stream) instead of
+  // only "Go Back".
+  fail(options: { message: string; retry?: boolean }): Promise<void>;
 
   addListener(
     eventName: 'playerClosed',
@@ -80,6 +94,11 @@ export interface ExoPlayerPluginInterface {
   addListener(
     eventName: 'episodeSelected',
     listenerFunc: (event: EpisodeSelectedEvent) => void
+  ): Promise<PluginListenerHandle>;
+
+  addListener(
+    eventName: 'streamFailed',
+    listenerFunc: (event: StreamFailedEvent) => void
   ): Promise<PluginListenerHandle>;
 
   addListener(

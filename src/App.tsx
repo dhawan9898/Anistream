@@ -35,6 +35,9 @@ interface PlaybackSession {
   mode: 'sub' | 'dub';
   source: StreamSource;
   startTime: number;
+  // Stream URLs of this episode that already failed in the player, so a
+  // server fallback never hands one of them back.
+  failedUrls: string[];
 }
 
 // Persists a position report for a committed session. The demo fallback
@@ -189,6 +192,20 @@ export const App: React.FC = () => {
       playRequestRef.current++;
       setStreamLoading(false);
     });
+    const streamFailedHandle = ExoPlayerPlugin.addListener('streamFailed', async ({ episode, mode, url, positionMs, message }) => {
+      const session = nowPlayingRef.current;
+      // Only for the episode this session is playing - a late event from an
+      // earlier episode must not trigger a fallback for the current one.
+      // (Matched by episode/mode, like progress reports: after a quality
+      // switch the player's URL is no longer the session's stream URL.)
+      if (!session || episode !== session.episode.number || (mode && mode !== session.mode)) return;
+      console.warn('[App] native stream failed:', url, message);
+      const recovered = await recoverRef.current(session, positionMs / 1000);
+      if (!recovered) {
+        ExoPlayerPlugin.fail({ message: `${message}\nNo other server for this episode worked.`, retry: true })
+          .catch(() => undefined);
+      }
+    });
     const progressHandle = ExoPlayerPlugin.addListener('progressUpdate', ({ episode, mode, positionMs, durationMs }) => {
       // The native player sends its final report for episode N *after* it
       // asked for N+1, so match the report to the session it describes
@@ -204,9 +221,70 @@ export const App: React.FC = () => {
       episodeSelectedHandle.then(h => h.remove());
       progressHandle.then(h => h.remove());
       closedHandle.then(h => h.remove());
+      streamFailedHandle.then(h => h.remove());
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  const playNative = (
+    anime: AnimeItem,
+    episode: EpisodeItem,
+    mode: 'sub' | 'dub',
+    source: StreamSource,
+    episodes: EpisodeItem[],
+    startTime: number
+  ) => ExoPlayerPlugin.play({
+    url: source.streamUrl,
+    title: anime.title,
+    episode: episode.number,
+    referer: source.referer,
+    mode,
+    subtitles: source.subtitles,
+    qualities: source.qualities,
+    episodes: episodes.map(e => ({ id: e.id, number: e.number })),
+    isFallback: source.isFallback,
+    intro: source.intro,
+    outro: source.outro,
+    startPositionMs: Math.max(0, Math.round(startTime * 1000))
+  });
+
+  // The playing stream died in a way retrying it can't fix (e.g. the CDN
+  // answered 404 for its playlist or a segment - one episode's files gone
+  // from one server while the next episode plays fine). Find another server
+  // for the same episode, skipping every stream that already failed, and
+  // continue at the same position. Resolves false when none is left (the
+  // caller then shows its own error with Retry).
+  const recoverFromStreamFailure = async (session: PlaybackSession, positionSec: number): Promise<boolean> => {
+    const requestId = ++playRequestRef.current;
+    const failedUrls = [...session.failedUrls, session.source.streamUrl];
+    console.warn(`[App] stream failed for ${session.anime.title} E${session.episode.number}, looking for another server (${failedUrls.length} failed so far)`);
+    setStreamLoading(true);
+    try {
+      const source = await getEpisodeStream(
+        session.anime.id || session.anime.title,
+        session.episode.id || session.episode.number,
+        session.mode,
+        session.anime.id,
+        { excludeStreamUrls: failedUrls }
+      );
+      if (requestId !== playRequestRef.current) return true; // user moved on
+      // The demo clip is not a substitute for an episode that was playing.
+      if (source.isFallback || failedUrls.includes(source.streamUrl)) return false;
+      const startTime = Math.max(0, positionSec);
+      setNowPlaying({ ...session, source, startTime, failedUrls });
+      if (Capacitor.isNativePlatform()) {
+        await playNative(session.anime, session.episode, session.mode, source, episodeListRef.current, startTime);
+      }
+      return true;
+    } catch (err) {
+      console.warn('[App] server fallback failed:', err);
+      return requestId !== playRequestRef.current;
+    } finally {
+      if (requestId === playRequestRef.current) setStreamLoading(false);
+    }
+  };
+  const recoverRef = useRef(recoverFromStreamFailure);
+  recoverRef.current = recoverFromStreamFailure;
 
   // Play an episode
   const handlePlayEpisode = async (
@@ -266,25 +344,12 @@ export const App: React.FC = () => {
       }
 
       if (requestId !== playRequestRef.current) return;
-      setNowPlaying({ anime, episode, mode, source, startTime });
+      setNowPlaying({ anime, episode, mode, source, startTime, failedUrls: [] });
 
       if (isNative) {
         try {
           console.log("[App] Launching Android Native ExoPlayer...");
-          await ExoPlayerPlugin.play({
-            url: source.streamUrl,
-            title: anime.title,
-            episode: episode.number,
-            referer: source.referer,
-            mode,
-            subtitles: source.subtitles,
-            qualities: source.qualities,
-            episodes: resolvedEpisodeList.map(e => ({ id: e.id, number: e.number })),
-            isFallback: source.isFallback,
-            intro: source.intro,
-            outro: source.outro,
-            startPositionMs: Math.max(0, Math.round(startTime * 1000))
-          });
+          await playNative(anime, episode, mode, source, resolvedEpisodeList, startTime);
         } catch (e) {
           console.warn("[App] ExoPlayer plugin call failed, falling back to Web player:", e);
           setIsPlaying(true);
@@ -451,6 +516,7 @@ export const App: React.FC = () => {
           onSelectEpisode={(ep) => handlePlayEpisode(nowPlaying.anime, ep, playingMode, 0)}
           onSwitchMode={(newMode) => handlePlayEpisode(nowPlaying.anime, nowPlaying.episode, newMode, 0)}
           onProgressUpdate={handleProgressUpdate}
+          onStreamFailed={(positionSec) => recoverFromStreamFailure(nowPlaying, positionSec)}
         />
         </Suspense>
       )}

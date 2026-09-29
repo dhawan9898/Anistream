@@ -407,10 +407,14 @@ export async function getEpisodeStream(
   animeTitleOrId: string, 
   episodeIdOrNumber: string = '1',
   mode: 'sub' | 'dub' = 'sub',
-  animeId?: string
+  animeId?: string,
+  options: StreamLookupOptions = {}
 ): Promise<StreamSource> {
-  // 1. First priority: Invoke real ani-cli bridge (when running in Vite dev mode).
-  if (!Capacitor.isNativePlatform()) {
+  const exclude = new Set(options.excludeStreamUrls || []);
+  // 1. First priority: Invoke real ani-cli bridge (when running in Vite dev
+  // mode). It always returns the same server, so it's skipped when looking
+  // for an alternative to a stream that already failed.
+  if (!Capacitor.isNativePlatform() && exclude.size === 0) {
     try {
       const cleanQuery = (animeId || animeTitleOrId).replace(/-[0-9]+$/, '').replace(/-/g, ' ');
       const epNum = episodeIdOrNumber.replace(/^.*-ep-/, '').replace(/[^0-9.]/g, '') || '1';
@@ -476,10 +480,29 @@ export async function getEpisodeStream(
       // Try every server of the requested audio type in the site's own
       // order: one dead mirror (403, removed video, broken embed) used to
       // drop straight to the demo clip even when the next server was fine.
+      //
+      // A server can also resolve fine yet point at a stream whose files are
+      // gone (the CDN answers 404 for the playlist or its segments) - so each
+      // candidate is probed before it's handed to the player, and streams
+      // that already failed in the player (options.excludeStreamUrls) are
+      // skipped when looking for a replacement.
       for (const hash of hashes) {
         try {
           const source = await resolveEmbed(hash, targetEpisodeId, mode);
-          if (source) return source;
+          if (!source) continue;
+          if (exclude.has(source.streamUrl)) {
+            console.warn(`[aniCliCore] episodeId=${targetEpisodeId} skipping stream that already failed:`, source.streamUrl);
+            continue;
+          }
+          const [verdict, subtitles] = await Promise.all([
+            probeStream(source.streamUrl, source.referer),
+            dropDeadSubtitles(source.subtitles, source.referer)
+          ]);
+          if (verdict === 'dead') {
+            console.warn(`[aniCliCore] episodeId=${targetEpisodeId} stream is dead on the CDN, trying next server:`, source.streamUrl);
+            continue;
+          }
+          return { ...source, subtitles };
         } catch (err) {
           console.warn(`[aniCliCore] episodeId=${targetEpisodeId} server failed, trying next:`, err);
         }
@@ -623,6 +646,97 @@ async function resolveEmbed(hash: string, episodeId: string, mode: 'sub' | 'dub'
     intro,
     outro
   };
+}
+
+export interface StreamLookupOptions {
+  // Streams that already failed in the player - never hand these back.
+  excludeStreamUrls?: string[];
+}
+
+// Same identity the players present to the CDN (ExoPlayer sends exactly
+// these two headers), so a probe sees what playback would see.
+function cdnHeaders(referer: string): Record<string, string> {
+  return {
+    'User-Agent': UPSTREAM_HEADERS['User-Agent'],
+    'Referer': referer
+  };
+}
+
+const PROBE_TIMEOUT_MS = 8000;
+
+// A 4xx from the CDN (except 429) means the file isn't there for us and a
+// player would fail the same way; 5xx/429/network errors may be transient.
+function isDeadStatus(status: number): boolean {
+  return status >= 400 && status < 500 && status !== 429;
+}
+
+function firstPlaylistUri(playlist: string): string | null {
+  for (const raw of playlist.split(/\r?\n/)) {
+    const line = raw.trim();
+    if (line && !line.startsWith('#')) return line;
+  }
+  return null;
+}
+
+// Checks that an HLS stream is really playable: master playlist -> first
+// variant playlist -> first segment. 'dead' only on definite evidence (a 4xx
+// or a body that isn't a playlist); anything inconclusive is 'unknown' and
+// the stream is still used. Native only: in a browser the CDN's CORS rules
+// and the forbidden Referer header make a probe meaningless.
+export async function probeStream(url: string, referer: string): Promise<'ok' | 'dead' | 'unknown'> {
+  if (!Capacitor.isNativePlatform()) return 'unknown';
+  if (url.toLowerCase().split('?')[0].endsWith('.mp4')) return 'unknown';
+  const headers = cdnHeaders(referer);
+  try {
+    const master = await fetchTimed(url, { headers }, PROBE_TIMEOUT_MS);
+    if (!master.ok) return isDeadStatus(master.status) ? 'dead' : 'unknown';
+    let playlist = await master.text();
+    if (!playlist.trimStart().startsWith('#EXTM3U')) return 'dead';
+    let playlistUrl = url;
+
+    if (/#EXT-X-STREAM-INF/i.test(playlist)) {
+      const variant = firstPlaylistUri(playlist);
+      if (!variant) return 'dead';
+      playlistUrl = new URL(variant, url).toString();
+      const res = await fetchTimed(playlistUrl, { headers }, PROBE_TIMEOUT_MS);
+      if (!res.ok) return isDeadStatus(res.status) ? 'dead' : 'unknown';
+      playlist = await res.text();
+      if (!playlist.trimStart().startsWith('#EXTM3U')) return 'dead';
+    }
+
+    const segment = firstPlaylistUri(playlist);
+    if (!segment) return 'dead';
+    const segRes = await fetchTimed(new URL(segment, playlistUrl).toString(), {
+      headers: { ...headers, 'Range': 'bytes=0-1023' }
+    }, PROBE_TIMEOUT_MS);
+    if (!segRes.ok) return isDeadStatus(segRes.status) ? 'dead' : 'unknown';
+    return 'ok';
+  } catch (err) {
+    console.warn('[aniCliCore] stream probe inconclusive:', err);
+    return 'unknown';
+  }
+}
+
+// ExoPlayer treats a side-loaded subtitle that fails to load as a fatal
+// playback error (a browser just ignores it), so on native, subtitle files
+// the CDN definitely doesn't have are dropped before playback.
+async function dropDeadSubtitles(tracks: SubtitleTrack[], referer: string): Promise<SubtitleTrack[]> {
+  if (!Capacitor.isNativePlatform() || tracks.length === 0) return tracks;
+  const checks = await Promise.all(tracks.map(async track => {
+    try {
+      const res = await fetchTimed(track.src, {
+        headers: { ...cdnHeaders(referer), 'Range': 'bytes=0-511' }
+      }, PROBE_TIMEOUT_MS);
+      return !isDeadStatus(res.status);
+    } catch {
+      return true; // inconclusive - keep it
+    }
+  }));
+  const kept = tracks.filter((_, i) => checks[i]);
+  if (kept.length !== tracks.length) {
+    console.warn('[aniCliCore] dropped subtitle tracks that return 4xx:', tracks.filter((_, i) => !checks[i]).map(t => t.label));
+  }
+  return kept;
 }
 
 // Fallback episode generator
