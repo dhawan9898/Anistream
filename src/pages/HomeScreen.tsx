@@ -418,11 +418,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
           </button>
         </div>
 
-        <div style={{
-          display: 'grid',
-          gridTemplateColumns: 'repeat(2, 1fr)',
-          gap: '14px'
-        }}>
+        <div className="grid-posters">
           {loadingTrending ? (
             Array.from({ length: 6 }).map((_, i) => (
               <div key={i} className="skeleton" style={{ borderRadius: 'var(--radius-md)', paddingTop: '155%' }} />

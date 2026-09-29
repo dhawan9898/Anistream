@@ -105,12 +105,7 @@ export const GenreScreen: React.FC<GenreScreenProps> = ({ genre, onBack, onSelec
         </button>
       </div>
 
-      <div style={{
-        padding: '4px 16px',
-        display: 'grid',
-        gridTemplateColumns: 'repeat(auto-fill, minmax(104px, 1fr))',
-        gap: '14px 10px'
-      }}>
+      <div className="grid-collection" style={{ padding: '4px 16px' }}>
         {items.map(anime => (
           <PosterCard key={anime.id} anime={anime} onClick={() => onSelectAnime(anime)} />
         ))}

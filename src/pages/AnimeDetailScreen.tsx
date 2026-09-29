@@ -364,7 +364,7 @@ export const AnimeDetailScreen: React.FC<AnimeDetailScreenProps> = ({
                 <span style={{ fontSize: '14px' }}>Fetching episodes...</span>
               </div>
             ) : (
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '10px' }}>
+              <div className="grid-episodes">
                 {currentChunk.map((ep) => {
                   const isLastWatched = history?.episodeId === ep.id;
                   return (
@@ -396,7 +396,7 @@ export const AnimeDetailScreen: React.FC<AnimeDetailScreenProps> = ({
         )}
 
         {tab === 'collection' && (
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '14px 10px' }}>
+          <div className="grid-collection">
             {collection.map(item => {
               const isCurrent = item.id === shown.id;
               return (
@@ -415,7 +415,7 @@ export const AnimeDetailScreen: React.FC<AnimeDetailScreenProps> = ({
 
         {tab === 'similar' && (
           details === null ? (
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '14px 10px' }}>
+            <div className="grid-collection">
               {Array.from({ length: 6 }).map((_, i) => (
                 <div key={i} className="skeleton" style={{ borderRadius: '6px', paddingTop: '145%' }} />
               ))}
@@ -425,7 +425,7 @@ export const AnimeDetailScreen: React.FC<AnimeDetailScreenProps> = ({
               No suggestions found for this title.
             </p>
           ) : (
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '14px 10px' }}>
+            <div className="grid-collection">
               {suggestions.map(item => (
                 <PosterCard key={item.id} anime={item} onClick={() => onSelectAnime(item)} />
               ))}

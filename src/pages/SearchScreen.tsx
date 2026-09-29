@@ -173,7 +173,7 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({
       ) : !query ? (
         <div style={{ padding: '4px 20px 0 20px' }}>
           <h2 style={{ fontSize: '16px', fontWeight: 800, color: 'var(--text-primary)', marginBottom: '12px' }}>Browse by Genre</h2>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '10px' }}>
+          <div className="grid-genres">
             {genres.map((genre, i) => (
               <button
                 key={genre.slug}
@@ -204,12 +204,7 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({
           <p style={{ fontSize: '13px' }}>Try searching with a different title or keyword.</p>
         </div>
       ) : (
-        <div style={{
-          padding: '0 20px',
-          display: 'grid',
-          gridTemplateColumns: 'repeat(2, 1fr)',
-          gap: '14px'
-        }}>
+        <div className="grid-posters" style={{ padding: '0 20px' }}>
           {results.map((anime) => (
             <div
               key={anime.id}

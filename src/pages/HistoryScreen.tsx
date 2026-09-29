@@ -205,11 +205,7 @@ export const HistoryScreen: React.FC<HistoryScreenProps> = ({
               <p style={{ fontSize: '13px' }}>Tap the bookmark icon on any anime to save it to your library.</p>
             </div>
           ) : (
-            <div style={{
-              display: 'grid',
-              gridTemplateColumns: 'repeat(2, 1fr)',
-              gap: '14px'
-            }}>
+            <div className="grid-posters">
               {bookmarkedAnime.map((anime) => (
                 <div
                   key={anime.id}

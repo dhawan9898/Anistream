@@ -115,11 +115,42 @@ body {
 
 #root {
   height: 100vh;
-  width: 100vw;
+  height: 100dvh;
+  width: 100%;
   display: flex;
   flex-direction: column;
   overflow: hidden;
   position: relative;
+}
+
+/* Responsive grids: column count follows the available width, so phones get
+   2-3 columns and tablets / landscape / desktop get more instead of a
+   stretched phone layout. */
+.grid-posters {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 14px;
+}
+.grid-genres {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 10px;
+}
+.grid-collection {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(104px, 1fr));
+  gap: 14px 10px;
+}
+.grid-episodes {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(64px, 1fr));
+  gap: 10px;
+}
+
+/* Keep the scrolling page content readable on very wide screens. */
+@media (min-width: 900px) {
+  .grid-posters { grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); }
+  .grid-collection { grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); }
 }
 
 /* Custom smooth scrollbar */
