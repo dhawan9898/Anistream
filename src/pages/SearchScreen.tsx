@@ -44,17 +44,42 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({
     inputRef.current?.focus();
   }, []);
 
-  const handleSearch = async (searchTerm: string) => {
+  // Typing is debounced and only the newest request may update the screen,
+  // so a slow response for an earlier keystroke can't overwrite newer results.
+  const searchSeq = useRef(0);
+  const debounceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => () => {
+    if (debounceTimer.current) clearTimeout(debounceTimer.current);
+    searchSeq.current++;
+  }, []);
+
+  const runSearch = async (searchTerm: string) => {
+    const seq = ++searchSeq.current;
+    setLoading(true);
+    try {
+      const list = await searchAnime(searchTerm);
+      if (seq === searchSeq.current) setResults(list);
+    } finally {
+      if (seq === searchSeq.current) setLoading(false);
+    }
+  };
+
+  const handleSearch = (searchTerm: string, immediate = true) => {
     setQuery(searchTerm);
+    if (debounceTimer.current) clearTimeout(debounceTimer.current);
     if (!searchTerm.trim()) {
+      searchSeq.current++;
       setResults([]);
+      setLoading(false);
       return;
     }
-
-    setLoading(true);
-    const list = await searchAnime(searchTerm);
-    setResults(list);
-    setLoading(false);
+    if (immediate) {
+      runSearch(searchTerm);
+    } else {
+      setLoading(true);
+      debounceTimer.current = setTimeout(() => runSearch(searchTerm), 350);
+    }
   };
 
   return (
@@ -108,7 +133,7 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({
             type="text"
             value={query}
             placeholder="Search anime or movie..."
-            onChange={(e) => handleSearch(e.target.value)}
+            onChange={(e) => handleSearch(e.target.value, false)}
             style={{
               flex: 1,
               backgroundColor: 'transparent',

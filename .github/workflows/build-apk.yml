@@ -1,4 +1,4 @@
-name: Build AniStream v4.4 APK
+name: Build AniStream v5.0 APK
 
 on:
   push:
@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
     inputs:
       release_tag:
-        description: 'Tag to publish this build under (e.g. v4.4) - leave empty to just build, no release'
+        description: 'Tag to publish this build under (e.g. v5.0) - leave empty to just build, no release'
         required: false
         default: ''
 
@@ -64,13 +64,13 @@ jobs:
       - name: Package APK for Release
         run: |
           mkdir -p build-output
-          cp android/app/build/outputs/apk/debug/app-debug.apk build-output/AniStream-v4.4.apk
+          cp android/app/build/outputs/apk/debug/app-debug.apk build-output/AniStream-v5.0.apk
 
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: AniStream-v4.4-APK
-          path: build-output/AniStream-v4.4.apk
+          name: AniStream-v5.0-APK
+          path: build-output/AniStream-v5.0.apk
           retention-days: 30
 
       - name: Create GitHub Release
@@ -81,22 +81,21 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch' && inputs.release_tag != '')
         uses: softprops/action-gh-release@v2
         with:
-          files: build-output/AniStream-v4.4.apk
+          files: build-output/AniStream-v5.0.apk
           tag_name: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || inputs.release_tag }}
           name: AniStream ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || inputs.release_tag }} Release
           body: |
-            ## AniStream v4.4 - Android Anime Streaming App (Powered by ani-cli)
+            ## AniStream v5.0 - Android Anime Streaming App (Powered by ani-cli)
 
-            ### 🚀 What's new in v4.4:
+            ### 🚀 What's new in v5.0:
 
-            - **Browse by genre**: a Netflix-style "Categories" picker on Home, genre rows (Action, Romance, Comedy, Fantasy, Isekai), "Browse by Genre" tiles in Search, and a full genre page that keeps loading as you scroll.
-            - **Collection & More Like This**: every title page now has Episodes / Collection / More Like This tabs - other seasons and related entries of the same franchise, plus recommendations. Play becomes "Resume E#" for shows you've started, and "My List" sits right under it.
-            - **Netflix-style player**: back + centered title on top, bare replay-10 / play / forward-10 in the middle, a red seek bar with remaining time, and a Speed / Lock / Episodes / Audio & Subtitles / Next Ep. row at the bottom.
-              - Playback speed (0.5x-1.5x), screen lock, and a full-screen Audio & Subtitles panel (audio language, subtitles and - when available - video quality).
-              - Skip Intro / Skip Outro stay tappable even with the controls hidden, and a "Next Episode" button fills up during the credits and plays the next episode automatically ("Watch Credits" dismisses it).
-            - **Fixes**: hidden player controls no longer swallow taps meant for double-tap seek and swipe gestures; MyAnimeList-only suggestions are matched to the right title instead of the first search result.
+            - **Tablet & landscape ready**: poster, genre, collection and episode grids now adapt to the screen width (more columns on tablets and wide windows instead of a stretched phone layout), and the layout fills the real viewport height so the bottom dock is never hidden behind mobile browser toolbars.
+            - **Faster, more reliable playback loading**: every step of stream resolution now has a timeout, so a stalled server can no longer leave the player spinning forever - it fails cleanly and lets you retry.
+            - **Smoother search**: typing is debounced and stale responses are ignored, so results always match what is in the search box and the server isn't hammered on every keystroke.
+            - **Safer watch history & My List**: saves are serialized and coalesced, so rapid progress updates can no longer overwrite bookmarks or history entries, and storage is written far less often during playback.
+            - Plus everything from v4.x: in-player episode loading, genre browsing, Collection / More Like This, and the Netflix-style player.
 
             ### 📦 Download:
-            Download **`AniStream-v4.4.apk`** below and install or update on any Android device running Android 8.0 or later!
+            Download **`AniStream-v5.0.apk`** below and install or update on any Android device running Android 8.0 or later!
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

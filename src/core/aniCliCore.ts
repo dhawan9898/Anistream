@@ -104,6 +104,19 @@ export function getApiBase(): string {
   return Capacitor.isNativePlatform() ? REMOTE_HOST : "/api-hianime";
 }
 
+// Every network step of stream resolution goes through this so one hung
+// request can't leave the player spinning forever. Promise.race rather than
+// an AbortSignal: the native (CapacitorHttp) fetch ignores signals.
+const FETCH_TIMEOUT_MS = 15000;
+
+function fetchTimed(input: string, init?: RequestInit, ms = FETCH_TIMEOUT_MS): Promise<Response> {
+  let timer: ReturnType<typeof setTimeout>;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`request timed out after ${ms}ms: ${input}`)), ms);
+  });
+  return Promise.race([fetch(input, init), timeout]).finally(() => clearTimeout(timer));
+}
+
 // Headers the dev proxy injects automatically; native requests need them set explicitly.
 const UPSTREAM_HEADERS: Record<string, string> = {
   'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
@@ -114,7 +127,7 @@ const UPSTREAM_HEADERS: Record<string, string> = {
 // ("/genre/action") or an absolute URL on the site.
 export async function fetchSiteHtml(path: string): Promise<string> {
   const sitePath = path.startsWith('http') ? new URL(path).pathname + new URL(path).search : path;
-  const res = await fetch(`${getApiBase()}${sitePath}`, {
+  const res = await fetchTimed(`${getApiBase()}${sitePath}`, {
     headers: {
       'Accept': 'text/html,application/xhtml+xml',
       ...UPSTREAM_HEADERS
@@ -148,7 +161,7 @@ export async function searchAnime(query: string): Promise<AnimeItem[]> {
 // The root "/" is just a landing page - /home is the actual suggestions feed.
 export async function getTrendingAnime(): Promise<AnimeItem[]> {
   try {
-    const res = await fetch(`${getApiBase()}/home`, {
+    const res = await fetchTimed(`${getApiBase()}/home`, {
       headers: {
         'Accept': 'text/html,application/xhtml+xml',
         ...UPSTREAM_HEADERS
@@ -252,7 +265,7 @@ export async function getEpisodes(animeId: string): Promise<EpisodeItem[]> {
   try {
     let numericId = animeId.includes("-") ? animeId.split("-").pop() : animeId;
     let endpoint = `${getApiBase()}/api/theme/episode/list/${numericId}`;
-    let res = await fetch(endpoint, { headers: UPSTREAM_HEADERS });
+    let res = await fetchTimed(endpoint, { headers: UPSTREAM_HEADERS });
     
     if (!res.ok) {
       const cleanTitle = animeId.replace(/-[0-9]+$/, '').replace(/-/g, ' ');
@@ -262,7 +275,7 @@ export async function getEpisodes(animeId: string): Promise<EpisodeItem[]> {
           const newNumericId = found[0].id.split("-").pop();
           if (newNumericId && newNumericId !== numericId) {
             endpoint = `${getApiBase()}/api/theme/episode/list/${newNumericId}`;
-            res = await fetch(endpoint, { headers: UPSTREAM_HEADERS });
+            res = await fetchTimed(endpoint, { headers: UPSTREAM_HEADERS });
           }
         }
       }
@@ -343,7 +356,7 @@ export async function getEpisodeStream(
       const epNum = episodeIdOrNumber.replace(/^.*-ep-/, '').replace(/[^0-9.]/g, '') || '1';
       const bridgeUrl = `/api/ani-cli/stream?query=${encodeURIComponent(cleanQuery)}&ep=${encodeURIComponent(epNum)}&mode=${mode}`;
       console.log("[aniCliCore] Requesting stream from bridge:", bridgeUrl);
-      const res = await fetch(bridgeUrl);
+      const res = await fetchTimed(bridgeUrl);
       if (res.ok) {
         const data = await res.json();
         if (data.streamUrl) {
@@ -388,7 +401,7 @@ export async function getEpisodeStream(
     }
 
     const endpoint = `${getApiBase()}/api/theme/episode/servers?episodeId=${targetEpisodeId}`;
-    const res = await fetch(endpoint, { headers: UPSTREAM_HEADERS });
+    const res = await fetchTimed(endpoint, { headers: UPSTREAM_HEADERS });
     if (!res.ok) {
       console.warn(`[aniCliCore] Direct scrape: servers endpoint returned HTTP ${res.status} for episodeId=${targetEpisodeId}`);
     }
@@ -407,7 +420,7 @@ export async function getEpisodeStream(
       if (hash) {
         const embedUrl = atob(hash);
         console.log(`[aniCliCore] episodeId=${targetEpisodeId} mode=${mode} resolved embedUrl:`, embedUrl);
-        const embedRes = await fetch(embedUrl, {
+        const embedRes = await fetchTimed(embedUrl, {
           headers: {
             ...UPSTREAM_HEADERS,
             'Referer': `${REMOTE_HOST}/`
@@ -420,7 +433,7 @@ export async function getEpisodeStream(
             const dataId = idMatch[1];
             const embedOrigin = new URL(embedUrl).origin;
             const sourcesUrl = `${embedOrigin}/stream/getSourcesNew?id=${dataId}`;
-            const sourcesRes = await fetch(sourcesUrl, {
+            const sourcesRes = await fetchTimed(sourcesUrl, {
               headers: {
                 ...UPSTREAM_HEADERS,
                 'Referer': embedUrl,
