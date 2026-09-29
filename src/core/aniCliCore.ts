@@ -295,14 +295,22 @@ export async function getEpisodeStream(
     if (data.html) {
       const parser = new DOMParser();
       const doc = parser.parseFromString(data.html, "text/html");
-      // Only ever match a genuine ZokoAnime server entry - a bare
-      // [data-type][data-hash] selector (no server-name check) used to be
-      // included here as a catch-all, but that matches *any* server with a
-      // hash for this mode, including unrelated/wrong ones. When ZokoAnime
-      // genuinely isn't listed, falling through to the labeled demo stream
-      // below is correct; silently grabbing a different server's content
-      // and playing it as if it were the requested anime is not.
-      const zokoServer = doc.querySelector(`[data-type="${mode}"][data-server-name="ZokoAnime"]`);
+      // Prefer a genuine ZokoAnime entry, but fall back to any other server
+      // offering this mode if one isn't listed - removing that fallback
+      // entirely (tried in the previous fix) turned out wrong: ZokoAnime
+      // apparently isn't reliably present in this site's current markup, so
+      // every request fell through to the demo clip instead, which is worse
+      // (always the same placeholder) than occasionally picking a
+      // real-but-different server. The two were previously combined into
+      // one comma-separated selector, which doesn't prioritize - querySelector
+      // returns whichever clause's match appears first in the DOM, not the
+      // first clause - so a real ZokoAnime entry further down the page could
+      // lose to an earlier unrelated one. Querying them in explicit
+      // preference order fixes that without giving up the fallback.
+      let zokoServer = doc.querySelector(`[data-type="${mode}"][data-server-name="ZokoAnime"]`);
+      if (!zokoServer) {
+        zokoServer = doc.querySelector(`[data-type="${mode}"][data-hash]`);
+      }
       const hash = zokoServer?.getAttribute("data-hash");
 
       if (hash) {
