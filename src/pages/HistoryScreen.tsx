@@ -1,11 +1,12 @@
 // HistoryScreen.tsx - User watch history, bookmarks, and preferences
 import React, { useState, useEffect } from 'react';
-import { Clock, Bookmark, Trash2, Play } from 'lucide-react';
+import { Clock, Bookmark, Trash2, Play, Loader2 } from 'lucide-react';
 import {
   getWatchHistory, clearWatchHistory, getBookmarks,
   type WatchHistoryItem
 } from '../services/historyService';
 import type { AnimeItem } from '../core/aniCliCore';
+import { ConfirmModal } from '../components/ConfirmModal';
 
 interface HistoryScreenProps {
   onResumeEpisode: (history: WatchHistoryItem) => void;
@@ -19,12 +20,15 @@ export const HistoryScreen: React.FC<HistoryScreenProps> = ({
   const [activeTab, setActiveTab] = useState<'history' | 'bookmarks'>('history');
   const [historyList, setHistoryList] = useState<WatchHistoryItem[]>([]);
   const [bookmarkedAnime, setBookmarkedAnime] = useState<AnimeItem[]>([]);
+  const [loading, setLoading] = useState<boolean>(true);
+  const [confirmingClear, setConfirmingClear] = useState<boolean>(false);
 
   const loadData = async () => {
     const history = await getWatchHistory();
     const bookmarks = await getBookmarks();
     setHistoryList(history);
     setBookmarkedAnime(bookmarks);
+    setLoading(false);
   };
 
   useEffect(() => {
@@ -33,10 +37,9 @@ export const HistoryScreen: React.FC<HistoryScreenProps> = ({
   }, []);
 
   const handleClearHistory = async () => {
-    if (window.confirm("Are you sure you want to clear your watch history?")) {
-      await clearWatchHistory();
-      setHistoryList([]);
-    }
+    await clearWatchHistory();
+    setHistoryList([]);
+    setConfirmingClear(false);
   };
 
   return (
@@ -57,12 +60,12 @@ export const HistoryScreen: React.FC<HistoryScreenProps> = ({
         
         {activeTab === 'history' && historyList.length > 0 && (
           <button
-            onClick={handleClearHistory}
+            onClick={() => setConfirmingClear(true)}
             className="interactive"
             style={{
               background: 'none',
               border: 'none',
-              color: '#f43f5e',
+              color: 'var(--accent-danger)',
               fontSize: '13px',
               fontWeight: 600,
               display: 'flex',
@@ -75,6 +78,17 @@ export const HistoryScreen: React.FC<HistoryScreenProps> = ({
           </button>
         )}
       </div>
+
+      <ConfirmModal
+        open={confirmingClear}
+        title="Clear Watch History"
+        message="Are you sure you want to clear your watch history? This cannot be undone."
+        confirmLabel="Clear"
+        cancelLabel="Cancel"
+        danger
+        onConfirm={handleClearHistory}
+        onCancel={() => setConfirmingClear(false)}
+      />
 
       {/* Tabs */}
       <div style={{ padding: '16px 20px 8px 20px' }}>
@@ -98,7 +112,11 @@ export const HistoryScreen: React.FC<HistoryScreenProps> = ({
 
       {/* Content */}
       <div style={{ padding: '12px 20px' }}>
-        {activeTab === 'history' ? (
+        {loading ? (
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '60px 0', gap: '10px', color: 'var(--text-secondary)' }}>
+            <Loader2 size={24} className="animate-spin" />
+          </div>
+        ) : activeTab === 'history' ? (
           historyList.length === 0 ? (
             <div style={{ textAlign: 'center', padding: '60px 20px', color: 'var(--text-secondary)' }}>
               <Clock size={40} color="var(--accent-primary)" style={{ margin: '0 auto 12px auto', opacity: 0.8 }} />
@@ -107,11 +125,11 @@ export const HistoryScreen: React.FC<HistoryScreenProps> = ({
             </div>
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-              {historyList.map((item, idx) => {
+              {historyList.map((item) => {
                 const progressPct = Math.min(100, Math.round((item.currentTime / (item.duration || 1)) * 100));
                 return (
                   <div
-                    key={idx}
+                    key={`${item.animeId}-${item.episodeId}`}
                     onClick={() => onResumeEpisode(item)}
                     className="interactive glass-panel"
                     style={{

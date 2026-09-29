@@ -2,7 +2,7 @@
 import React, { useEffect, useState } from 'react';
 import {
   Settings as SettingsIcon, PlayCircle, SkipForward, Rewind, Trash2,
-  Info, Terminal, Bookmark, Clock, ChevronRight, Sun, Moon
+  Info, Terminal, Bookmark, Clock, ChevronRight, Sun, Moon, Loader2
 } from 'lucide-react';
 import {
   getUserPreferences, saveUserPreferences, clearWatchHistory,
@@ -11,6 +11,7 @@ import {
 } from '../services/historyService';
 import type { ThemeMode } from '../services/themeService';
 import { Preferences } from '@capacitor/preferences';
+import { ConfirmModal } from '../components/ConfirmModal';
 
 const QUALITIES = ['480p', '720p', '1080p', 'Auto'];
 
@@ -72,6 +73,8 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({ theme, onChangeT
   const [historyCount, setHistoryCount] = useState<number>(0);
   const [bookmarkCount, setBookmarkCount] = useState<number>(0);
   const [clearing, setClearing] = useState<boolean>(false);
+  const [confirmingClearHistory, setConfirmingClearHistory] = useState<boolean>(false);
+  const [confirmingClearBookmarks, setConfirmingClearBookmarks] = useState<boolean>(false);
 
   useEffect(() => {
     getUserPreferences().then(setPrefs);
@@ -85,7 +88,7 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({ theme, onChangeT
   };
 
   const handleClearHistory = async () => {
-    if (!window.confirm('Clear your entire watch history? This cannot be undone.')) return;
+    setConfirmingClearHistory(false);
     setClearing(true);
     await clearWatchHistory();
     setHistoryCount(0);
@@ -93,13 +96,17 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({ theme, onChangeT
   };
 
   const handleClearBookmarks = async () => {
-    if (!window.confirm('Remove all saved bookmarks?')) return;
+    setConfirmingClearBookmarks(false);
     await Preferences.remove({ key: 'anistream_bookmarks' });
     setBookmarkCount(0);
   };
 
   if (!prefs) {
-    return <div style={{ flex: 1 }} />;
+    return (
+      <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+        <Loader2 size={28} className="animate-spin" color="var(--accent-primary)" />
+      </div>
+    );
   }
 
   return (
@@ -222,7 +229,7 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({ theme, onChangeT
         <SectionLabel>Data</SectionLabel>
         <div className="glass-panel animate-pop-in" style={{ borderRadius: 'var(--radius-lg)', overflow: 'hidden', marginBottom: '24px' }}>
           <button
-            onClick={handleClearHistory}
+            onClick={() => setConfirmingClearHistory(true)}
             disabled={clearing || historyCount === 0}
             className="interactive"
             style={{
@@ -238,8 +245,8 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({ theme, onChangeT
           >
             <div style={{
               width: '38px', height: '38px', borderRadius: 'var(--radius-sm)',
-              background: 'rgba(244, 63, 94, 0.14)', display: 'flex', alignItems: 'center',
-              justifyContent: 'center', color: '#fb7185', flexShrink: 0
+              background: 'var(--accent-danger-bg)', display: 'flex', alignItems: 'center',
+              justifyContent: 'center', color: 'var(--accent-danger)', flexShrink: 0
             }}>
               <Clock size={18} />
             </div>
@@ -247,11 +254,11 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({ theme, onChangeT
               <h4 style={{ fontSize: '14px', fontWeight: 700, color: 'var(--text-primary)' }}>Clear Watch History</h4>
               <p style={{ fontSize: '12px', color: 'var(--text-secondary)', marginTop: '2px' }}>{historyCount} items stored</p>
             </div>
-            <Trash2 size={16} color="#fb7185" />
+            <Trash2 size={16} color="var(--accent-danger)" />
           </button>
           <div style={{ height: '1px', background: 'var(--border-subtle)', margin: '0 16px' }} />
           <button
-            onClick={handleClearBookmarks}
+            onClick={() => setConfirmingClearBookmarks(true)}
             disabled={bookmarkCount === 0}
             className="interactive"
             style={{
@@ -267,8 +274,8 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({ theme, onChangeT
           >
             <div style={{
               width: '38px', height: '38px', borderRadius: 'var(--radius-sm)',
-              background: 'rgba(244, 63, 94, 0.14)', display: 'flex', alignItems: 'center',
-              justifyContent: 'center', color: '#fb7185', flexShrink: 0
+              background: 'var(--accent-danger-bg)', display: 'flex', alignItems: 'center',
+              justifyContent: 'center', color: 'var(--accent-danger)', flexShrink: 0
             }}>
               <Bookmark size={18} />
             </div>
@@ -276,9 +283,30 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({ theme, onChangeT
               <h4 style={{ fontSize: '14px', fontWeight: 700, color: 'var(--text-primary)' }}>Clear Bookmarks</h4>
               <p style={{ fontSize: '12px', color: 'var(--text-secondary)', marginTop: '2px' }}>{bookmarkCount} saved</p>
             </div>
-            <Trash2 size={16} color="#fb7185" />
+            <Trash2 size={16} color="var(--accent-danger)" />
           </button>
         </div>
+
+        <ConfirmModal
+          open={confirmingClearHistory}
+          title="Clear Watch History"
+          message="Clear your entire watch history? This cannot be undone."
+          confirmLabel="Clear"
+          cancelLabel="Cancel"
+          danger
+          onConfirm={handleClearHistory}
+          onCancel={() => setConfirmingClearHistory(false)}
+        />
+        <ConfirmModal
+          open={confirmingClearBookmarks}
+          title="Clear Bookmarks"
+          message="Remove all saved bookmarks? This cannot be undone."
+          confirmLabel="Clear"
+          cancelLabel="Cancel"
+          danger
+          onConfirm={handleClearBookmarks}
+          onCancel={() => setConfirmingClearBookmarks(false)}
+        />
 
         {/* About Section */}
         <SectionLabel>About</SectionLabel>
@@ -293,7 +321,7 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({ theme, onChangeT
             </div>
             <div style={{ flex: 1 }}>
               <h4 style={{ fontSize: '14px', fontWeight: 700, color: 'var(--text-primary)' }}>AniStream</h4>
-              <p style={{ fontSize: '12px', color: 'var(--text-secondary)', marginTop: '2px' }}>Version 1.0.0</p>
+              <p style={{ fontSize: '12px', color: 'var(--text-secondary)', marginTop: '2px' }}>Version 3.0.0</p>
             </div>
           </div>
           <div style={{ height: '1px', background: 'var(--border-subtle)', margin: '0 16px' }} />

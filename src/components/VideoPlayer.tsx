@@ -61,13 +61,18 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   const [skippedIntroToast, setSkippedIntroToast] = useState<boolean>(false);
   const [doubleTapFeedback, setDoubleTapFeedback] = useState<'left' | 'right' | null>(null);
   const [videoTrackWarning, setVideoTrackWarning] = useState<string | null>(null);
+  const [streamError, setStreamError] = useState<string | null>(null);
   const [autoSkipIntro, setAutoSkipIntro] = useState<boolean>(false);
+  const [autoPlayNext, setAutoPlayNext] = useState<boolean>(true);
   const [introInterval, setIntroInterval] = useState<SkipInterval | null>(null);
   const autoSkippedRef = useRef<boolean>(false);
   const introLookupRef = useRef<string | null>(null);
 
   useEffect(() => {
-    getUserPreferences().then(p => setAutoSkipIntro(p.autoSkipIntro));
+    getUserPreferences().then(p => {
+      setAutoSkipIntro(p.autoSkipIntro);
+      setAutoPlayNext(p.autoPlayNext);
+    });
   }, []);
 
   // A new episode/stream means a fresh intro to (maybe) look up and auto-skip.
@@ -120,6 +125,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     const referer = streamSource.referer || 'https://zokoanime.video/';
     const streamUrl = resolvePlayableUrl(rawStreamUrl, referer);
     setVideoTrackWarning(null);
+    setStreamError(null);
 
     // Only surface no-video-track warning if playback has been running for a few seconds
     // with continuous 0x0 video dimensions (to avoid false alarms during initial frame decoding)
@@ -177,13 +183,11 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
             networkRetry++;
             hls.startLoad();
           } else {
-            console.warn('[VideoPlayer] HLS stream unrecoverable, falling back to direct MP4 stream');
+            console.warn('[VideoPlayer] HLS stream unrecoverable');
             hls.destroy();
             hlsRef.current = null;
-            const fallbackMp4 = "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4";
-            video.src = fallbackMp4;
-            video.load();
-            video.play().then(() => setIsPlaying(true)).catch(() => setIsPlaying(false));
+            setIsPlaying(false);
+            setStreamError('This stream failed to load.');
           }
         }
       });
@@ -369,15 +373,9 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   };
 
   const handleVideoError = () => {
-    const video = videoRef.current;
-    if (!video) return;
-    const fallbackMp4 = "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4";
-    if (video.src !== fallbackMp4) {
-      console.warn('[VideoPlayer] Native video error, switching to reliable MP4 stream');
-      video.src = fallbackMp4;
-      video.load();
-      video.play().then(() => setIsPlaying(true)).catch(() => setIsPlaying(false));
-    }
+    console.warn('[VideoPlayer] Native video playback error');
+    setIsPlaying(false);
+    setStreamError('This stream failed to load.');
   };
 
   const handleSeek = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -440,7 +438,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
         onPlay={() => setIsPlaying(true)}
         onPause={() => setIsPlaying(false)}
         onEnded={() => {
-          if (hasNextEpisode && onNextEpisode) {
+          if (autoPlayNext && hasNextEpisode && onNextEpisode) {
             onNextEpisode();
           }
         }}
@@ -481,6 +479,49 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
         >
           <span style={{ fontSize: '14px', fontWeight: 700 }}>{videoTrackWarning}</span>
           <span style={{ fontSize: '12px', color: '#94a3b8' }}>Audio is playing, but this server sent no watchable video track. Try again or pick a different episode/server.</span>
+        </div>
+      )}
+
+      {/* Playback failure - shown instead of silently substituting an
+          unrelated placeholder video, so a broken stream reads as broken. */}
+      {streamError && (
+        <div
+          onClick={(e) => e.stopPropagation()}
+          style={{
+            position: 'absolute',
+            top: '50%',
+            left: '50%',
+            transform: 'translate(-50%, -50%)',
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+            gap: '10px',
+            padding: '24px 28px',
+            borderRadius: 'var(--radius-md)',
+            backgroundColor: 'rgba(0,0,0,0.8)',
+            color: '#f8fafc',
+            textAlign: 'center',
+            maxWidth: '80%',
+            zIndex: 20
+          }}
+        >
+          <span style={{ fontSize: '15px', fontWeight: 700 }}>{streamError}</span>
+          <span style={{ fontSize: '12px', color: '#94a3b8' }}>The server may be blocking it or the format isn't supported. Try another episode or server.</span>
+          <button
+            onClick={onBack}
+            className="interactive glass-pill"
+            style={{
+              marginTop: '6px',
+              padding: '9px 20px',
+              borderRadius: 'var(--radius-full)',
+              border: 'none',
+              color: '#fff',
+              fontSize: '13px',
+              fontWeight: 700
+            }}
+          >
+            Go Back
+          </button>
         </div>
       )}
 

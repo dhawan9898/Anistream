@@ -9,14 +9,16 @@ import { AnimeDetailScreen } from './pages/AnimeDetailScreen';
 import { HistoryScreen } from './pages/HistoryScreen';
 import { SettingsScreen } from './pages/SettingsScreen';
 import { VideoPlayer } from './components/VideoPlayer';
+import { ConfirmModal } from './components/ConfirmModal';
 import {
   getEpisodeStream,
+  getEpisodes,
   type AnimeItem,
   type EpisodeItem,
   type StreamSource,
   FEATURED_ANIME
 } from './core/aniCliCore';
-import { saveWatchProgress, type WatchHistoryItem } from './services/historyService';
+import { saveWatchProgress, getUserPreferences, type WatchHistoryItem } from './services/historyService';
 import { getTheme, getStoredThemeSync, setTheme as persistTheme, type ThemeMode } from './services/themeService';
 
 type Tab = 'home' | 'search' | 'library' | 'settings';
@@ -59,15 +61,36 @@ export const App: React.FC = () => {
   const [streamSource, setStreamSource] = useState<StreamSource | null>(null);
   const [streamLoading, setStreamLoading] = useState<boolean>(false);
   const [initialSeekTime, setInitialSeekTime] = useState<number>(0);
+  const [streamErrorMessage, setStreamErrorMessage] = useState<string | null>(null);
+
+  // The real episode list for whichever anime is currently playing - used to
+  // find the actual next episode (real id/title) instead of guessing one,
+  // and to know for certain whether a next episode even exists.
+  const [episodeList, setEpisodeList] = useState<EpisodeItem[]>([]);
+  const loadedEpisodeListAnimeId = useRef<string | null>(null);
 
   // Kept in refs so the native mode-switch listener (subscribed once) always
   // sees the currently playing anime/episode without re-subscribing.
   const playingAnimeRef = useRef<AnimeItem | null>(null);
   const playingEpisodeRef = useRef<EpisodeItem | null>(null);
   const playingModeRef = useRef<'sub' | 'dub'>('sub');
+  const episodeListRef = useRef<EpisodeItem[]>([]);
   playingAnimeRef.current = playingAnime;
   playingEpisodeRef.current = playingEpisode;
   playingModeRef.current = playingMode;
+  episodeListRef.current = episodeList;
+
+  // Real next-episode lookup shared by the manual "Next" button, the native
+  // player's next-episode card, and the hasNextEpisode flag - undefined
+  // means "we don't actually know of one", which the caller must respect
+  // rather than fabricate an episode number/id that may not exist or use
+  // the wrong id scheme.
+  const findNextEpisode = (current: EpisodeItem | null, list: EpisodeItem[]): EpisodeItem | undefined => {
+    if (!current) return undefined;
+    const idx = list.findIndex(e => e.id === current.id);
+    if (idx === -1 || idx + 1 >= list.length) return undefined;
+    return list[idx + 1];
+  };
 
   // The native ExoPlayer's Sub/Dub button and "Next Episode" card can't
   // re-resolve a stream themselves - they notify us here so we can call
@@ -88,13 +111,9 @@ export const App: React.FC = () => {
       const anime = playingAnimeRef.current;
       const episode = playingEpisodeRef.current;
       if (!anime || !episode) return;
-      const nextEpNum = String(parseInt(episode.number, 10) + 1);
-      const nextEp: EpisodeItem = {
-        id: `${anime.id}-ep-${nextEpNum}`,
-        number: nextEpNum,
-        title: `Episode ${nextEpNum}`
-      };
-      handlePlayEpisode(anime, nextEp, playingModeRef.current, 0);
+      const next = findNextEpisode(episode, episodeListRef.current);
+      if (!next) return; // no real next episode - never guess one
+      handlePlayEpisode(anime, next, playingModeRef.current, 0);
     });
     return () => {
       modeHandle.then(h => h.remove());
@@ -105,8 +124,8 @@ export const App: React.FC = () => {
 
   // Play an episode
   const handlePlayEpisode = async (
-    anime: AnimeItem, 
-    episode: EpisodeItem, 
+    anime: AnimeItem,
+    episode: EpisodeItem,
     mode: 'sub' | 'dub' = 'sub',
     startTime = 0
   ) => {
@@ -116,8 +135,29 @@ export const App: React.FC = () => {
     setPlayingMode(mode);
     setInitialSeekTime(startTime);
 
+    // Real episode list for this anime, used for hasNextEpisode/next-episode
+    // lookups - only re-fetched when the anime actually changes (advancing to
+    // the next episode of the same anime reuses what's already loaded).
+    if (loadedEpisodeListAnimeId.current !== anime.id) {
+      getEpisodes(anime.id || anime.title).then(eps => {
+        const sorted = [...eps].sort((a, b) => parseFloat(a.number) - parseFloat(b.number));
+        setEpisodeList(sorted);
+        loadedEpisodeListAnimeId.current = anime.id;
+      });
+    }
+
     try {
       const source = await getEpisodeStream(anime.id || anime.title, episode.id || episode.number, mode, anime.id);
+
+      // Apply the "Default Quality" preference when the stream actually
+      // offers more than one distinct rendition to choose from.
+      const prefs = await getUserPreferences();
+      const preferred = source.qualities?.find(q => q.quality === prefs.defaultQuality);
+      if (preferred && preferred.url !== source.streamUrl) {
+        source.streamUrl = preferred.url;
+        source.quality = preferred.quality;
+      }
+
       setStreamSource(source);
 
       if (Capacitor.isNativePlatform()) {
@@ -141,7 +181,7 @@ export const App: React.FC = () => {
       }
     } catch (err) {
       console.error("Failed to load stream:", err);
-      alert("Could not load stream from ani-cli. Please try another episode or server.");
+      setStreamErrorMessage("Could not load stream from ani-cli. Please try another episode or server.");
     } finally {
       setStreamLoading(false);
     }
@@ -165,17 +205,16 @@ export const App: React.FC = () => {
     handlePlayEpisode(matchedAnime, resumeEpisode, historyItem.mode, historyItem.currentTime);
   };
 
-  // Next episode handler
+  // Next episode handler (manual "Next" tap) - always honored regardless of
+  // the autoplay preference, which only governs auto-advance on onEnded.
   const handleNextEpisode = () => {
     if (!playingEpisode || !playingAnime) return;
-    const nextEpNum = String(parseInt(playingEpisode.number, 10) + 1);
-    const nextEp: EpisodeItem = {
-      id: `${playingAnime.id}-ep-${nextEpNum}`,
-      number: nextEpNum,
-      title: `Episode ${nextEpNum}`
-    };
-    handlePlayEpisode(playingAnime, nextEp, playingMode, 0);
+    const next = findNextEpisode(playingEpisode, episodeList);
+    if (!next) return;
+    handlePlayEpisode(playingAnime, next, playingMode, 0);
   };
+
+  const hasNextEpisode = findNextEpisode(playingEpisode, episodeList) !== undefined;
 
   return (
     <div style={{
@@ -259,6 +298,15 @@ export const App: React.FC = () => {
         </div>
       )}
 
+      <ConfirmModal
+        open={streamErrorMessage !== null}
+        title="Playback Failed"
+        message={streamErrorMessage || ''}
+        confirmLabel="OK"
+        onConfirm={() => setStreamErrorMessage(null)}
+        onCancel={() => setStreamErrorMessage(null)}
+      />
+
       {/* Fullscreen Cinema Player */}
       {isPlaying && streamSource && playingAnime && playingEpisode && (
         <VideoPlayer
@@ -269,7 +317,7 @@ export const App: React.FC = () => {
           initialTime={initialSeekTime}
           onBack={() => setIsPlaying(false)}
           onNextEpisode={handleNextEpisode}
-          hasNextEpisode={true}
+          hasNextEpisode={hasNextEpisode}
           onProgressUpdate={(time, dur) => {
             saveWatchProgress({
               animeId: playingAnime.id,

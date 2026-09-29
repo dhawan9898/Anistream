@@ -2,7 +2,7 @@
 import React, { useState, useEffect } from 'react';
 import { ArrowLeft, Play, Bookmark, Loader2 } from 'lucide-react';
 import { getEpisodes, type AnimeItem, type EpisodeItem } from '../core/aniCliCore';
-import { toggleBookmark, getBookmarks } from '../services/historyService';
+import { toggleBookmark, getBookmarks, getUserPreferences } from '../services/historyService';
 
 interface AnimeDetailScreenProps {
   anime: AnimeItem;
@@ -26,6 +26,10 @@ export const AnimeDetailScreen: React.FC<AnimeDetailScreenProps> = ({
     getBookmarks().then(bookmarks => {
       setIsBookmarked(bookmarks.some(b => b.id === anime.id));
     });
+
+    // Respect the user's "Default Audio" preference instead of always
+    // starting on SUB.
+    getUserPreferences().then(p => setMode(p.defaultMode));
 
     // Fetch episodes - sort ascending by number so episodes[0] is genuinely
     // episode 1 rather than however the scraper happened to order the page.
@@ -79,19 +83,14 @@ export const AnimeDetailScreen: React.FC<AnimeDetailScreenProps> = ({
         }}>
           <button
             onClick={onBack}
-            className="interactive"
+            className="interactive glass-pill-dark"
             style={{
               width: '40px',
               height: '40px',
               borderRadius: '50%',
               display: 'flex',
               alignItems: 'center',
-              justifyContent: 'center',
-              border: '1px solid rgba(255, 255, 255, 0.1)',
-              backgroundColor: 'rgba(255, 255, 255, 0.08)',
-              backdropFilter: 'blur(14px) saturate(180%)',
-              WebkitBackdropFilter: 'blur(14px) saturate(180%)',
-              color: '#fff'
+              justifyContent: 'center'
             }}
           >
             <ArrowLeft size={20} />
@@ -100,7 +99,7 @@ export const AnimeDetailScreen: React.FC<AnimeDetailScreenProps> = ({
           <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
             <button
               onClick={handleBookmarkToggle}
-              className="interactive"
+              className="interactive glass-pill-dark"
               style={{
                 width: '40px',
                 height: '40px',
@@ -108,14 +107,10 @@ export const AnimeDetailScreen: React.FC<AnimeDetailScreenProps> = ({
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center',
-                border: '1px solid rgba(255, 255, 255, 0.1)',
-                backgroundColor: 'rgba(255, 255, 255, 0.08)',
-                backdropFilter: 'blur(14px) saturate(180%)',
-                WebkitBackdropFilter: 'blur(14px) saturate(180%)',
-                color: isBookmarked ? '#f43f5e' : '#fff'
+                color: isBookmarked ? 'var(--accent-danger)' : '#fff'
               }}
             >
-              <Bookmark size={20} fill={isBookmarked ? '#f43f5e' : 'none'} />
+              <Bookmark size={20} fill={isBookmarked ? 'var(--accent-danger)' : 'none'} />
             </button>
           </div>
         </div>
@@ -138,10 +133,10 @@ export const AnimeDetailScreen: React.FC<AnimeDetailScreenProps> = ({
           />
           <div style={{ flex: 1, paddingBottom: '6px' }}>
             <div style={{ display: 'flex', gap: '6px', marginBottom: '6px' }}>
-              <span className="glass-pill" style={{ fontSize: '11px', fontWeight: 700, padding: '2px 8px', borderRadius: '4px', color: '#818cf8' }}>
+              <span className="glass-pill" style={{ fontSize: '11px', fontWeight: 700, padding: '2px 8px', borderRadius: '4px', color: 'var(--accent-primary)' }}>
                 {anime.type || 'TV'}
               </span>
-              <span className="glass-pill" style={{ fontSize: '11px', fontWeight: 700, padding: '2px 8px', borderRadius: '4px', color: '#06b6d4' }}>
+              <span className="glass-pill" style={{ fontSize: '11px', fontWeight: 700, padding: '2px 8px', borderRadius: '4px', color: 'var(--accent-cyan)' }}>
                 HD 1080p
               </span>
             </div>

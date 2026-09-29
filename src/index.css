@@ -14,6 +14,8 @@
   --accent-secondary: #a855f7;
   --accent-cyan: #06b6d4;
   --accent-amber: #f59e0b;
+  --accent-danger: #fb7185;
+  --accent-danger-bg: rgba(244, 63, 94, 0.14);
   --accent-gradient: linear-gradient(135deg, #6366f1 0%, #8b5cf6 50%, #ec4899 100%);
   --accent-gradient-glow: linear-gradient(135deg, rgba(99,102,241,0.4) 0%, rgba(168,85,247,0.3) 100%);
   --surface-gradient: linear-gradient(180deg, rgba(255, 255, 255, 0.04) 0%, rgba(255, 255, 255, 0.01) 100%);
@@ -62,6 +64,8 @@
   --accent-secondary: #a855f7;
   --accent-cyan: #0891b2;
   --accent-amber: #d97706;
+  --accent-danger: #e11d48;
+  --accent-danger-bg: rgba(225, 29, 72, 0.1);
   --accent-gradient: linear-gradient(135deg, #6366f1 0%, #8b5cf6 50%, #ec4899 100%);
   --accent-gradient-glow: linear-gradient(135deg, rgba(99,102,241,0.25) 0%, rgba(168,85,247,0.18) 100%);
   --surface-gradient: linear-gradient(180deg, rgba(15, 23, 42, 0.03) 0%, rgba(15, 23, 42, 0.005) 100%);

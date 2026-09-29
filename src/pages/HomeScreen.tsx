@@ -239,11 +239,11 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
             paddingBottom: '10px',
             scrollbarWidth: 'none'
           }}>
-            {history.map((item, idx) => {
+            {history.map((item) => {
               const progressPct = Math.min(100, Math.round((item.currentTime / (item.duration || 1)) * 100));
               return (
                 <div
-                  key={idx}
+                  key={`${item.animeId}-${item.episodeId}`}
                   onClick={() => onResumeEpisode(item)}
                   className="interactive glass-panel"
                   style={{
@@ -400,16 +400,18 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
                   {anime.title}
                 </h3>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                  <span style={{
-                    fontSize: '10px',
-                    fontWeight: 700,
-                    backgroundColor: 'rgba(99, 102, 241, 0.2)',
-                    color: '#818cf8',
-                    padding: '2px 6px',
-                    borderRadius: '4px'
-                  }}>
-                    SUB {anime.subCount || 12}
-                  </span>
+                  {anime.subCount && (
+                    <span style={{
+                      fontSize: '10px',
+                      fontWeight: 700,
+                      backgroundColor: 'rgba(99, 102, 241, 0.2)',
+                      color: 'var(--accent-primary)',
+                      padding: '2px 6px',
+                      borderRadius: '4px'
+                    }}>
+                      SUB {anime.subCount}
+                    </span>
+                  )}
                   {anime.dubCount && (
                     <span style={{
                       fontSize: '10px',

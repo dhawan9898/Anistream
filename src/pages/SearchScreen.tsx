@@ -232,16 +232,18 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({
                   {anime.title}
                 </h3>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                  <span style={{
-                    fontSize: '10px',
-                    fontWeight: 700,
-                    backgroundColor: 'rgba(99, 102, 241, 0.2)',
-                    color: '#818cf8',
-                    padding: '2px 6px',
-                    borderRadius: '4px'
-                  }}>
-                    SUB {anime.subCount || 12}
-                  </span>
+                  {anime.subCount && (
+                    <span style={{
+                      fontSize: '10px',
+                      fontWeight: 700,
+                      backgroundColor: 'rgba(99, 102, 241, 0.2)',
+                      color: 'var(--accent-primary)',
+                      padding: '2px 6px',
+                      borderRadius: '4px'
+                    }}>
+                      SUB {anime.subCount}
+                    </span>
+                  )}
                   {anime.dubCount && (
                     <span style={{
                       fontSize: '10px',
