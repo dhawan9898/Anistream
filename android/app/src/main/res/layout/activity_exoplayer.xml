@@ -1,4 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- Netflix-style player chrome: back + centered title on top, bare
+     replay10 / play-pause / forward10 in the middle, a red seek bar with
+     remaining time and a Speed / Lock / Episodes / Audio & Subtitles /
+     Next Ep. action row at the bottom. Skip Intro / Skip Outro / post-play
+     live outside the auto-hiding chrome so they're always reachable. -->
 <FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:id="@+id/root_container"
@@ -20,29 +25,13 @@
         android:layout_width="match_parent"
         android:layout_height="match_parent" />
 
-    <!-- Bounded top/bottom scrims (Netflix-style: clear video in the middle, not a full wash) -->
-    <View
-        android:id="@+id/scrim_top"
-        android:layout_width="match_parent"
-        android:layout_height="140dp"
-        android:layout_gravity="top" />
-
-    <View
-        android:id="@+id/scrim_bottom"
-        android:layout_width="match_parent"
-        android:layout_height="180dp"
-        android:layout_gravity="bottom" />
-
-    <!-- Buffering spinner - shown whenever ExoPlayer reports STATE_BUFFERING
-         (initial load or a mid-playback stall), hidden the instant it's
-         ready again, so a stall always reads as "still loading" rather than
-         a frozen/broken player. -->
+    <!-- Buffering spinner (Netflix red) -->
     <ProgressBar
         android:id="@+id/buffering_spinner"
         android:layout_width="56dp"
         android:layout_height="56dp"
         android:layout_gravity="center"
-        android:indeterminateTint="#6366f1"
+        android:indeterminateTint="#E50914"
         android:visibility="gone" />
 
     <!-- Gesture feedback indicator (volume / brightness) -->
@@ -60,86 +49,54 @@
         android:textSize="14sp"
         android:visibility="gone" />
 
-    <!-- Next Episode card -->
-    <LinearLayout
-        android:id="@+id/next_episode_card"
-        android:layout_width="220dp"
-        android:layout_height="wrap_content"
-        android:layout_gravity="bottom|end"
-        android:layout_marginEnd="18dp"
-        android:layout_marginBottom="24dp"
-        android:orientation="vertical"
-        android:padding="14dp"
-        android:visibility="gone">
-
-        <TextView
-            android:id="@+id/text_next_episode_countdown"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:textColor="#94a3b8"
-            android:textSize="11sp"
-            android:textStyle="bold" />
-
-        <TextView
-            android:id="@+id/text_next_episode_title"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="2dp"
-            android:layout_marginBottom="10dp"
-            android:textColor="#ffffff"
-            android:textStyle="bold"
-            android:textSize="14sp"
-            android:maxLines="1"
-            android:ellipsize="end" />
-
-        <TextView
-            android:id="@+id/btn_play_next_now"
-            android:layout_width="match_parent"
-            android:layout_height="40dp"
-            android:gravity="center"
-            android:text="▶  Play Now"
-            android:textColor="#ffffff"
-            android:textStyle="bold"
-            android:textSize="13sp" />
-    </LinearLayout>
-
-    <!-- All chrome (top bar + center row + bottom bar), faded in/out together -->
+    <!-- All auto-hiding chrome, faded in/out together -->
     <FrameLayout
         android:id="@+id/controls_root"
         android:layout_width="match_parent"
         android:layout_height="match_parent">
 
-        <!-- Top bar: minimal, back + title only. Netflix keeps episode/audio/
-             quality selection down near the seek bar instead of up here. -->
-        <LinearLayout
+        <View
+            android:id="@+id/scrim_top"
+            android:layout_width="match_parent"
+            android:layout_height="120dp"
+            android:layout_gravity="top" />
+
+        <View
+            android:id="@+id/scrim_bottom"
+            android:layout_width="match_parent"
+            android:layout_height="170dp"
+            android:layout_gravity="bottom" />
+
+        <!-- Top bar: back | centered title -->
+        <FrameLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_gravity="top"
-            android:orientation="horizontal"
-            android:gravity="center_vertical"
             android:paddingStart="12dp"
-            android:paddingEnd="16dp"
-            android:paddingTop="14dp"
-            android:paddingBottom="14dp">
+            android:paddingEnd="12dp"
+            android:paddingTop="12dp">
 
             <ImageView
                 android:id="@+id/btn_back"
-                android:layout_width="40dp"
-                android:layout_height="40dp"
-                android:padding="9dp"
+                android:layout_width="48dp"
+                android:layout_height="48dp"
+                android:layout_gravity="start|center_vertical"
+                android:padding="10dp"
                 android:src="@drawable/ic_back"
                 android:contentDescription="Back" />
 
             <LinearLayout
-                android:layout_width="0dp"
+                android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_weight="1"
-                android:layout_marginStart="10dp"
+                android:layout_gravity="center"
+                android:layout_marginStart="64dp"
+                android:layout_marginEnd="64dp"
+                android:gravity="center_horizontal"
                 android:orientation="vertical">
 
                 <TextView
                     android:id="@+id/text_title"
-                    android:layout_width="match_parent"
+                    android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:textColor="#ffffff"
                     android:textStyle="bold"
@@ -149,184 +106,294 @@
 
                 <TextView
                     android:id="@+id/text_episode"
-                    android:layout_width="match_parent"
+                    android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:textColor="#94a3b8"
+                    android:layout_marginTop="2dp"
+                    android:textColor="#d2d2d2"
                     android:textSize="12sp"
-                    android:layout_marginTop="2dp" />
+                    android:maxLines="1"
+                    android:ellipsize="end" />
             </LinearLayout>
-        </LinearLayout>
+        </FrameLayout>
 
-        <!-- Center transport row: rewind10 - play/pause - forward10 -->
+        <!-- Center transport row: replay10 - play/pause - forward10, bare icons -->
         <LinearLayout
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:layout_gravity="center"
-            android:orientation="horizontal"
-            android:gravity="center_vertical">
+            android:gravity="center_vertical"
+            android:orientation="horizontal">
 
-            <TextView
+            <FrameLayout
                 android:id="@+id/btn_rewind"
-                android:layout_width="58dp"
-                android:layout_height="58dp"
-                android:layout_marginEnd="30dp"
-                android:gravity="center"
-                android:text="&#8634;10"
-                android:textColor="#ffffff"
-                android:textStyle="bold"
-                android:textSize="15sp" />
+                android:layout_width="64dp"
+                android:layout_height="64dp"
+                android:layout_marginEnd="56dp"
+                android:contentDescription="Back 10 seconds">
+
+                <ImageView
+                    android:layout_width="match_parent"
+                    android:layout_height="match_parent"
+                    android:padding="6dp"
+                    android:src="@drawable/ic_replay" />
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="match_parent"
+                    android:gravity="center"
+                    android:paddingTop="6dp"
+                    android:text="10"
+                    android:textColor="#ffffff"
+                    android:textSize="12sp"
+                    android:textStyle="bold" />
+            </FrameLayout>
 
             <ImageView
                 android:id="@+id/btn_play_pause"
-                android:layout_width="76dp"
-                android:layout_height="76dp"
-                android:padding="24dp"
+                android:layout_width="80dp"
+                android:layout_height="80dp"
+                android:padding="8dp"
                 android:src="@drawable/ic_play"
                 android:contentDescription="Play/Pause" />
 
-            <TextView
+            <FrameLayout
                 android:id="@+id/btn_forward"
-                android:layout_width="58dp"
-                android:layout_height="58dp"
-                android:layout_marginStart="30dp"
-                android:gravity="center"
-                android:text="10&#8635;"
-                android:textColor="#ffffff"
-                android:textStyle="bold"
-                android:textSize="15sp" />
+                android:layout_width="64dp"
+                android:layout_height="64dp"
+                android:layout_marginStart="56dp"
+                android:contentDescription="Forward 10 seconds">
+
+                <ImageView
+                    android:layout_width="match_parent"
+                    android:layout_height="match_parent"
+                    android:padding="6dp"
+                    android:scaleX="-1"
+                    android:src="@drawable/ic_replay" />
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="match_parent"
+                    android:gravity="center"
+                    android:paddingTop="6dp"
+                    android:text="10"
+                    android:textColor="#ffffff"
+                    android:textSize="12sp"
+                    android:textStyle="bold" />
+            </FrameLayout>
         </LinearLayout>
 
-        <!-- Skip intro pill -->
-        <TextView
-            android:id="@+id/btn_skip_intro"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_gravity="bottom|end"
-            android:layout_marginEnd="20dp"
-            android:layout_marginBottom="96dp"
-            android:paddingStart="18dp"
-            android:paddingEnd="18dp"
-            android:paddingTop="10dp"
-            android:paddingBottom="10dp"
-            android:text="Skip Intro"
-            android:textColor="#ffffff"
-            android:textStyle="bold"
-            android:textSize="13sp"
-            android:visibility="gone" />
-
-        <!-- Skip outro pill -->
-        <TextView
-            android:id="@+id/btn_skip_outro"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_gravity="bottom|end"
-            android:layout_marginEnd="20dp"
-            android:layout_marginBottom="96dp"
-            android:paddingStart="18dp"
-            android:paddingEnd="18dp"
-            android:paddingTop="10dp"
-            android:paddingBottom="10dp"
-            android:text="Skip Outro"
-            android:textColor="#ffffff"
-            android:textStyle="bold"
-            android:textSize="13sp"
-            android:visibility="gone" />
-
-        <!-- Bottom bar: scrubber + current time (left) / remaining time (right), Netflix-style -->
+        <!-- Bottom: red seek bar + remaining time, then the action row -->
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_gravity="bottom"
             android:orientation="vertical"
-            android:paddingStart="18dp"
-            android:paddingEnd="18dp"
-            android:paddingTop="8dp"
-            android:paddingBottom="20dp">
-
-            <!-- Netflix-style toolbar: episode / subtitles / quality
-                 selection, right above the seek bar instead of the top header. -->
-            <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:orientation="horizontal"
-                android:gravity="center_vertical|end"
-                android:layout_marginBottom="8dp">
-
-                <TextView
-                    android:id="@+id/btn_episodes"
-                    android:layout_width="wrap_content"
-                    android:layout_height="36dp"
-                    android:layout_marginEnd="8dp"
-                    android:gravity="center"
-                    android:paddingStart="12dp"
-                    android:paddingEnd="12dp"
-                    android:text="Episodes"
-                    android:textColor="#ffffff"
-                    android:textStyle="bold"
-                    android:textSize="12sp"
-                    android:visibility="gone" />
-
-                <TextView
-                    android:id="@+id/btn_audio_subs"
-                    android:layout_width="40dp"
-                    android:layout_height="40dp"
-                    android:layout_marginEnd="6dp"
-                    android:gravity="center"
-                    android:text="CC"
-                    android:textColor="#ffffff"
-                    android:textStyle="bold"
-                    android:textSize="13sp" />
-
-                <TextView
-                    android:id="@+id/btn_quality"
-                    android:layout_width="40dp"
-                    android:layout_height="40dp"
-                    android:gravity="center"
-                    android:text="&#9881;"
-                    android:textColor="#ffffff"
-                    android:textSize="19sp"
-                    android:visibility="gone" />
-            </LinearLayout>
-
-            <SeekBar
-                android:id="@+id/seek_bar"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:max="1000"
-                android:progressTint="#6366f1"
-                android:secondaryProgressTint="#66FFFFFF"
-                android:thumbTint="#6366f1" />
+            android:paddingStart="16dp"
+            android:paddingEnd="20dp"
+            android:paddingBottom="8dp">
 
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:orientation="horizontal"
-                android:layout_marginTop="4dp">
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
 
-                <TextView
-                    android:id="@+id/text_current_time"
+                <SeekBar
+                    android:id="@+id/seek_bar"
                     android:layout_width="0dp"
                     android:layout_height="wrap_content"
                     android:layout_weight="1"
-                    android:text="00:00"
-                    android:textColor="#e2e8f0"
-                    android:textSize="12sp"
-                    android:textStyle="bold" />
+                    android:max="1000"
+                    android:paddingTop="10dp"
+                    android:paddingBottom="10dp"
+                    android:progressTint="#E50914"
+                    android:progressBackgroundTint="#FFFFFF"
+                    android:secondaryProgressTint="#99FFFFFF"
+                    android:thumbTint="#E50914" />
 
                 <TextView
                     android:id="@+id/text_remaining_time"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text="-00:00"
-                    android:textColor="#94a3b8"
-                    android:textSize="12sp"
+                    android:layout_marginStart="6dp"
+                    android:minWidth="44dp"
+                    android:gravity="end"
+                    android:text="0:00"
+                    android:textColor="#ffffff"
+                    android:textSize="13sp"
                     android:textStyle="bold" />
+            </LinearLayout>
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="2dp"
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
+
+                <LinearLayout
+                    android:id="@+id/btn_speed"
+                    style="@style/NetflixPlayerAction">
+
+                    <ImageView
+                        style="@style/NetflixPlayerActionIcon"
+                        android:src="@drawable/ic_speed" />
+
+                    <TextView
+                        android:id="@+id/text_speed_label"
+                        style="@style/NetflixPlayerActionLabel"
+                        android:text="Speed (1x)" />
+                </LinearLayout>
+
+                <LinearLayout
+                    android:id="@+id/btn_lock"
+                    style="@style/NetflixPlayerAction">
+
+                    <ImageView
+                        style="@style/NetflixPlayerActionIcon"
+                        android:src="@drawable/ic_lock" />
+
+                    <TextView
+                        style="@style/NetflixPlayerActionLabel"
+                        android:text="Lock" />
+                </LinearLayout>
+
+                <LinearLayout
+                    android:id="@+id/btn_episodes"
+                    style="@style/NetflixPlayerAction"
+                    android:visibility="gone">
+
+                    <ImageView
+                        style="@style/NetflixPlayerActionIcon"
+                        android:src="@drawable/ic_episodes" />
+
+                    <TextView
+                        style="@style/NetflixPlayerActionLabel"
+                        android:text="Episodes" />
+                </LinearLayout>
+
+                <LinearLayout
+                    android:id="@+id/btn_audio_subs"
+                    style="@style/NetflixPlayerAction">
+
+                    <ImageView
+                        style="@style/NetflixPlayerActionIcon"
+                        android:src="@drawable/ic_subtitles" />
+
+                    <TextView
+                        style="@style/NetflixPlayerActionLabel"
+                        android:text="Audio &amp; Subtitles" />
+                </LinearLayout>
+
+                <LinearLayout
+                    android:id="@+id/btn_next_ep"
+                    style="@style/NetflixPlayerAction"
+                    android:visibility="gone">
+
+                    <ImageView
+                        style="@style/NetflixPlayerActionIcon"
+                        android:src="@drawable/ic_skip_next" />
+
+                    <TextView
+                        style="@style/NetflixPlayerActionLabel"
+                        android:text="Next Ep." />
+                </LinearLayout>
             </LinearLayout>
         </LinearLayout>
     </FrameLayout>
 
+    <!-- Skip Intro / Skip Outro / Watch Credits / Next Episode. Sits above
+         the bottom bar while the chrome is up, drops to the corner when it
+         hides (translationY is animated from code). -->
+    <LinearLayout
+        android:id="@+id/post_play_container"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom|end"
+        android:layout_marginEnd="20dp"
+        android:layout_marginBottom="24dp"
+        android:gravity="center_vertical"
+        android:orientation="horizontal">
+
+        <TextView
+            android:id="@+id/btn_skip_intro"
+            style="@style/NetflixSkipButton"
+            android:text="Skip Intro" />
+
+        <TextView
+            android:id="@+id/btn_skip_outro"
+            style="@style/NetflixSkipButton"
+            android:text="Skip Outro" />
+
+        <TextView
+            android:id="@+id/btn_watch_credits"
+            style="@style/NetflixSkipButton"
+            android:text="Watch Credits" />
+
+        <FrameLayout
+            android:id="@+id/btn_next_episode"
+            android:layout_width="wrap_content"
+            android:layout_height="44dp"
+            android:layout_marginStart="10dp"
+            android:visibility="gone">
+
+            <View
+                android:id="@+id/next_episode_fill"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="match_parent"
+                android:drawablePadding="8dp"
+                android:gravity="center"
+                android:paddingStart="18dp"
+                android:paddingEnd="20dp"
+                android:text="▶  Next Episode"
+                android:textColor="#000000"
+                android:textSize="14sp"
+                android:textStyle="bold" />
+        </FrameLayout>
+    </LinearLayout>
+
+    <!-- Screen lock: shown briefly when the locked screen is tapped -->
+    <LinearLayout
+        android:id="@+id/unlock_container"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom|center_horizontal"
+        android:layout_marginBottom="32dp"
+        android:gravity="center_horizontal"
+        android:orientation="vertical"
+        android:visibility="gone">
+
+        <ImageView
+            android:id="@+id/btn_unlock"
+            android:layout_width="56dp"
+            android:layout_height="56dp"
+            android:padding="14dp"
+            android:src="@drawable/ic_lock_open"
+            android:contentDescription="Unlock screen" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:text="Screen Locked"
+            android:textColor="#ffffff"
+            android:textSize="14sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Tap to unlock"
+            android:textColor="#b3b3b3"
+            android:textSize="12sp" />
+    </LinearLayout>
+
     <!-- Playback error overlay - last child so it renders and receives touches
-         above the (still-visible) transport controls it visually overlaps. -->
+         above everything else. -->
     <LinearLayout
         android:id="@+id/error_overlay"
         android:layout_width="300dp"
@@ -352,7 +419,7 @@
             android:layout_height="40dp"
             android:gravity="center"
             android:text="Retry"
-            android:textColor="#ffffff"
+            android:textColor="#000000"
             android:textStyle="bold"
             android:textSize="13sp" />
     </LinearLayout>

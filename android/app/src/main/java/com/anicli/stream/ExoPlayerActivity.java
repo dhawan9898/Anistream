@@ -51,8 +51,14 @@ public class ExoPlayerActivity extends AppCompatActivity {
     private static final String TAG = "ExoPlayerActivity";
     private static final long SEEK_STEP_MS = 10_000;
     private static final long CONTROLS_HIDE_DELAY_MS = 3_500;
+    // Without an outro marker, post-play ("Next Episode") appears this close
+    // to the end; its button then fills up over NEXT_EPISODE_COUNTDOWN_MS of
+    // playback before advancing on its own, Netflix-style.
     private static final long NEXT_EPISODE_THRESHOLD_MS = 20_000;
-    private static final int NEXT_EPISODE_COUNTDOWN_SECONDS = 12;
+    private static final long NEXT_EPISODE_COUNTDOWN_MS = 10_000;
+    private static final long UNLOCK_HINT_MS = 3_000;
+    private static final int NETFLIX_RED = Color.parseColor("#E50914");
+    private static final float[] PLAYBACK_SPEEDS = {0.5f, 0.75f, 1f, 1.25f, 1.5f};
     private static final long PROGRESS_REPORT_INTERVAL_MS = 5_000;
 
     // Larger than ExoPlayer's own defaults (15s/50s/2.5s/5s) - trades a
@@ -72,27 +78,41 @@ public class ExoPlayerActivity extends AppCompatActivity {
     private View scrimBottom;
     private ImageView btnPlayPause;
     private ImageView btnBack;
-    private TextView btnRewind;
-    private TextView btnForward;
-    private TextView btnAudioSubs;
-    private TextView btnQuality;
-    private TextView btnEpisodes;
+    private View btnRewind;
+    private View btnForward;
+    private View btnSpeed;
+    private TextView textSpeedLabel;
+    private View btnLock;
+    private View btnEpisodes;
+    private View btnAudioSubs;
+    private View btnNextEp;
     private TextView btnSkipIntro;
     private TextView btnSkipOutro;
+    private TextView btnWatchCredits;
+    private View btnNextEpisode;
+    private View nextEpisodeFill;
+    private View postPlayContainer;
+    private View unlockContainer;
+    private View btnUnlock;
     private TextView textTitle;
     private TextView textEpisode;
-    private TextView textCurrentTime;
     private TextView textRemainingTime;
     private TextView gestureIndicator;
     private View bufferingSpinner;
     private SeekBar seekBar;
 
-    private LinearLayout nextEpisodeCard;
-    private TextView textNextEpisodeCountdown;
-    private TextView textNextEpisodeTitle;
-    private TextView btnPlayNextNow;
     private boolean nextEpisodeTriggered = false;
-    private int nextEpisodeCountdown = NEXT_EPISODE_COUNTDOWN_SECONDS;
+    // Post-play: playback position (ms) at which the "Next Episode" countdown
+    // started, or -1 while it isn't showing. "Watch Credits" dismisses it
+    // for the rest of the episode.
+    private long postPlayStartMs = -1;
+    private boolean postPlayDismissed = false;
+
+    private float playbackSpeed = 1f;
+    private boolean screenLocked = false;
+    private final Runnable hideUnlockRunnable = () -> {
+        if (unlockContainer != null) unlockContainer.setVisibility(View.GONE);
+    };
 
     private LinearLayout errorOverlay;
     private TextView textErrorMessage;
@@ -238,14 +258,13 @@ public class ExoPlayerActivity extends AppCompatActivity {
         // isFallback means every real source failed and this is the app's
         // built-in demo clip, not the real episode - never let that look
         // like real content.
-        textEpisode.setText("Ep " + (episodeNumber != null ? episodeNumber : "1") + " • " + currentMode.toUpperCase()
-                + (isFallback ? " • DEMO - SOURCE UNAVAILABLE" : ""));
+        textEpisode.setText("E" + (episodeNumber != null ? episodeNumber : "1")
+                + ("dub".equals(currentMode) ? " · Dub" : "")
+                + (isFallback ? " · DEMO - SOURCE UNAVAILABLE" : ""));
 
+        // Quality choices (when there's a real one) live in the Audio &
+        // Subtitles panel, like the rest of Netflix's track selection.
         parseQualities(qualitiesJson, videoUrl);
-        // Only worth a button when there's an actual choice to make - real
-        // adaptive renditions (detected later, once tracks resolve) can still
-        // turn this on even if the URL list didn't qualify.
-        btnQuality.setVisibility(qualityOptions.size() > 1 ? View.VISIBLE : View.GONE);
 
         // Markers served alongside the stream (HiAnime-style) win; AniSkip
         // only fills in a half the server didn't tag - see maybeFetchSkipTimes().
@@ -254,6 +273,7 @@ public class ExoPlayerActivity extends AppCompatActivity {
 
         parseEpisodes(episodesJson);
         btnEpisodes.setVisibility(episodeOptions.size() > 1 ? View.VISIBLE : View.GONE);
+        btnNextEp.setVisibility(nextEpisodeNumber() != null ? View.VISIBLE : View.GONE);
 
         if (videoUrl != null && !videoUrl.isEmpty()) {
             pendingVideoUrl = videoUrl;
@@ -275,74 +295,82 @@ public class ExoPlayerActivity extends AppCompatActivity {
         btnBack = findViewById(R.id.btn_back);
         btnRewind = findViewById(R.id.btn_rewind);
         btnForward = findViewById(R.id.btn_forward);
-        btnAudioSubs = findViewById(R.id.btn_audio_subs);
-        btnQuality = findViewById(R.id.btn_quality);
+        btnSpeed = findViewById(R.id.btn_speed);
+        textSpeedLabel = findViewById(R.id.text_speed_label);
+        btnLock = findViewById(R.id.btn_lock);
         btnEpisodes = findViewById(R.id.btn_episodes);
+        btnAudioSubs = findViewById(R.id.btn_audio_subs);
+        btnNextEp = findViewById(R.id.btn_next_ep);
         btnSkipIntro = findViewById(R.id.btn_skip_intro);
         btnSkipOutro = findViewById(R.id.btn_skip_outro);
+        btnWatchCredits = findViewById(R.id.btn_watch_credits);
+        btnNextEpisode = findViewById(R.id.btn_next_episode);
+        nextEpisodeFill = findViewById(R.id.next_episode_fill);
+        postPlayContainer = findViewById(R.id.post_play_container);
+        unlockContainer = findViewById(R.id.unlock_container);
+        btnUnlock = findViewById(R.id.btn_unlock);
         textTitle = findViewById(R.id.text_title);
         textEpisode = findViewById(R.id.text_episode);
-        textCurrentTime = findViewById(R.id.text_current_time);
         textRemainingTime = findViewById(R.id.text_remaining_time);
         gestureIndicator = findViewById(R.id.gesture_indicator);
         bufferingSpinner = findViewById(R.id.buffering_spinner);
         seekBar = findViewById(R.id.seek_bar);
-        nextEpisodeCard = findViewById(R.id.next_episode_card);
-        textNextEpisodeCountdown = findViewById(R.id.text_next_episode_countdown);
-        textNextEpisodeTitle = findViewById(R.id.text_next_episode_title);
-        btnPlayNextNow = findViewById(R.id.btn_play_next_now);
         errorOverlay = findViewById(R.id.error_overlay);
         textErrorMessage = findViewById(R.id.text_error_message);
         btnRetry = findViewById(R.id.btn_retry);
     }
 
-    // Netflix-style chrome: clear video with bounded top/bottom scrims (not a
-    // full-screen wash) and rounded semi-transparent "glass" pill buttons -
-    // no drawable resources needed, no real-time blur behind the video.
+    // Netflix look: bare white icons over bounded top/bottom scrims, square-
+    // cornered outlined skip buttons, a white "Next Episode" button that
+    // fills up as it counts down, and a red seek bar (tinted in the layout).
     private void styleGlassChrome() {
-        pill(btnBack, 20f, 0.35f);
-        pill(btnAudioSubs, 20f, 0.35f);
-        pill(btnQuality, 20f, 0.35f);
-        pill(btnEpisodes, 18f, 0.35f);
-        pill(btnRewind, 29f, 0.32f);
-        pill(btnForward, 29f, 0.32f);
-        pill(btnSkipIntro, 24f, 0.55f);
-        pill(btnSkipOutro, 24f, 0.55f);
-        pill(gestureIndicator, 24f, 0.55f);
-        pill(nextEpisodeCard, 14f, 0.6f);
-        pill(errorOverlay, 16f, 0.75f);
-        pill(btnRetry, 20f, 0.9f);
+        float density = getResources().getDisplayMetrics().density;
 
-        GradientDrawable playBg = new GradientDrawable();
-        playBg.setShape(GradientDrawable.OVAL);
-        playBg.setColor(Color.parseColor("#D9312E81"));
-        playBg.setStroke(Math.round(1.5f * getResources().getDisplayMetrics().density), Color.argb(70, 255, 255, 255));
-        btnPlayPause.setBackground(playBg);
+        for (TextView skip : new TextView[]{btnSkipIntro, btnSkipOutro, btnWatchCredits}) {
+            GradientDrawable bg = new GradientDrawable();
+            bg.setCornerRadius(4f * density);
+            bg.setColor(Color.argb(165, 20, 20, 20));
+            bg.setStroke(Math.round(1.5f * density), Color.argb(220, 255, 255, 255));
+            skip.setBackground(bg);
+        }
 
         GradientDrawable nextBg = new GradientDrawable();
-        nextBg.setShape(GradientDrawable.RECTANGLE);
-        nextBg.setCornerRadius(10f * getResources().getDisplayMetrics().density);
-        nextBg.setColor(Color.parseColor("#6366f1"));
-        btnPlayNextNow.setBackground(nextBg);
+        nextBg.setCornerRadius(4f * density);
+        nextBg.setColor(Color.argb(190, 255, 255, 255));
+        btnNextEpisode.setBackground(nextBg);
+        btnNextEpisode.setClipToOutline(true);
+        GradientDrawable fillBg = new GradientDrawable();
+        fillBg.setCornerRadius(4f * density);
+        fillBg.setColor(Color.WHITE);
+        nextEpisodeFill.setBackground(fillBg);
+        nextEpisodeFill.setPivotX(0f);
+        nextEpisodeFill.setScaleX(0f);
+
+        GradientDrawable unlockBg = new GradientDrawable();
+        unlockBg.setShape(GradientDrawable.OVAL);
+        unlockBg.setColor(Color.argb(128, 0, 0, 0));
+        unlockBg.setStroke(Math.round(2 * density), Color.WHITE);
+        btnUnlock.setBackground(unlockBg);
+
+        darkPanel(gestureIndicator, 24f, 0.6f);
+        darkPanel(errorOverlay, 6f, 0.92f);
+        GradientDrawable retryBg = new GradientDrawable();
+        retryBg.setCornerRadius(4f * density);
+        retryBg.setColor(Color.WHITE);
+        btnRetry.setBackground(retryBg);
 
         scrimTop.setBackground(edgeScrim(GradientDrawable.Orientation.TOP_BOTTOM));
         scrimBottom.setBackground(edgeScrim(GradientDrawable.Orientation.BOTTOM_TOP));
+        // Chrome starts out visible, so start the skip buttons above it.
+        postPlayContainer.setTranslationY(-dp(84));
     }
 
-    private void pill(View view, float radiusDp, float alpha) {
+    private void darkPanel(View view, float radiusDp, float alpha) {
         float density = getResources().getDisplayMetrics().density;
         GradientDrawable bg = new GradientDrawable();
-        bg.setShape(GradientDrawable.RECTANGLE);
         bg.setCornerRadius(radiusDp * density);
-        int a = Math.round(alpha * 255);
-        // A vertical gradient (lighter top edge fading to a darker base)
-        // reads as a curved glass surface catching light, instead of a flat
-        // tinted rectangle - matching the web UI's "liquid glass" panels.
-        bg.setOrientation(GradientDrawable.Orientation.TOP_BOTTOM);
-        bg.setColors(new int[]{Color.argb(a, 46, 46, 62), Color.argb(a, 16, 16, 24)});
-        bg.setStroke(Math.round(density), Color.argb(55, 255, 255, 255));
+        bg.setColor(Color.argb(Math.round(alpha * 255), 20, 20, 20));
         view.setBackground(bg);
-        view.setElevation(3f * density);
     }
 
     private GradientDrawable edgeScrim(GradientDrawable.Orientation orientation) {
@@ -375,10 +403,17 @@ public class ExoPlayerActivity extends AppCompatActivity {
             }
             btnSkipOutro.setVisibility(View.GONE);
         });
+        btnWatchCredits.setOnClickListener(v -> {
+            postPlayDismissed = true;
+            hidePostPlay();
+        });
+        btnNextEpisode.setOnClickListener(v -> triggerNextEpisode());
+        btnSpeed.setOnClickListener(v -> showSpeedPanel());
+        btnLock.setOnClickListener(v -> lockScreen());
+        btnUnlock.setOnClickListener(v -> unlockScreen());
         btnAudioSubs.setOnClickListener(this::showAudioSubtitlesMenu);
-        btnQuality.setOnClickListener(this::showQualityMenu);
         btnEpisodes.setOnClickListener(this::showEpisodeMenu);
-        btnPlayNextNow.setOnClickListener(v -> triggerNextEpisode());
+        btnNextEp.setOnClickListener(v -> triggerNextEpisode());
         btnRetry.setOnClickListener(v -> retryPlayback());
 
         seekBar.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
@@ -386,7 +421,7 @@ public class ExoPlayerActivity extends AppCompatActivity {
             public void onProgressChanged(SeekBar sb, int progress, boolean fromUser) {
                 if (fromUser && player != null && player.getDuration() > 0) {
                     long target = (long) ((progress / 1000.0) * player.getDuration());
-                    textCurrentTime.setText(formatTime(target));
+                    textRemainingTime.setText(formatTime(Math.max(player.getDuration() - target, 0)));
                 }
             }
 
@@ -408,19 +443,285 @@ public class ExoPlayerActivity extends AppCompatActivity {
         });
     }
 
-    // Netflix combines audio + subtitle language selection behind one icon;
-    // do the same instead of two separate top-bar buttons. "Off" plus every
-    // language actually present in this stream's subtitle list, so we only
-    // ever offer languages that were really provided - never a guess.
-    private void showAudioSubtitlesMenu(View anchor) {
-        java.util.List<MenuRow> rows = new java.util.ArrayList<>();
-        rows.add(new MenuRow("Off", currentSubtitleLabel == null, () -> selectSubtitle(null)));
-        for (String label : subtitleLabels) {
-            rows.add(new MenuRow(label, label.equals(currentSubtitleLabel), () -> selectSubtitle(label)));
+    private int dp(float value) {
+        return Math.round(value * getResources().getDisplayMetrics().density);
+    }
+
+    // Full-screen, near-black Netflix panel with a close "X" in the top-right
+    // corner. The caller fills `content`; the returned dialog is already
+    // showing.
+    private Dialog showFullScreenPanel(View content) {
+        Dialog dialog = new Dialog(this, android.R.style.Theme_Black_NoTitleBar_Fullscreen);
+        android.widget.FrameLayout root = new android.widget.FrameLayout(this);
+        root.setBackgroundColor(Color.argb(235, 0, 0, 0));
+        root.setPadding(dp(28), dp(20), dp(28), dp(16));
+
+        root.addView(content, new android.widget.FrameLayout.LayoutParams(
+                android.widget.FrameLayout.LayoutParams.MATCH_PARENT,
+                android.widget.FrameLayout.LayoutParams.MATCH_PARENT));
+
+        ImageView close = new ImageView(this);
+        close.setImageResource(R.drawable.ic_close);
+        close.setPadding(dp(8), dp(8), dp(8), dp(8));
+        close.setContentDescription("Close");
+        close.setOnClickListener(v -> dialog.dismiss());
+        android.widget.FrameLayout.LayoutParams closeParams =
+                new android.widget.FrameLayout.LayoutParams(dp(44), dp(44), Gravity.TOP | Gravity.END);
+        root.addView(close, closeParams);
+
+        dialog.setContentView(root);
+        Window window = dialog.getWindow();
+        if (window != null) {
+            window.setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));
+            window.setLayout(WindowManager.LayoutParams.MATCH_PARENT, WindowManager.LayoutParams.MATCH_PARENT);
+            // Show without taking focus first so the system bars don't pop
+            // back in over the immersive player.
+            window.setFlags(WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
+                    WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE);
+            window.getDecorView().setSystemUiVisibility(getWindow().getDecorView().getSystemUiVisibility());
         }
-        String otherMode = "sub".equals(currentMode) ? "Dub" : "Sub";
-        rows.add(new MenuRow("Switch Audio to " + otherMode, false, this::requestModeSwitch));
-        showBottomSheetMenu("Subtitles", rows);
+        handler.removeCallbacks(hideControlsRunnable);
+        dialog.setOnDismissListener(d -> scheduleAutoHide());
+        dialog.show();
+        if (window != null) window.clearFlags(WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE);
+        return dialog;
+    }
+
+    // One selectable column ("Audio", "Subtitles", "Video Quality"): white
+    // bold + checkmark for the active row, grey for the rest. Picking a row
+    // runs its action and moves the checkmark there.
+    private View buildOptionColumn(String title, java.util.List<MenuRow> rows) {
+        LinearLayout column = new LinearLayout(this);
+        column.setOrientation(LinearLayout.VERTICAL);
+
+        TextView header = new TextView(this);
+        header.setText(title);
+        header.setTextColor(Color.WHITE);
+        header.setTextSize(18);
+        header.setTypeface(header.getTypeface(), android.graphics.Typeface.BOLD);
+        header.setPadding(0, 0, 0, dp(12));
+        column.addView(header);
+
+        java.util.List<ImageView> checks = new java.util.ArrayList<>();
+        java.util.List<TextView> labels = new java.util.ArrayList<>();
+        for (int i = 0; i < rows.size(); i++) {
+            MenuRow row = rows.get(i);
+            LinearLayout rowView = new LinearLayout(this);
+            rowView.setOrientation(LinearLayout.HORIZONTAL);
+            rowView.setGravity(Gravity.CENTER_VERTICAL);
+            rowView.setPadding(0, dp(9), dp(8), dp(9));
+            rowView.setClickable(true);
+
+            ImageView check = new ImageView(this);
+            check.setImageResource(R.drawable.ic_check);
+            check.setVisibility(row.selected ? View.VISIBLE : View.INVISIBLE);
+            LinearLayout.LayoutParams checkParams = new LinearLayout.LayoutParams(dp(20), dp(20));
+            checkParams.setMarginEnd(dp(8));
+            rowView.addView(check, checkParams);
+
+            TextView label = new TextView(this);
+            label.setText(row.label);
+            label.setTextSize(15);
+            styleOptionLabel(label, row.selected);
+            rowView.addView(label);
+
+            checks.add(check);
+            labels.add(label);
+            final int index = i;
+            rowView.setOnClickListener(v -> {
+                for (int j = 0; j < checks.size(); j++) {
+                    checks.get(j).setVisibility(j == index ? View.VISIBLE : View.INVISIBLE);
+                    styleOptionLabel(labels.get(j), j == index);
+                }
+                row.onSelect.run();
+            });
+            column.addView(rowView);
+        }
+
+        android.widget.ScrollView scroll = new android.widget.ScrollView(this);
+        scroll.addView(column);
+        return scroll;
+    }
+
+    private void styleOptionLabel(TextView label, boolean selected) {
+        label.setTextColor(selected ? Color.WHITE : Color.parseColor("#A3A3A3"));
+        label.setTypeface(null, selected ? android.graphics.Typeface.BOLD : android.graphics.Typeface.NORMAL);
+    }
+
+    // Netflix's "Audio & Subtitles" screen: side-by-side columns. Audio is
+    // the sub/dub choice (re-resolved by JS), Subtitles lists "Off" plus
+    // every track this stream really has, and a Video Quality column
+    // appears only when there's a genuine choice of renditions.
+    private void showAudioSubtitlesMenu(View anchor) {
+        LinearLayout columns = new LinearLayout(this);
+        columns.setOrientation(LinearLayout.HORIZONTAL);
+        columns.setPadding(0, dp(28), dp(40), 0);
+        final Dialog[] dialogRef = new Dialog[1];
+
+        java.util.List<MenuRow> audioRows = new java.util.ArrayList<>();
+        boolean isSub = "sub".equals(currentMode);
+        // Switching audio re-resolves the stream in JS and closes the player.
+        audioRows.add(new MenuRow("Japanese [Original]", isSub, () -> {
+            if (isSub) return;
+            if (dialogRef[0] != null) dialogRef[0].dismiss();
+            requestModeSwitch();
+        }));
+        audioRows.add(new MenuRow("English (Dub)", !isSub, () -> {
+            if (!isSub) return;
+            if (dialogRef[0] != null) dialogRef[0].dismiss();
+            requestModeSwitch();
+        }));
+        columns.addView(buildOptionColumn("Audio", audioRows), new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, 1f));
+
+        java.util.List<MenuRow> subtitleRows = new java.util.ArrayList<>();
+        subtitleRows.add(new MenuRow("Off", currentSubtitleLabel == null, () -> selectSubtitle(null)));
+        for (String label : subtitleLabels) {
+            subtitleRows.add(new MenuRow(label, label.equals(currentSubtitleLabel), () -> selectSubtitle(label)));
+        }
+        columns.addView(buildOptionColumn("Subtitles", subtitleRows), new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, 1f));
+
+        java.util.List<MenuRow> qualityRows = new java.util.ArrayList<>();
+        if (useAdaptiveQualityMenu) {
+            qualityRows.add(new MenuRow("Auto", currentVideoTrackIndex == -1, () -> selectVideoQuality(-1)));
+            for (VideoQualityOption option : videoQualityOptions) {
+                qualityRows.add(new MenuRow(option.label, option.trackIndex == currentVideoTrackIndex,
+                        () -> selectVideoQuality(option.trackIndex)));
+            }
+        } else if (qualityOptions.size() > 1) {
+            for (QualityOption option : qualityOptions) {
+                qualityRows.add(new MenuRow(option.label, option.label.equals(currentQualityLabel), () -> {
+                    // Rebuilds the player - close the panel first.
+                    if (dialogRef[0] != null) dialogRef[0].dismiss();
+                    switchQuality(option);
+                }));
+            }
+        }
+        if (!qualityRows.isEmpty()) {
+            columns.addView(buildOptionColumn("Video Quality", qualityRows), new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, 1f));
+        }
+
+        dialogRef[0] = showFullScreenPanel(columns);
+    }
+
+    // Netflix "Playback Speed": five stops on a line, the active one a big
+    // white dot, applied instantly.
+    private void showSpeedPanel() {
+        LinearLayout content = new LinearLayout(this);
+        content.setOrientation(LinearLayout.VERTICAL);
+        content.setGravity(Gravity.CENTER);
+
+        TextView title = new TextView(this);
+        title.setText("Playback Speed");
+        title.setTextColor(Color.WHITE);
+        title.setTextSize(20);
+        title.setTypeface(title.getTypeface(), android.graphics.Typeface.BOLD);
+        title.setGravity(Gravity.CENTER);
+        content.addView(title);
+
+        android.widget.FrameLayout track = new android.widget.FrameLayout(this);
+        LinearLayout.LayoutParams trackParams = new LinearLayout.LayoutParams(Math.min(dp(560),
+                getResources().getDisplayMetrics().widthPixels - dp(80)), LinearLayout.LayoutParams.WRAP_CONTENT);
+        trackParams.topMargin = dp(32);
+        content.addView(track, trackParams);
+
+        // Rail through the dot centers (10% inset = half of one of the five stops).
+        View rail = new View(this);
+        rail.setBackgroundColor(Color.argb(128, 255, 255, 255));
+        android.widget.FrameLayout.LayoutParams railParams =
+                new android.widget.FrameLayout.LayoutParams(android.widget.FrameLayout.LayoutParams.MATCH_PARENT, dp(2));
+        railParams.topMargin = dp(13);
+        track.addView(rail, railParams);
+        track.post(() -> {
+            int inset = track.getWidth() / 10;
+            android.widget.FrameLayout.LayoutParams lp = (android.widget.FrameLayout.LayoutParams) rail.getLayoutParams();
+            lp.leftMargin = inset;
+            lp.rightMargin = inset;
+            rail.setLayoutParams(lp);
+        });
+
+        LinearLayout stops = new LinearLayout(this);
+        stops.setOrientation(LinearLayout.HORIZONTAL);
+        track.addView(stops, new android.widget.FrameLayout.LayoutParams(
+                android.widget.FrameLayout.LayoutParams.MATCH_PARENT, android.widget.FrameLayout.LayoutParams.WRAP_CONTENT));
+
+        java.util.List<View> dots = new java.util.ArrayList<>();
+        java.util.List<TextView> labels = new java.util.ArrayList<>();
+        for (float speed : PLAYBACK_SPEEDS) {
+            LinearLayout stop = new LinearLayout(this);
+            stop.setOrientation(LinearLayout.VERTICAL);
+            stop.setGravity(Gravity.CENTER_HORIZONTAL);
+            stop.setClickable(true);
+
+            android.widget.FrameLayout dotBox = new android.widget.FrameLayout(this);
+            View dot = new View(this);
+            dotBox.addView(dot, new android.widget.FrameLayout.LayoutParams(dp(12), dp(12), Gravity.CENTER));
+            stop.addView(dotBox, new LinearLayout.LayoutParams(dp(28), dp(28)));
+
+            TextView label = new TextView(this);
+            label.setText(formatSpeed(speed) + (speed == 1f ? " (Normal)" : ""));
+            label.setTextSize(13);
+            label.setGravity(Gravity.CENTER);
+            label.setPadding(0, dp(12), 0, 0);
+            stop.addView(label);
+
+            dots.add(dot);
+            labels.add(label);
+            stop.setOnClickListener(v -> {
+                setPlaybackSpeed(speed);
+                for (int i = 0; i < dots.size(); i++) styleSpeedStop(dots.get(i), labels.get(i), PLAYBACK_SPEEDS[i] == speed);
+            });
+            stops.addView(stop, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+            styleSpeedStop(dot, label, speed == playbackSpeed);
+        }
+
+        showFullScreenPanel(content);
+    }
+
+    private void styleSpeedStop(View dot, TextView label, boolean active) {
+        GradientDrawable bg = new GradientDrawable();
+        bg.setShape(GradientDrawable.OVAL);
+        bg.setColor(active ? Color.WHITE : Color.parseColor("#A3A3A3"));
+        dot.setBackground(bg);
+        int size = active ? dp(24) : dp(12);
+        android.view.ViewGroup.LayoutParams lp = dot.getLayoutParams();
+        lp.width = size;
+        lp.height = size;
+        dot.setLayoutParams(lp);
+        label.setTextColor(active ? Color.WHITE : Color.parseColor("#A3A3A3"));
+        label.setTypeface(null, active ? android.graphics.Typeface.BOLD : android.graphics.Typeface.NORMAL);
+    }
+
+    private static String formatSpeed(float speed) {
+        return (speed == Math.round(speed) ? String.valueOf(Math.round(speed)) : String.valueOf(speed)) + "x";
+    }
+
+    private void setPlaybackSpeed(float speed) {
+        playbackSpeed = speed;
+        if (player != null) player.setPlaybackSpeed(speed);
+        textSpeedLabel.setText("Speed (" + formatSpeed(speed) + ")");
+    }
+
+    // Netflix screen lock: hides every control and ignores gestures; a tap
+    // only reveals the unlock button for a few seconds.
+    private void lockScreen() {
+        screenLocked = true;
+        handler.removeCallbacks(hideControlsRunnable);
+        setControlsVisible(false);
+        postPlayContainer.setVisibility(View.GONE);
+    }
+
+    private void unlockScreen() {
+        screenLocked = false;
+        handler.removeCallbacks(hideUnlockRunnable);
+        unlockContainer.setVisibility(View.GONE);
+        postPlayContainer.setVisibility(View.VISIBLE);
+        showControls();
+    }
+
+    private void flashUnlockButton() {
+        unlockContainer.setVisibility(View.VISIBLE);
+        handler.removeCallbacks(hideUnlockRunnable);
+        handler.postDelayed(hideUnlockRunnable, UNLOCK_HINT_MS);
     }
 
     private void requestModeSwitch() {
@@ -514,27 +815,6 @@ public class ExoPlayerActivity extends AppCompatActivity {
         }
     }
 
-    private void showQualityMenu(View anchor) {
-        if (useAdaptiveQualityMenu) {
-            showAdaptiveQualityMenu(anchor);
-        } else if (qualityOptions.size() > 1) {
-            showUrlQualityMenu(anchor);
-        }
-    }
-
-    // Real ExoPlayer-detected renditions of the same manifest - the
-    // trustworthy source of "supported quality", used whenever it's
-    // available.
-    private void showAdaptiveQualityMenu(View anchor) {
-        java.util.List<MenuRow> rows = new java.util.ArrayList<>();
-        rows.add(new MenuRow("Auto", currentVideoTrackIndex == -1, () -> selectVideoQuality(-1)));
-        for (VideoQualityOption option : videoQualityOptions) {
-            boolean selected = option.trackIndex == currentVideoTrackIndex;
-            rows.add(new MenuRow(option.label, selected, () -> selectVideoQuality(option.trackIndex)));
-        }
-        showBottomSheetMenu("Video Quality", rows);
-    }
-
     // Forces (or clears, for Auto) a specific rendition within the adaptive
     // video track group - no player rebuild needed, ExoPlayer just switches
     // renditions like it would on its own for bandwidth changes.
@@ -567,17 +847,8 @@ public class ExoPlayerActivity extends AppCompatActivity {
                         format.height > 0 ? format.height + "p" : "Track " + (i + 1), i));
             }
             useAdaptiveQualityMenu = true;
-            btnQuality.setVisibility(View.VISIBLE);
             return;
         }
-    }
-
-    private void showUrlQualityMenu(View anchor) {
-        java.util.List<MenuRow> rows = new java.util.ArrayList<>();
-        for (QualityOption option : qualityOptions) {
-            rows.add(new MenuRow(option.label, option.label.equals(currentQualityLabel), () -> switchQuality(option)));
-        }
-        showBottomSheetMenu("Video Quality", rows);
     }
 
     // Populates episodeOptions from the "episodes" intent extra - the real
@@ -613,10 +884,8 @@ public class ExoPlayerActivity extends AppCompatActivity {
         LinearLayout card = new LinearLayout(this);
         card.setOrientation(LinearLayout.VERTICAL);
         GradientDrawable cardBg = new GradientDrawable();
-        cardBg.setOrientation(GradientDrawable.Orientation.TOP_BOTTOM);
-        cardBg.setColors(new int[]{Color.parseColor("#2a2a38"), Color.parseColor("#16161e")});
-        cardBg.setStroke(Math.round(density), Color.argb(60, 255, 255, 255));
-        cardBg.setCornerRadius(20f * density);
+        cardBg.setColor(Color.parseColor("#181818"));
+        cardBg.setCornerRadius(8f * density);
         card.setBackground(cardBg);
         card.setElevation(16f * density);
         int pad = Math.round(16 * density);
@@ -638,24 +907,20 @@ public class ExoPlayerActivity extends AppCompatActivity {
         titleView.setTypeface(titleView.getTypeface(), android.graphics.Typeface.BOLD);
         titles.addView(titleView);
         TextView subtitleView = new TextView(this);
-        subtitleView.setText(episodeOptions.size() + " episodes • Now playing Ep "
-                + (episodeNumber != null ? episodeNumber : "?"));
-        subtitleView.setTextColor(Color.parseColor("#94a3b8"));
+        subtitleView.setText((animeTitle != null ? animeTitle + " · " : "") + episodeOptions.size() + " episodes");
+        subtitleView.setTextColor(Color.parseColor("#B3B3B3"));
+        subtitleView.setMaxLines(1);
+        subtitleView.setEllipsize(android.text.TextUtils.TruncateAt.END);
         subtitleView.setTextSize(12);
         titles.addView(subtitleView);
         header.addView(titles);
 
-        TextView close = new TextView(this);
-        close.setText("✕");
-        close.setTextColor(Color.WHITE);
-        close.setTextSize(15);
-        close.setGravity(Gravity.CENTER);
-        int closeSize = Math.round(34 * density);
+        ImageView close = new ImageView(this);
+        close.setImageResource(R.drawable.ic_close);
+        int closeSize = Math.round(36 * density);
+        close.setPadding(Math.round(6 * density), Math.round(6 * density), Math.round(6 * density), Math.round(6 * density));
         close.setLayoutParams(new LinearLayout.LayoutParams(closeSize, closeSize));
-        GradientDrawable closeBg = new GradientDrawable();
-        closeBg.setShape(GradientDrawable.OVAL);
-        closeBg.setColor(Color.argb(40, 255, 255, 255));
-        close.setBackground(closeBg);
+        close.setContentDescription("Close");
         close.setOnClickListener(v -> dialog.dismiss());
         header.addView(close);
         card.addView(header);
@@ -675,16 +940,12 @@ public class ExoPlayerActivity extends AppCompatActivity {
             tile.setText(option.number);
             tile.setGravity(Gravity.CENTER);
             tile.setTextSize(14);
-            tile.setTextColor(isCurrent ? Color.WHITE : Color.parseColor("#cbd5e1"));
+            // Netflix-style: the playing episode is a solid white tile.
+            tile.setTextColor(isCurrent ? Color.BLACK : Color.parseColor("#D2D2D2"));
             if (isCurrent) tile.setTypeface(tile.getTypeface(), android.graphics.Typeface.BOLD);
             GradientDrawable tileBg = new GradientDrawable();
-            tileBg.setCornerRadius(10f * density);
-            if (isCurrent) {
-                tileBg.setOrientation(GradientDrawable.Orientation.LEFT_RIGHT);
-                tileBg.setColors(new int[]{Color.parseColor("#6366f1"), Color.parseColor("#a855f7")});
-            } else {
-                tileBg.setColor(Color.argb(18, 255, 255, 255));
-            }
+            tileBg.setCornerRadius(4f * density);
+            tileBg.setColor(isCurrent ? Color.WHITE : Color.parseColor("#2F2F2F"));
             tile.setBackground(tileBg);
             android.widget.GridLayout.LayoutParams lp = new android.widget.GridLayout.LayoutParams(
                     android.widget.GridLayout.spec(android.widget.GridLayout.UNDEFINED),
@@ -725,7 +986,7 @@ public class ExoPlayerActivity extends AppCompatActivity {
             window.setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));
             window.setLayout(cardWidth, WindowManager.LayoutParams.WRAP_CONTENT);
             window.setGravity(Gravity.CENTER);
-            window.setDimAmount(0.45f);
+            window.setDimAmount(0.6f);
             // Keep the player immersive while the window is up.
             window.setFlags(WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
                     WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE);
@@ -753,120 +1014,6 @@ public class ExoPlayerActivity extends AppCompatActivity {
             this.selected = selected;
             this.onSelect = onSelect;
         }
-    }
-
-    // Netflix-style bottom sheet: a dimmed scrim behind a rounded-top dark
-    // panel sliding up from the bottom, with big tappable rows and a
-    // checkmark on whichever one is active - not a tiny anchored dropdown.
-    private void showBottomSheetMenu(String title, java.util.List<MenuRow> rows) {
-        float density = getResources().getDisplayMetrics().density;
-
-        LinearLayout sheet = new LinearLayout(this);
-        sheet.setOrientation(LinearLayout.VERTICAL);
-        GradientDrawable sheetBg = new GradientDrawable();
-        // Same lighter-top-to-darker-base gradient as the pill buttons, plus
-        // a brighter top stroke as a specular edge - a flat single color
-        // read as a plain dropdown, not a glossy panel.
-        sheetBg.setOrientation(GradientDrawable.Orientation.TOP_BOTTOM);
-        sheetBg.setColors(new int[]{Color.parseColor("#2a2a38"), Color.parseColor("#16161e")});
-        sheetBg.setStroke(Math.round(density), Color.argb(60, 255, 255, 255));
-        sheetBg.setCornerRadii(new float[]{
-                20f * density, 20f * density, 20f * density, 20f * density, 0f, 0f, 0f, 0f
-        });
-        sheet.setBackground(sheetBg);
-        sheet.setElevation(12f * density);
-        sheet.setPadding(0, Math.round(10 * density), 0, Math.round(28 * density));
-
-        View handle = new View(this);
-        LinearLayout.LayoutParams handleParams =
-                new LinearLayout.LayoutParams(Math.round(36 * density), Math.round(4 * density));
-        handleParams.gravity = Gravity.CENTER_HORIZONTAL;
-        handleParams.topMargin = Math.round(4 * density);
-        handleParams.bottomMargin = Math.round(18 * density);
-        handle.setLayoutParams(handleParams);
-        GradientDrawable handleBg = new GradientDrawable();
-        handleBg.setColor(Color.argb(90, 255, 255, 255));
-        handleBg.setCornerRadius(4f * density);
-        handle.setBackground(handleBg);
-        sheet.addView(handle);
-
-        TextView titleView = new TextView(this);
-        titleView.setText(title);
-        titleView.setTextColor(Color.WHITE);
-        titleView.setTextSize(17);
-        titleView.setTypeface(titleView.getTypeface(), android.graphics.Typeface.BOLD);
-        titleView.setPadding(Math.round(24 * density), 0, Math.round(24 * density), Math.round(10 * density));
-        sheet.addView(titleView);
-
-        Dialog dialog = new Dialog(this);
-        dialog.requestWindowFeature(Window.FEATURE_NO_TITLE);
-
-        android.util.TypedValue rowBg = new android.util.TypedValue();
-        getTheme().resolveAttribute(android.R.attr.selectableItemBackground, rowBg, true);
-
-        // Rows go inside a ScrollView, not directly in the sheet - a long
-        // list (e.g. an anime with 20+ episodes) would otherwise just grow
-        // the dialog past the screen edge with no way to reach the rest of
-        // it, since a plain LinearLayout never scrolls on its own.
-        android.widget.ScrollView scrollView = new android.widget.ScrollView(this);
-        LinearLayout rowsContainer = new LinearLayout(this);
-        rowsContainer.setOrientation(LinearLayout.VERTICAL);
-
-        int rowHeightPx = Math.round(48 * density);
-        int maxHeightPx = Math.round(getResources().getDisplayMetrics().heightPixels * 0.5f);
-        boolean needsCap = rows.size() * rowHeightPx > maxHeightPx;
-        scrollView.setLayoutParams(new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                needsCap ? maxHeightPx : LinearLayout.LayoutParams.WRAP_CONTENT
-        ));
-
-        for (MenuRow row : rows) {
-            LinearLayout rowView = new LinearLayout(this);
-            rowView.setOrientation(LinearLayout.HORIZONTAL);
-            rowView.setGravity(Gravity.CENTER_VERTICAL);
-            rowView.setMinimumHeight(rowHeightPx);
-            rowView.setPadding(Math.round(24 * density), Math.round(12 * density), Math.round(24 * density), Math.round(12 * density));
-            rowView.setClickable(true);
-            rowView.setFocusable(true);
-            if (rowBg.resourceId != 0) {
-                rowView.setBackgroundResource(rowBg.resourceId);
-            }
-
-            TextView check = new TextView(this);
-            check.setText(row.selected ? "✓" : "");
-            check.setTextColor(Color.parseColor("#6366f1"));
-            check.setTextSize(16);
-            check.setTypeface(check.getTypeface(), android.graphics.Typeface.BOLD);
-            LinearLayout.LayoutParams checkParams =
-                    new LinearLayout.LayoutParams(Math.round(28 * density), LinearLayout.LayoutParams.WRAP_CONTENT);
-            check.setLayoutParams(checkParams);
-            rowView.addView(check);
-
-            TextView label = new TextView(this);
-            label.setText(row.label);
-            label.setTextColor(row.selected ? Color.WHITE : Color.parseColor("#cbd5e1"));
-            label.setTextSize(15);
-            if (row.selected) label.setTypeface(label.getTypeface(), android.graphics.Typeface.BOLD);
-            rowView.addView(label);
-
-            rowView.setOnClickListener(v -> {
-                row.onSelect.run();
-                dialog.dismiss();
-            });
-            rowsContainer.addView(rowView);
-        }
-
-        scrollView.addView(rowsContainer);
-        sheet.addView(scrollView);
-
-        dialog.setContentView(sheet);
-        Window window = dialog.getWindow();
-        if (window != null) {
-            window.setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));
-            window.setLayout(WindowManager.LayoutParams.MATCH_PARENT, WindowManager.LayoutParams.WRAP_CONTENT);
-            window.setGravity(Gravity.BOTTOM);
-        }
-        dialog.show();
     }
 
     // Rebuilds the player against a different quality rendition, resuming at
@@ -1018,6 +1165,7 @@ public class ExoPlayerActivity extends AppCompatActivity {
                 .setLoadControl(loadControl)
                 .build();
         playerView.setPlayer(player);
+        player.setPlaybackSpeed(playbackSpeed);
         player.setMediaItem(mediaItem);
         player.prepare();
         if (startPositionMs > 0) {
@@ -1040,7 +1188,7 @@ public class ExoPlayerActivity extends AppCompatActivity {
                 // "still loading", never a frozen/broken player.
                 bufferingSpinner.setVisibility(state == Player.STATE_BUFFERING ? View.VISIBLE : View.GONE);
                 if (state == Player.STATE_READY) {
-                    textRemainingTime.setText("-" + formatTime(Math.max(player.getDuration(), 0)));
+                    textRemainingTime.setText(formatTime(Math.max(player.getDuration(), 0)));
                     maybeFetchSkipTimes();
                 }
             }
@@ -1155,9 +1303,8 @@ public class ExoPlayerActivity extends AppCompatActivity {
         if (duration > 0) {
             seekBar.setProgress((int) ((position * 1000) / duration));
             seekBar.setSecondaryProgress(player.getBufferedPercentage() * 10);
-            textRemainingTime.setText("-" + formatTime(Math.max(duration - position, 0)));
+            textRemainingTime.setText(formatTime(Math.max(duration - position, 0)));
         }
-        textCurrentTime.setText(formatTime(position));
 
         boolean shouldShowIntro = introInterval != null
                 && position >= introInterval.startMs && position < introInterval.endMs;
@@ -1175,7 +1322,7 @@ public class ExoPlayerActivity extends AppCompatActivity {
             btnSkipOutro.setVisibility(View.GONE);
         }
 
-        updateNextEpisodePrompt(duration, position);
+        updatePostPlay(duration, position, shouldShowOutro);
         maybeReportProgress(position, duration);
     }
 
@@ -1204,58 +1351,57 @@ public class ExoPlayerActivity extends AppCompatActivity {
         ExoPlayerPlugin.notifyProgressUpdate(animeTitle, episodeNumber, currentMode, position, duration);
     }
 
-    // Netflix-style binge flow: in the last stretch of the episode, slide in a
-    // "Next Episode" card with a countdown that auto-advances unless dismissed.
-    private void updateNextEpisodePrompt(long duration, long position) {
+    // Netflix post-play: once the credits start (or, without an outro
+    // marker, in the last stretch of the episode) show "Next Episode" with a
+    // white fill that grows over NEXT_EPISODE_COUNTDOWN_MS of playback, then
+    // advance. It runs on playback position, so pausing pauses it too.
+    // "Watch Credits" (shown when there's no Skip Outro) dismisses it.
+    private void updatePostPlay(long duration, long position, boolean inOutro) {
         if (duration <= 0 || nextEpisodeTriggered) return;
-        long remaining = duration - position;
-
-        if (remaining > NEXT_EPISODE_THRESHOLD_MS) {
-            if (nextEpisodeCard.getVisibility() == View.VISIBLE) {
-                nextEpisodeCard.setVisibility(View.GONE);
-                nextEpisodeCountdown = NEXT_EPISODE_COUNTDOWN_SECONDS;
-            }
+        boolean nearEnd = duration - position <= NEXT_EPISODE_THRESHOLD_MS;
+        boolean want = nextEpisodeNumber() != null && !postPlayDismissed && (inOutro || nearEnd);
+        if (!want) {
+            hidePostPlay();
             return;
         }
-
-        if (nextEpisodeCard.getVisibility() != View.VISIBLE) {
-            nextEpisodeCard.setVisibility(View.VISIBLE);
-            String nextNum = nextEpisodeNumber();
-            textNextEpisodeTitle.setText(nextNum != null ? ("Episode " + nextNum) : "Next Episode");
-            handler.post(nextEpisodeCountdownRunnable);
-        }
+        if (postPlayStartMs < 0 || position < postPlayStartMs) postPlayStartMs = position;
+        btnNextEpisode.setVisibility(View.VISIBLE);
+        btnWatchCredits.setVisibility(inOutro ? View.GONE : View.VISIBLE);
+        float progress = Math.min(1f, (position - postPlayStartMs) / (float) NEXT_EPISODE_COUNTDOWN_MS);
+        nextEpisodeFill.animate().cancel();
+        nextEpisodeFill.animate().scaleX(progress).setDuration(450).start();
+        if (progress >= 1f) triggerNextEpisode();
     }
 
-    private final Runnable nextEpisodeCountdownRunnable = new Runnable() {
-        @Override
-        public void run() {
-            if (nextEpisodeTriggered || nextEpisodeCard.getVisibility() != View.VISIBLE) return;
-            textNextEpisodeCountdown.setText("Playing next episode in " + nextEpisodeCountdown + "s");
-            if (nextEpisodeCountdown <= 0) {
-                triggerNextEpisode();
-                return;
-            }
-            nextEpisodeCountdown--;
-            handler.postDelayed(this, 1000);
-        }
-    };
+    private void hidePostPlay() {
+        postPlayStartMs = -1;
+        btnNextEpisode.setVisibility(View.GONE);
+        btnWatchCredits.setVisibility(View.GONE);
+        nextEpisodeFill.animate().cancel();
+        nextEpisodeFill.setScaleX(0f);
+    }
 
+    // The real next entry in the episode list JS supplied - null when this is
+    // the last one or no list was given (never a guessed number).
     private String nextEpisodeNumber() {
-        try {
-            return String.valueOf(Integer.parseInt(episodeNumber) + 1);
-        } catch (Exception e) {
-            return null;
+        for (int i = 0; i < episodeOptions.size() - 1; i++) {
+            if (episodeOptions.get(i).number.equals(episodeNumber)) return episodeOptions.get(i + 1).number;
         }
+        return null;
     }
 
+    // Netflix shows remaining time as m:ss (or h:mm:ss for long videos).
     private String formatTime(long ms) {
         long totalSeconds = ms / 1000;
-        long minutes = totalSeconds / 60;
+        long hours = totalSeconds / 3600;
+        long minutes = (totalSeconds % 3600) / 60;
         long seconds = totalSeconds % 60;
-        return String.format(java.util.Locale.US, "%02d:%02d", minutes, seconds);
+        if (hours > 0) return String.format(java.util.Locale.US, "%d:%02d:%02d", hours, minutes, seconds);
+        return String.format(java.util.Locale.US, "%d:%02d", minutes, seconds);
     }
 
     private void showControls() {
+        if (screenLocked) return;
         setControlsVisible(true);
         scheduleAutoHide();
     }
@@ -1267,21 +1413,40 @@ public class ExoPlayerActivity extends AppCompatActivity {
         }
     }
 
+    private boolean chromeVisible = true;
+
+    // Fades the chrome and, once hidden, makes it INVISIBLE so its (now
+    // transparent) buttons stop catching taps meant for the gesture layer.
+    // The skip/post-play buttons ride up above the bottom bar while it's
+    // shown and drop back to the corner when it hides.
     private void setControlsVisible(boolean visible) {
+        if (visible && screenLocked) return;
+        chromeVisible = visible;
         controlsRoot.animate().cancel();
-        controlsRoot.animate().alpha(visible ? 1f : 0f).setDuration(220).start();
-        btnPlayPause.animate().cancel();
-        btnPlayPause.animate().alpha(visible ? 1f : 0f).setDuration(220).start();
+        if (visible) {
+            controlsRoot.setVisibility(View.VISIBLE);
+            controlsRoot.animate().alpha(1f).setDuration(220).start();
+        } else {
+            controlsRoot.animate().alpha(0f).setDuration(220)
+                    .withEndAction(() -> { if (!chromeVisible) controlsRoot.setVisibility(View.INVISIBLE); })
+                    .start();
+        }
+        postPlayContainer.animate().cancel();
+        postPlayContainer.animate().translationY(visible ? -dp(84) : 0f).setDuration(220).start();
     }
 
     private boolean controlsVisible() {
-        return controlsRoot.getAlpha() > 0.5f;
+        return chromeVisible;
     }
 
     private void setupGestures() {
         gestureDetector = new GestureDetector(this, new GestureDetector.SimpleOnGestureListener() {
             @Override
             public boolean onSingleTapConfirmed(MotionEvent e) {
+                if (screenLocked) {
+                    flashUnlockButton();
+                    return true;
+                }
                 setControlsVisible(!controlsVisible());
                 if (controlsVisible()) scheduleAutoHide();
                 return true;
@@ -1289,6 +1454,7 @@ public class ExoPlayerActivity extends AppCompatActivity {
 
             @Override
             public boolean onDoubleTap(MotionEvent e) {
+                if (screenLocked) return true;
                 int width = playerView.getWidth();
                 if (e.getX() < width * 0.4f) {
                     seekBy(-SEEK_STEP_MS);
@@ -1311,8 +1477,8 @@ public class ExoPlayerActivity extends AppCompatActivity {
         switch (event.getAction()) {
             case MotionEvent.ACTION_DOWN:
                 dragStartY = event.getY();
-                draggingVolume = event.getX() > v.getWidth() / 2f;
-                draggingBrightness = !draggingVolume;
+                draggingVolume = !screenLocked && event.getX() > v.getWidth() / 2f;
+                draggingBrightness = !screenLocked && !draggingVolume;
                 break;
             case MotionEvent.ACTION_MOVE:
                 float deltaY = dragStartY - event.getY();

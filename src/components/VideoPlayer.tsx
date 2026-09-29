@@ -2,13 +2,13 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import Hls from 'hls.js';
 import {
-  Play, Pause, RotateCcw, RotateCw, ArrowLeft, Settings,
-  Subtitles, Maximize, Minimize, SkipForward, FastForward, Volume2, VolumeX,
-  ListVideo, Check, Loader2, X
+  Play, Pause, RotateCcw, RotateCw, ArrowLeft, Maximize, Minimize, SkipForward,
+  Volume2, VolumeX, Check, Loader2, X, Gauge, Lock, LockOpen, Layers, MessageSquareText
 } from 'lucide-react';
 import type { StreamSource, EpisodeItem } from '../core/aniCliCore';
 import { getUserPreferences } from '../services/historyService';
 import { getEpisodeSkipIntervals, type SkipInterval } from '../services/aniSkipService';
+import './VideoPlayer.css';
 
 const resolvePlayableUrl = (url?: string, _referer?: string): string => {
   if (!url) return '';
@@ -28,7 +28,17 @@ interface VideoPlayerProps {
   initialTime?: number;
   episodeList?: EpisodeItem[];
   onSelectEpisode?: (ep: EpisodeItem) => void;
+  // Re-resolves the same episode in the other audio language (sub <-> dub).
+  onSwitchMode?: (mode: 'sub' | 'dub') => void;
 }
+
+const PLAYBACK_SPEEDS = [0.5, 0.75, 1, 1.25, 1.5];
+// Netflix-style post-play: the "Next Episode" button fills up over this many
+// seconds of playback, then advances (when autoplay is on).
+const NEXT_EPISODE_COUNTDOWN_SECS = 10;
+// Without an outro marker, post-play appears this close to the end.
+const POST_PLAY_THRESHOLD_SECS = 20;
+const NETFLIX_RED = '#e50914';
 
 export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   streamSource,
@@ -41,7 +51,8 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   onProgressUpdate,
   initialTime = 0,
   episodeList,
-  onSelectEpisode
+  onSelectEpisode,
+  onSwitchMode
 }) => {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -57,9 +68,19 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   const [showControls, setShowControls] = useState<boolean>(true);
   const [isFullscreen, setIsFullscreen] = useState<boolean>(false);
   const [selectedQuality, setSelectedQuality] = useState<string>(streamSource.quality || '1080p');
-  const [showQualityMenu, setShowQualityMenu] = useState<boolean>(false);
-  const [showSubtitleMenu, setShowSubtitleMenu] = useState<boolean>(false);
+  const [showAudioPanel, setShowAudioPanel] = useState<boolean>(false);
+  const [showSpeedPanel, setShowSpeedPanel] = useState<boolean>(false);
   const [showEpisodeMenu, setShowEpisodeMenu] = useState<boolean>(false);
+  const [playbackRate, setPlaybackRate] = useState<number>(1);
+  const [isLocked, setIsLocked] = useState<boolean>(false);
+  const [showUnlock, setShowUnlock] = useState<boolean>(false);
+  const unlockTimerRef = useRef<number | null>(null);
+  // Post-play ("Next Episode" countdown): null while hidden, otherwise 0..1.
+  const [postPlayProgress, setPostPlayProgress] = useState<number | null>(null);
+  const [inOutro, setInOutro] = useState<boolean>(false);
+  const postPlayStartRef = useRef<number | null>(null);
+  const postPlayDismissedRef = useRef<boolean>(false);
+  const advancedRef = useRef<boolean>(false);
   const episodeGridRef = useRef<HTMLDivElement | null>(null);
   const [volumeIndicator, setVolumeIndicator] = useState<number | null>(null);
   const dragStartYRef = useRef<number | null>(null);
@@ -70,7 +91,6 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   const [activeSubtitle, setActiveSubtitle] = useState<string | null>(
     () => streamSource.subtitles.find(s => s.default)?.label ?? streamSource.subtitles[0]?.label ?? null
   );
-  const [isMuted, setIsMuted] = useState<boolean>(false);
   const [showSkipIntro, setShowSkipIntro] = useState<boolean>(false);
   const [skippedIntroToast, setSkippedIntroToast] = useState<boolean>(false);
   const [showSkipOutro, setShowSkipOutro] = useState<boolean>(false);
@@ -95,6 +115,11 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   useEffect(() => {
     autoSkippedRef.current = false;
     introLookupRef.current = null;
+    postPlayStartRef.current = null;
+    postPlayDismissedRef.current = false;
+    advancedRef.current = false;
+    setPostPlayProgress(null);
+    setInOutro(false);
     setShowSkipIntro(false);
     setShowSkipOutro(false);
     // Markers from the stream's own sources payload (HiAnime-style) are
@@ -274,11 +299,42 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     if (isPlaying) {
       hideControlsTimer.current = window.setTimeout(() => {
         setShowControls(false);
-        setShowQualityMenu(false);
-        setShowSubtitleMenu(false);
       }, 3500);
     }
   }, [isPlaying]);
+
+  const changeSpeed = (rate: number) => {
+    const video = videoRef.current;
+    setPlaybackRate(rate);
+    if (video) {
+      video.playbackRate = rate;
+      video.defaultPlaybackRate = rate;
+    }
+  };
+
+  const lockScreen = () => {
+    setIsLocked(true);
+    setShowControls(false);
+    setShowEpisodeMenu(false);
+  };
+
+  const unlockScreen = () => {
+    setIsLocked(false);
+    setShowUnlock(false);
+    if (unlockTimerRef.current) window.clearTimeout(unlockTimerRef.current);
+    resetControlsTimer();
+  };
+
+  const playNextEpisode = () => {
+    if (advancedRef.current || !onNextEpisode) return;
+    advancedRef.current = true;
+    onNextEpisode();
+  };
+
+  const dismissPostPlay = () => {
+    postPlayDismissedRef.current = true;
+    setPostPlayProgress(null);
+  };
 
   const togglePlay = () => {
     const video = videoRef.current;
@@ -331,7 +387,6 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     if (!video || !item.url) return;
 
     setSelectedQuality(item.quality);
-    setShowQualityMenu(false);
 
     const prevTime = video.currentTime;
     const wasPlaying = !video.paused;
@@ -340,6 +395,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
 
     const resume = () => {
       video.currentTime = prevTime;
+      video.playbackRate = playbackRate;
       if (wasPlaying) video.play().catch(() => {});
     };
 
@@ -383,6 +439,14 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
       return;
     }
 
+    // Locked: taps only reveal the unlock button, nothing else reacts.
+    if (isLocked) {
+      setShowUnlock(true);
+      if (unlockTimerRef.current) window.clearTimeout(unlockTimerRef.current);
+      unlockTimerRef.current = window.setTimeout(() => setShowUnlock(false), 3000);
+      return;
+    }
+
     const now = Date.now();
     const rect = e.currentTarget.getBoundingClientRect();
     const x = e.clientX - rect.left;
@@ -414,7 +478,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     const touch = e.touches[0];
     const rect = e.currentTarget.getBoundingClientRect();
     const x = touch.clientX - rect.left;
-    if (x < rect.width * 0.5) {
+    if (isLocked || x < rect.width * 0.5) {
       dragStartYRef.current = null;
       return;
     }
@@ -439,7 +503,6 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     const newVolume = Math.max(0, Math.min(1, dragStartVolumeRef.current + deltaY / rect.height));
     video.volume = newVolume;
     video.muted = newVolume === 0;
-    setIsMuted(newVolume === 0);
     setVolumeIndicator(Math.round(newVolume * 100));
     if (volumeIndicatorTimerRef.current) window.clearTimeout(volumeIndicatorTimerRef.current);
   };
@@ -482,6 +545,27 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
       && video.currentTime >= outroInterval.start
       && video.currentTime < outroInterval.end;
     setShowSkipOutro(inOutroWindow);
+    setInOutro(inOutroWindow);
+
+    // Netflix post-play: once the credits start (or, with no outro marker,
+    // near the very end) offer the next episode with a filling countdown
+    // that advances on its own when autoplay is on. The countdown runs on
+    // playback time, so pausing pauses it too.
+    const total = video.duration && isFinite(video.duration) ? video.duration : 0;
+    const nearEnd = total > 0 && total - video.currentTime <= POST_PLAY_THRESHOLD_SECS;
+    const wantPostPlay = !!hasNextEpisode && !!onNextEpisode && !postPlayDismissedRef.current
+      && (inOutroWindow || nearEnd);
+    if (wantPostPlay) {
+      if (postPlayStartRef.current === null || video.currentTime < postPlayStartRef.current) {
+        postPlayStartRef.current = video.currentTime;
+      }
+      const progress = Math.min(1, (video.currentTime - postPlayStartRef.current) / NEXT_EPISODE_COUNTDOWN_SECS);
+      setPostPlayProgress(progress);
+      if (progress >= 1 && autoPlayNext) playNextEpisode();
+    } else {
+      postPlayStartRef.current = null;
+      setPostPlayProgress(null);
+    }
 
     // Buffer progress
     if (video.buffered.length > 0) {
@@ -532,15 +616,54 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   };
 
   const formatTime = (secs: number) => {
-    if (isNaN(secs)) return "00:00";
-    const m = Math.floor(secs / 60);
+    if (!isFinite(secs) || secs < 0) secs = 0;
+    const h = Math.floor(secs / 3600);
+    const m = Math.floor((secs % 3600) / 60);
     const s = Math.floor(secs % 60);
-    return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
+    const mm = h > 0 ? m.toString().padStart(2, '0') : m.toString();
+    return `${h > 0 ? `${h}:` : ''}${mm}:${s.toString().padStart(2, '0')}`;
   };
 
+  // Quality choices only when the scraper gave genuinely different URLs -
+  // the same URL under several labels is not a real choice.
+  const qualityOptions = streamSource.qualities || [];
+  const hasQualityChoice = new Set(qualityOptions.map(q => q.url)).size > 1;
+
+  const episodeLabel = episode.title && !/^episode\s*\d+/i.test(episode.title)
+    ? `E${episode.number} · ${episode.title}`
+    : `E${episode.number}`;
+  const progressPct = duration > 0 ? (currentTime / duration) * 100 : 0;
+  const bufferedPct = duration > 0 ? (buffered / duration) * 100 : 0;
+  const anyPanelOpen = showAudioPanel || showSpeedPanel || showEpisodeMenu;
+  const controlsVisible = showControls && !isLocked && !anyPanelOpen;
+
+  const bottomAction = (
+    key: string,
+    icon: React.ReactNode,
+    label: string,
+    onClick: () => void
+  ) => (
+    <button
+      key={key}
+      onClick={(e) => {
+        e.stopPropagation();
+        onClick();
+      }}
+      className="interactive nf-action"
+    >
+      {icon}
+      <span>{label}</span>
+    </button>
+  );
+
+  // Skip / post-play buttons sit just above the bottom bar while the
+  // controls are up, and drop to the corner when they're hidden.
+  const cornerBottom = controlsVisible ? 'calc(var(--safe-bottom) + 118px)' : 'calc(var(--safe-bottom) + 32px)';
+
   return (
-    <div 
+    <div
       ref={containerRef}
+      className="nf-player"
       style={{
         position: 'fixed',
         inset: 0,
@@ -568,9 +691,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
         onPlay={() => setIsPlaying(true)}
         onPause={() => setIsPlaying(false)}
         onEnded={() => {
-          if (autoPlayNext && hasNextEpisode && onNextEpisode) {
-            onNextEpisode();
-          }
+          if (autoPlayNext && hasNextEpisode) playNextEpisode();
         }}
       >
         {streamSource.subtitles.map((track, i) => (
@@ -584,10 +705,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
         ))}
       </video>
 
-      {/* Buffering spinner - shown whenever the video stalls for lack of
-          data (initial load or a mid-episode network hiccup), hidden the
-          instant it can resume, so a stall always reads as "still loading"
-          rather than a frozen player. */}
+      {/* Buffering spinner - Netflix red ring */}
       {isBuffering && !streamError && (
         <div
           style={{
@@ -599,7 +717,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
             pointerEvents: 'none'
           }}
         >
-          <Loader2 size={48} color="#fff" className="animate-spin" />
+          <Loader2 size={52} color={NETFLIX_RED} className="animate-spin" />
         </div>
       )}
 
@@ -607,68 +725,20 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
       {videoTrackWarning && (
         <div
           onClick={(e) => e.stopPropagation()}
-          style={{
-            position: 'absolute',
-            top: '50%',
-            left: '50%',
-            transform: 'translate(-50%, -50%)',
-            display: 'flex',
-            flexDirection: 'column',
-            alignItems: 'center',
-            gap: '10px',
-            padding: '20px 24px',
-            borderRadius: 'var(--radius-md)',
-            backgroundColor: 'rgba(0,0,0,0.75)',
-            color: '#f8fafc',
-            textAlign: 'center',
-            maxWidth: '80%',
-            zIndex: 20,
-            pointerEvents: 'none'
-          }}
+          className="nf-dialog"
+          style={{ pointerEvents: 'none' }}
         >
           <span style={{ fontSize: '14px', fontWeight: 700 }}>{videoTrackWarning}</span>
-          <span style={{ fontSize: '12px', color: '#94a3b8' }}>Audio is playing, but this server sent no watchable video track. Try again or pick a different episode/server.</span>
+          <span style={{ fontSize: '12px', color: '#b3b3b3' }}>Audio is playing, but this server sent no watchable video track. Try again or pick a different episode/server.</span>
         </div>
       )}
 
-      {/* Playback failure - shown instead of silently substituting an
-          unrelated placeholder video, so a broken stream reads as broken. */}
+      {/* Playback failure */}
       {streamError && (
-        <div
-          onClick={(e) => e.stopPropagation()}
-          style={{
-            position: 'absolute',
-            top: '50%',
-            left: '50%',
-            transform: 'translate(-50%, -50%)',
-            display: 'flex',
-            flexDirection: 'column',
-            alignItems: 'center',
-            gap: '10px',
-            padding: '24px 28px',
-            borderRadius: 'var(--radius-md)',
-            backgroundColor: 'rgba(0,0,0,0.8)',
-            color: '#f8fafc',
-            textAlign: 'center',
-            maxWidth: '80%',
-            zIndex: 20
-          }}
-        >
+        <div onClick={(e) => e.stopPropagation()} className="nf-dialog">
           <span style={{ fontSize: '15px', fontWeight: 700 }}>{streamError}</span>
-          <span style={{ fontSize: '12px', color: '#94a3b8' }}>The server may be blocking it or the format isn't supported. Try another episode or server.</span>
-          <button
-            onClick={onBack}
-            className="interactive glass-pill"
-            style={{
-              marginTop: '6px',
-              padding: '9px 20px',
-              borderRadius: 'var(--radius-full)',
-              border: 'none',
-              color: '#fff',
-              fontSize: '13px',
-              fontWeight: 700
-            }}
-          >
+          <span style={{ fontSize: '12px', color: '#b3b3b3' }}>The server may be blocking it or the format isn't supported. Try another episode or server.</span>
+          <button onClick={onBack} className="interactive nf-btn-white" style={{ marginTop: '6px' }}>
             Go Back
           </button>
         </div>
@@ -676,228 +746,293 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
 
       {/* Volume swipe indicator (right-side vertical drag) */}
       {volumeIndicator !== null && (
-        <div style={{
-          position: 'absolute',
-          right: '10%',
-          top: '50%',
-          transform: 'translateY(-50%)',
-          display: 'flex',
-          flexDirection: 'column',
-          alignItems: 'center',
-          gap: '8px',
-          color: '#fff',
-          backgroundColor: 'rgba(0,0,0,0.6)',
-          padding: '16px 20px',
-          borderRadius: 'var(--radius-md)',
-          pointerEvents: 'none',
-          zIndex: 15
-        }}>
+        <div className="nf-indicator" style={{ right: '10%' }}>
           {volumeIndicator === 0 ? <VolumeX size={24} /> : <Volume2 size={24} />}
-          <span style={{ fontSize: '13px', fontWeight: 700 }}>{volumeIndicator}%</span>
+          <div className="nf-indicator-track">
+            <div style={{ height: `${volumeIndicator}%` }} />
+          </div>
         </div>
       )}
 
-      {/* Double Tap Visual Ripple Feedback */}
-      {doubleTapFeedback === 'left' && (
-        <div style={{
-          position: 'absolute',
-          left: '12%',
-          display: 'flex',
-          flexDirection: 'column',
-          alignItems: 'center',
-          gap: '8px',
-          color: '#fff',
-          backgroundColor: 'rgba(0,0,0,0.6)',
-          padding: '16px 24px',
-          borderRadius: '50px',
-          pointerEvents: 'none',
-          animation: 'fadeIn 0.2s ease-out'
-        }}>
-          <RotateCcw size={28} color="#6366f1" />
-          <span style={{ fontSize: '13px', fontWeight: 600 }}>-10s</span>
-        </div>
-      )}
-      {doubleTapFeedback === 'right' && (
-        <div style={{
-          position: 'absolute',
-          right: '12%',
-          display: 'flex',
-          flexDirection: 'column',
-          alignItems: 'center',
-          gap: '8px',
-          color: '#fff',
-          backgroundColor: 'rgba(0,0,0,0.6)',
-          padding: '16px 24px',
-          borderRadius: '50px',
-          pointerEvents: 'none',
-          animation: 'fadeIn 0.2s ease-out'
-        }}>
-          <RotateCw size={28} color="#6366f1" />
-          <span style={{ fontSize: '13px', fontWeight: 600 }}>+10s</span>
-        </div>
-      )}
-
-      {/* Skip Intro Floating Pill - jumps to a fixed timestamp (not a
-          relative +Ns hop), so it actually clears the opening wherever
-          playback happens to be when tapped. */}
-      {showSkipIntro && (
-        <button
-          onClick={(e) => {
-            e.stopPropagation();
-            skipIntro();
-          }}
-          className="interactive glass-pill"
-          style={{
-            position: 'absolute',
-            bottom: '110px',
-            right: '20px',
-            display: 'flex',
-            alignItems: 'center',
-            gap: '8px',
-            padding: '10px 18px',
-            borderRadius: 'var(--radius-full)',
-            color: '#fff',
-            fontSize: '13px',
-            fontWeight: 700,
-            boxShadow: '0 4px 20px rgba(0,0,0,0.5)',
-            zIndex: 10
-          }}
-        >
-          <FastForward size={16} />
-          <span>Skip Intro</span>
-        </button>
-      )}
-
-      {/* Auto-skip confirmation toast (shown instead of the button when the
-          "Auto-Skip Intro" setting is on). */}
-      {skippedIntroToast && (
+      {/* Double tap ripple feedback */}
+      {doubleTapFeedback && (
         <div
-          className="glass-pill animate-pop-in"
-          style={{
-            position: 'absolute',
-            bottom: '110px',
-            right: '20px',
-            display: 'flex',
-            alignItems: 'center',
-            gap: '8px',
-            padding: '10px 18px',
-            borderRadius: 'var(--radius-full)',
-            color: '#fff',
-            fontSize: '13px',
-            fontWeight: 700,
-            boxShadow: '0 4px 20px rgba(0,0,0,0.5)',
-            zIndex: 10,
-            pointerEvents: 'none'
-          }}
+          className="nf-ripple"
+          style={doubleTapFeedback === 'left' ? { left: '12%' } : { right: '12%' }}
         >
-          <FastForward size={16} />
-          <span>Intro skipped</span>
+          <div className="nf-seek-icon">
+            {doubleTapFeedback === 'left' ? <RotateCcw size={40} strokeWidth={1.6} /> : <RotateCw size={40} strokeWidth={1.6} />}
+            <span>10</span>
+          </div>
         </div>
       )}
 
-      {/* Skip Outro Floating Pill - same idea as Skip Intro, jumps to the
-          real per-episode ending timestamp when one was found. */}
-      {showSkipOutro && (
-        <button
-          onClick={(e) => {
-            e.stopPropagation();
-            skipOutro();
-          }}
-          className="interactive glass-pill"
-          style={{
-            position: 'absolute',
-            bottom: '110px',
-            right: '20px',
-            display: 'flex',
-            alignItems: 'center',
-            gap: '8px',
-            padding: '10px 18px',
-            borderRadius: 'var(--radius-full)',
-            color: '#fff',
-            fontSize: '13px',
-            fontWeight: 700,
-            boxShadow: '0 4px 20px rgba(0,0,0,0.5)',
-            zIndex: 10
-          }}
-        >
-          <FastForward size={16} />
-          <span>Skip Outro</span>
+      {/* ---------- Top bar: back | title | fullscreen ---------- */}
+      <div
+        className="nf-top"
+        style={{ opacity: controlsVisible ? 1 : 0, pointerEvents: controlsVisible ? 'auto' : 'none' }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <button onClick={onBack} className="interactive nf-icon-btn" aria-label="Back">
+          <ArrowLeft size={28} />
         </button>
+        <div className="nf-title">
+          <span className="nf-title-main">{animeTitle}</span>
+          <span className="nf-title-sub">
+            {episodeLabel}
+            {mode === 'dub' ? ' · Dub' : ''}
+            {streamSource.isFallback ? ' · DEMO - SOURCE UNAVAILABLE' : ''}
+          </span>
+        </div>
+        <button onClick={toggleFullscreen} className="interactive nf-icon-btn" aria-label="Fullscreen">
+          {isFullscreen ? <Minimize size={24} /> : <Maximize size={24} />}
+        </button>
+      </div>
+
+      {/* ---------- Center transport: -10 | play/pause | +10 ---------- */}
+      <div
+        className="nf-center"
+        style={{ opacity: controlsVisible ? 1 : 0, pointerEvents: controlsVisible ? 'auto' : 'none' }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <button onClick={() => seekBy(-10)} className="interactive nf-icon-btn" aria-label="Back 10 seconds">
+          <div className="nf-seek-icon">
+            <RotateCcw size={46} strokeWidth={1.6} />
+            <span>10</span>
+          </div>
+        </button>
+        <button onClick={togglePlay} className="interactive nf-icon-btn" aria-label={isPlaying ? 'Pause' : 'Play'}>
+          {isPlaying
+            ? <Pause size={64} fill="#fff" strokeWidth={0} />
+            : <Play size={64} fill="#fff" strokeWidth={0} />}
+        </button>
+        <button onClick={() => seekBy(10)} className="interactive nf-icon-btn" aria-label="Forward 10 seconds">
+          <div className="nf-seek-icon">
+            <RotateCw size={46} strokeWidth={1.6} />
+            <span>10</span>
+          </div>
+        </button>
+      </div>
+
+      {/* ---------- Bottom: red seek bar + remaining time, action row ---------- */}
+      <div
+        className="nf-bottom"
+        style={{ opacity: controlsVisible ? 1 : 0, pointerEvents: controlsVisible ? 'auto' : 'none' }}
+        onClick={(e) => e.stopPropagation()}
+        onTouchStart={(e) => e.stopPropagation()}
+        onTouchMove={(e) => e.stopPropagation()}
+      >
+        <div className="nf-seek-row">
+          <div className="nf-seek">
+            <div className="nf-seek-track" />
+            <div className="nf-seek-buffered" style={{ width: `${bufferedPct}%` }} />
+            <div className="nf-seek-played" style={{ width: `${progressPct}%` }} />
+            <div className="nf-seek-thumb" style={{ left: `${progressPct}%` }} />
+            <input
+              type="range"
+              min={0}
+              max={duration || 0}
+              step={0.1}
+              value={currentTime}
+              onChange={handleSeek}
+              aria-label="Seek"
+            />
+          </div>
+          <span className="nf-time">{formatTime(Math.max(0, duration - currentTime))}</span>
+        </div>
+
+        <div className="nf-actions">
+          {bottomAction('speed', <Gauge size={22} />, `Speed (${playbackRate}x)`, () => setShowSpeedPanel(true))}
+          {bottomAction('lock', <Lock size={22} />, 'Lock', lockScreen)}
+          {episodeList && episodeList.length > 1 && onSelectEpisode &&
+            bottomAction('episodes', <Layers size={22} />, 'Episodes', () => setShowEpisodeMenu(true))}
+          {bottomAction('audio', <MessageSquareText size={22} />, 'Audio & Subtitles', () => setShowAudioPanel(true))}
+          {hasNextEpisode && onNextEpisode &&
+            bottomAction('next', <SkipForward size={22} />, 'Next Ep.', playNextEpisode)}
+        </div>
+      </div>
+
+      {/* ---------- Skip Intro / Skip Outro / post-play (always reachable,
+          even with the controls hidden) ---------- */}
+      {!isLocked && !anyPanelOpen && (showSkipIntro || showSkipOutro || skippedIntroToast || postPlayProgress !== null) && (
+        <div
+          className="nf-corner"
+          style={{ bottom: cornerBottom }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          {skippedIntroToast && (
+            <div className="nf-skip" style={{ pointerEvents: 'none' }}>
+              <span>Intro skipped</span>
+            </div>
+          )}
+          {showSkipIntro && (
+            <button onClick={skipIntro} className="interactive nf-skip">
+              <SkipForward size={18} fill="#fff" />
+              <span>Skip Intro</span>
+            </button>
+          )}
+          {showSkipOutro && (
+            <button onClick={skipOutro} className="interactive nf-skip">
+              <SkipForward size={18} fill="#fff" />
+              <span>Skip Outro</span>
+            </button>
+          )}
+          {postPlayProgress !== null && !inOutro && (
+            <button onClick={dismissPostPlay} className="interactive nf-skip">
+              <span>Watch Credits</span>
+            </button>
+          )}
+          {postPlayProgress !== null && (
+            <button onClick={playNextEpisode} className="interactive nf-next">
+              <div
+                className="nf-next-fill"
+                style={{ width: `${autoPlayNext ? postPlayProgress * 100 : 0}%` }}
+              />
+              <Play size={18} fill="#000" strokeWidth={0} />
+              <span>Next Episode</span>
+            </button>
+          )}
+        </div>
       )}
 
-      {/* Episode picker - a floating window over the video, independent
-          of the auto-hiding controls so it stays put while browsing a long
-          list. Touch events stop here so the container's volume-swipe
-          gesture doesn't fight scrolling the grid. */}
+      {/* ---------- Screen lock ---------- */}
+      {isLocked && showUnlock && (
+        <div className="nf-unlock" onClick={(e) => e.stopPropagation()}>
+          <button onClick={unlockScreen} className="interactive nf-unlock-btn" aria-label="Unlock screen">
+            <LockOpen size={26} />
+          </button>
+          <span>Screen Locked</span>
+          <span style={{ fontSize: '12px', color: '#b3b3b3', fontWeight: 500 }}>Tap to unlock</span>
+        </div>
+      )}
+
+      {/* ---------- Playback speed panel ---------- */}
+      {showSpeedPanel && (
+        <div
+          className="nf-panel"
+          onClick={(e) => { e.stopPropagation(); setShowSpeedPanel(false); }}
+          onTouchStart={(e) => e.stopPropagation()}
+          onTouchMove={(e) => e.stopPropagation()}
+        >
+          <button onClick={() => setShowSpeedPanel(false)} className="interactive nf-panel-close" aria-label="Close">
+            <X size={28} />
+          </button>
+          <div className="nf-speed" onClick={(e) => e.stopPropagation()}>
+            <h3>Playback Speed</h3>
+            <div className="nf-speed-line">
+              <div className="nf-speed-rail" />
+              {PLAYBACK_SPEEDS.map(rate => (
+                <button
+                  key={rate}
+                  onClick={() => changeSpeed(rate)}
+                  className={`nf-speed-stop ${rate === playbackRate ? 'active' : ''}`}
+                >
+                  <span className="nf-speed-dot" />
+                  <span className="nf-speed-label">{rate}x{rate === 1 ? ' (Normal)' : ''}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ---------- Audio & Subtitles panel ---------- */}
+      {showAudioPanel && (
+        <div
+          className="nf-panel"
+          onClick={(e) => e.stopPropagation()}
+          onTouchStart={(e) => e.stopPropagation()}
+          onTouchMove={(e) => e.stopPropagation()}
+        >
+          <button onClick={() => setShowAudioPanel(false)} className="interactive nf-panel-close" aria-label="Close">
+            <X size={28} />
+          </button>
+          <div className="nf-columns">
+            <div className="nf-column">
+              <h3>Audio</h3>
+              {(['sub', 'dub'] as const).map(m => {
+                const active = m === mode;
+                const disabled = !active && !onSwitchMode;
+                return (
+                  <button
+                    key={m}
+                    disabled={disabled}
+                    onClick={() => {
+                      if (active || !onSwitchMode) return;
+                      setShowAudioPanel(false);
+                      onSwitchMode(m);
+                    }}
+                    className={`nf-option ${active ? 'active' : ''}`}
+                  >
+                    <span className="nf-check">{active && <Check size={18} />}</span>
+                    {m === 'sub' ? 'Japanese [Original]' : 'English (Dub)'}
+                  </button>
+                );
+              })}
+            </div>
+            <div className="nf-column">
+              <h3>Subtitles</h3>
+              <button
+                onClick={() => setActiveSubtitle(null)}
+                className={`nf-option ${activeSubtitle === null ? 'active' : ''}`}
+              >
+                <span className="nf-check">{activeSubtitle === null && <Check size={18} />}</span>
+                Off
+              </button>
+              {streamSource.subtitles.map((track) => (
+                <button
+                  key={track.label}
+                  onClick={() => setActiveSubtitle(track.label)}
+                  className={`nf-option ${activeSubtitle === track.label ? 'active' : ''}`}
+                >
+                  <span className="nf-check">{activeSubtitle === track.label && <Check size={18} />}</span>
+                  {track.label}
+                </button>
+              ))}
+            </div>
+            {hasQualityChoice && (
+              <div className="nf-column">
+                <h3>Video Quality</h3>
+                {qualityOptions.map((item) => (
+                  <button
+                    key={item.quality}
+                    onClick={() => switchQuality(item)}
+                    className={`nf-option ${selectedQuality === item.quality ? 'active' : ''}`}
+                  >
+                    <span className="nf-check">{selectedQuality === item.quality && <Check size={18} />}</span>
+                    {item.quality}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* ---------- Episodes (floating window) ---------- */}
       {showEpisodeMenu && episodeList && onSelectEpisode && (
         <div
+          className="nf-panel nf-panel-center"
           onClick={(e) => {
             e.stopPropagation();
             setShowEpisodeMenu(false);
           }}
           onTouchStart={(e) => e.stopPropagation()}
           onTouchMove={(e) => e.stopPropagation()}
-          style={{
-            position: 'absolute',
-            inset: 0,
-            backgroundColor: 'rgba(0, 0, 0, 0.45)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            padding: 'calc(var(--safe-top) + 16px) 16px calc(var(--safe-bottom) + 16px) 16px',
-            zIndex: 60,
-            animation: 'fadeIn 0.15s ease-out'
-          }}
         >
-          <div
-            className="glass-panel-dark animate-pop-in"
-            onClick={(e) => e.stopPropagation()}
-            style={{
-              width: '100%',
-              maxWidth: '420px',
-              maxHeight: '80%',
-              display: 'flex',
-              flexDirection: 'column',
-              borderRadius: 'var(--radius-lg, 16px)',
-              boxShadow: 'var(--shadow-lg)',
-              overflow: 'hidden'
-            }}
-          >
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '14px 16px 10px 16px' }}>
+          <div className="nf-episodes animate-pop-in" onClick={(e) => e.stopPropagation()}>
+            <div className="nf-episodes-head">
               <div>
-                <div style={{ fontSize: '15px', fontWeight: 700, color: '#f8fafc' }}>Episodes</div>
-                <div style={{ fontSize: '12px', color: '#94a3b8', marginTop: '2px' }}>
-                  {episodeList.length} episodes · Now playing Ep {episode.number}
+                <div style={{ fontSize: '16px', fontWeight: 800 }}>Episodes</div>
+                <div style={{ fontSize: '12px', color: '#b3b3b3', marginTop: '2px' }}>
+                  {animeTitle} · {episodeList.length} episodes
                 </div>
               </div>
-              <button
-                onClick={() => setShowEpisodeMenu(false)}
-                className="interactive glass-pill"
-                aria-label="Close episode list"
-                style={{
-                  width: '32px',
-                  height: '32px',
-                  borderRadius: '50%',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  border: 'none',
-                  color: '#fff'
-                }}
-              >
-                <X size={16} />
+              <button onClick={() => setShowEpisodeMenu(false)} className="interactive nf-icon-btn" aria-label="Close episode list">
+                <X size={24} />
               </button>
             </div>
-            <div
-              ref={episodeGridRef}
-              style={{
-                overflowY: 'auto',
-                padding: '4px 12px 14px 12px',
-                display: 'grid',
-                gridTemplateColumns: 'repeat(auto-fill, minmax(56px, 1fr))',
-                gap: '6px'
-              }}
-            >
+            <div ref={episodeGridRef} className="nf-episodes-grid">
               {episodeList.map((ep) => {
                 const isCurrent = ep.id === episode.id;
                 return (
@@ -909,17 +1044,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
                       setShowEpisodeMenu(false);
                       if (!isCurrent) onSelectEpisode(ep);
                     }}
-                    className="interactive"
-                    style={{
-                      padding: '10px 4px',
-                      borderRadius: 'var(--radius-sm)',
-                      background: isCurrent ? 'var(--accent-gradient)' : 'rgba(255, 255, 255, 0.06)',
-                      color: isCurrent ? '#ffffff' : '#cbd5e1',
-                      fontSize: '13px',
-                      fontWeight: isCurrent ? 700 : 500,
-                      border: 'none',
-                      textAlign: 'center'
-                    }}
+                    className={`interactive nf-ep ${isCurrent ? 'active' : ''}`}
                   >
                     {ep.number}
                   </button>
@@ -929,437 +1054,6 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
           </div>
         </div>
       )}
-
-      {/* Controls Overlay */}
-      <div 
-        style={{
-          position: 'absolute',
-          inset: 0,
-          background: 'linear-gradient(180deg, rgba(0,0,0,0.85) 0%, rgba(0,0,0,0.1) 40%, rgba(0,0,0,0.1) 60%, rgba(0,0,0,0.92) 100%)',
-          display: 'flex',
-          flexDirection: 'column',
-          justifyContent: 'space-between',
-          padding: 'calc(var(--safe-top) + 16px) 20px calc(var(--safe-bottom) + 16px) 20px',
-          opacity: showControls ? 1 : 0,
-          pointerEvents: showControls ? 'auto' : 'none',
-          transition: 'opacity 0.25s ease'
-        }}
-        onClick={(e) => {
-          e.stopPropagation();
-          setShowQualityMenu(false);
-          setShowSubtitleMenu(false);
-          setShowEpisodeMenu(false);
-        }}
-      >
-        {/* Top Header Bar - Netflix keeps this minimal: back + title only.
-            Subtitles/quality/episodes live in a toolbar near the seek bar. */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
-          <button
-            onClick={onBack}
-            className="interactive glass-pill"
-            style={{
-              width: '40px',
-              height: '40px',
-              borderRadius: '50%',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              border: 'none',
-              color: '#fff'
-            }}
-          >
-            <ArrowLeft size={20} />
-          </button>
-          <div>
-            <h2 style={{ fontSize: '15px', fontWeight: 700, color: '#f8fafc', whiteSpace: 'nowrap', maxWidth: '180px', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-              {animeTitle}
-            </h2>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '2px' }}>
-              <span style={{ fontSize: '12px', color: '#94a3b8' }}>Ep {episode.number}</span>
-              <span style={{
-                fontSize: '10px',
-                fontWeight: 700,
-                backgroundColor: mode === 'sub' ? '#6366f1' : '#a855f7',
-                color: '#fff',
-                padding: '1px 6px',
-                borderRadius: '4px'
-              }}>
-                {mode.toUpperCase()}
-              </span>
-              {streamSource.isFallback && (
-                <span style={{
-                  fontSize: '10px',
-                  fontWeight: 700,
-                  backgroundColor: 'var(--accent-danger, #ef4444)',
-                  color: '#fff',
-                  padding: '1px 6px',
-                  borderRadius: '4px'
-                }}>
-                  DEMO - SOURCE UNAVAILABLE
-                </span>
-              )}
-            </div>
-          </div>
-        </div>
-
-        {/* Center Playback Controls */}
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '36px' }}>
-          <button
-            onClick={() => seekBy(-10)}
-            className="interactive glass-pill"
-            style={{
-              width: '48px',
-              height: '48px',
-              borderRadius: '50%',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              color: '#fff',
-              border: 'none'
-            }}
-          >
-            <RotateCcw size={22} />
-          </button>
-
-          <button
-            onClick={togglePlay}
-            className="interactive"
-            style={{
-              width: '72px',
-              height: '72px',
-              borderRadius: '50%',
-              background: 'var(--accent-gradient)',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              color: '#fff',
-              border: 'none',
-              boxShadow: 'var(--shadow-glow)'
-            }}
-          >
-            {isPlaying ? <Pause size={32} /> : <Play size={32} style={{ marginLeft: '4px' }} />}
-          </button>
-
-          <button
-            onClick={() => seekBy(10)}
-            className="interactive glass-pill"
-            style={{
-              width: '48px',
-              height: '48px',
-              borderRadius: '50%',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              color: '#fff',
-              border: 'none'
-            }}
-          >
-            <RotateCw size={22} />
-          </button>
-        </div>
-
-        {/* Bottom Control Bar */}
-        <div style={{ position: 'relative', display: 'flex', flexDirection: 'column', gap: '10px', width: '100%' }}>
-          {/* Netflix-style toolbar: episode / subtitles / quality selection,
-              anchored right above the seek bar instead of the top header.
-              Wrapped in its own relative container so the dropdown panels
-              (bottom: 100%) clear this row exactly, regardless of how tall
-              the progress bar/timestamps below it are. */}
-          <div style={{ position: 'relative' }}>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: '8px' }}>
-            {episodeList && episodeList.length > 0 && onSelectEpisode && (
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setShowEpisodeMenu(prev => !prev);
-                  setShowSubtitleMenu(false);
-                  setShowQualityMenu(false);
-                }}
-                className="interactive glass-pill"
-                style={{
-                  padding: '6px 12px',
-                  borderRadius: 'var(--radius-full)',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '6px',
-                  border: 'none',
-                  color: '#fff',
-                  fontSize: '12px',
-                  fontWeight: 600
-                }}
-              >
-                <ListVideo size={16} />
-                <span>Episodes</span>
-              </button>
-            )}
-
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
-                setShowSubtitleMenu(prev => !prev);
-                setShowQualityMenu(false);
-                setShowEpisodeMenu(false);
-              }}
-              className="interactive glass-pill"
-              style={{
-                padding: '6px 12px',
-                borderRadius: 'var(--radius-full)',
-                display: 'flex',
-                alignItems: 'center',
-                gap: '6px',
-                border: 'none',
-                color: activeSubtitle ? '#ffffff' : '#94a3b8',
-                fontSize: '12px',
-                fontWeight: 600
-              }}
-            >
-              <Subtitles size={16} />
-              <span>CC</span>
-            </button>
-
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
-                setShowQualityMenu(prev => !prev);
-                setShowSubtitleMenu(false);
-                setShowEpisodeMenu(false);
-              }}
-              className="interactive glass-pill"
-              style={{
-                padding: '6px 12px',
-                borderRadius: 'var(--radius-full)',
-                display: 'flex',
-                alignItems: 'center',
-                gap: '6px',
-                border: 'none',
-                color: '#fff',
-                fontSize: '12px',
-                fontWeight: 600
-              }}
-            >
-              <Settings size={15} />
-              <span>{selectedQuality}</span>
-            </button>
-          </div>
-
-          {/* Quality Menu Overlay - opens upward above the toolbar */}
-          {showQualityMenu && (
-            <div
-              className="glass-panel-dark"
-              onClick={(e) => e.stopPropagation()}
-              style={{
-                position: 'absolute',
-                bottom: 'calc(100% + 8px)',
-                right: 0,
-                borderRadius: 'var(--radius-md)',
-                padding: '8px',
-                display: 'flex',
-                flexDirection: 'column',
-                gap: '4px',
-                zIndex: 50,
-                minWidth: '130px',
-                boxShadow: 'var(--shadow-lg)'
-              }}
-            >
-              {(streamSource.qualities && streamSource.qualities.length > 0
-                ? streamSource.qualities
-                : [{ quality: '1080p', url: streamSource.streamUrl }]
-              ).map((item) => (
-                <button
-                  key={item.quality}
-                  onClick={() => switchQuality(item)}
-                  className="interactive"
-                  style={{
-                    padding: '8px 14px',
-                    borderRadius: 'var(--radius-sm)',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'space-between',
-                    gap: '10px',
-                    backgroundColor: selectedQuality === item.quality ? 'rgba(255, 255, 255, 0.14)' : 'transparent',
-                    color: selectedQuality === item.quality ? '#ffffff' : '#cbd5e1',
-                    fontSize: '13px',
-                    fontWeight: selectedQuality === item.quality ? 700 : 500,
-                    border: 'none',
-                    textAlign: 'left'
-                  }}
-                >
-                  <span>{item.quality}</span>
-                  {selectedQuality === item.quality && <Check size={14} />}
-                </button>
-              ))}
-            </div>
-          )}
-
-          {/* Subtitle Menu Overlay - opens upward above the toolbar */}
-          {showSubtitleMenu && (
-            <div
-              className="glass-panel-dark"
-              onClick={(e) => e.stopPropagation()}
-              style={{
-                position: 'absolute',
-                bottom: 'calc(100% + 8px)',
-                right: '84px',
-                borderRadius: 'var(--radius-md)',
-                padding: '8px',
-                display: 'flex',
-                flexDirection: 'column',
-                gap: '4px',
-                zIndex: 50,
-                minWidth: '140px',
-                boxShadow: 'var(--shadow-lg)'
-              }}
-            >
-              <button
-                onClick={() => {
-                  setActiveSubtitle(null);
-                  setShowSubtitleMenu(false);
-                }}
-                className="interactive"
-                style={{
-                  padding: '8px 14px',
-                  borderRadius: 'var(--radius-sm)',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'space-between',
-                  gap: '10px',
-                  backgroundColor: activeSubtitle === null ? 'rgba(255, 255, 255, 0.14)' : 'transparent',
-                  color: activeSubtitle === null ? '#ffffff' : '#cbd5e1',
-                  fontSize: '13px',
-                  fontWeight: activeSubtitle === null ? 700 : 500,
-                  border: 'none',
-                  textAlign: 'left'
-                }}
-              >
-                <span>Off</span>
-                {activeSubtitle === null && <Check size={14} />}
-              </button>
-              {streamSource.subtitles.map((s, i) => (
-                <button
-                  key={i}
-                  onClick={() => {
-                    setActiveSubtitle(s.label);
-                    setShowSubtitleMenu(false);
-                  }}
-                  className="interactive"
-                  style={{
-                    padding: '8px 14px',
-                    borderRadius: 'var(--radius-sm)',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'space-between',
-                    gap: '10px',
-                    backgroundColor: activeSubtitle === s.label ? 'rgba(255, 255, 255, 0.14)' : 'transparent',
-                    color: activeSubtitle === s.label ? '#ffffff' : '#cbd5e1',
-                    fontSize: '13px',
-                    fontWeight: activeSubtitle === s.label ? 700 : 500,
-                    border: 'none',
-                    textAlign: 'left'
-                  }}
-                >
-                  <span>{s.label}</span>
-                  {activeSubtitle === s.label && <Check size={14} />}
-                </button>
-              ))}
-            </div>
-          )}
-          </div>
-
-          {/* Progress Bar & Buffered Track */}
-          <div style={{ position: 'relative', width: '100%', height: '20px', display: 'flex', alignItems: 'center' }}>
-            {/* Background track */}
-            <div style={{ position: 'absolute', width: '100%', height: '4px', backgroundColor: 'rgba(255,255,255,0.2)', borderRadius: '2px' }} />
-            {/* Buffer track */}
-            <div style={{
-              position: 'absolute',
-              width: `${(buffered / (duration || 1)) * 100}%`,
-              height: '4px',
-              backgroundColor: 'rgba(255,255,255,0.4)',
-              borderRadius: '2px'
-            }} />
-            {/* Played track */}
-            <div style={{
-              position: 'absolute',
-              width: `${(currentTime / (duration || 1)) * 100}%`,
-              height: '4px',
-              background: 'var(--accent-gradient)',
-              borderRadius: '2px'
-            }} />
-            {/* Range input for scrubbing */}
-            <input
-              type="range"
-              min="0"
-              max={duration || 100}
-              value={currentTime}
-              onChange={handleSeek}
-              style={{
-                position: 'relative',
-                width: '100%',
-                opacity: 0,
-                cursor: 'pointer',
-                height: '24px',
-                zIndex: 10
-              }}
-            />
-          </div>
-
-          {/* Timestamps and Auxiliary Controls */}
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px', fontWeight: 600, color: '#e2e8f0' }}>
-              <span>{formatTime(currentTime)}</span>
-              <span style={{ color: '#64748b' }}>/</span>
-              <span style={{ color: '#94a3b8' }}>{formatTime(duration)}</span>
-            </div>
-
-            <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
-              {/* Mute Toggle */}
-              <button
-                onClick={() => {
-                  if (videoRef.current) {
-                    videoRef.current.muted = !isMuted;
-                    setIsMuted(!isMuted);
-                  }
-                }}
-                className="interactive"
-                style={{ background: 'none', border: 'none', color: '#cbd5e1' }}
-              >
-                {isMuted ? <VolumeX size={18} /> : <Volume2 size={18} />}
-              </button>
-
-              {/* Next Episode Button */}
-              {hasNextEpisode && onNextEpisode && (
-                <button
-                  onClick={onNextEpisode}
-                  className="interactive glass-pill"
-                  style={{
-                    padding: '5px 12px',
-                    borderRadius: 'var(--radius-full)',
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '6px',
-                    border: 'none',
-                    color: '#fff',
-                    fontSize: '12px',
-                    fontWeight: 600
-                  }}
-                >
-                  <SkipForward size={14} />
-                  <span>Next</span>
-                </button>
-              )}
-
-              {/* Fullscreen Toggle */}
-              <button
-                onClick={toggleFullscreen}
-                className="interactive"
-                style={{ background: 'none', border: 'none', color: '#cbd5e1' }}
-              >
-                {isFullscreen ? <Minimize size={18} /> : <Maximize size={18} />}
-              </button>
-            </div>
-          </div>
-        </div>
-      </div>
     </div>
   );
 };

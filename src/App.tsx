@@ -397,6 +397,7 @@ export const App: React.FC = () => {
           hasNextEpisode={hasNextEpisode}
           episodeList={episodeList}
           onSelectEpisode={(ep) => handlePlayEpisode(playingAnime, ep, playingMode, 0)}
+          onSwitchMode={(newMode) => handlePlayEpisode(playingAnime, playingEpisode, newMode, 0)}
           onProgressUpdate={(time, dur) => {
             saveWatchProgress({
               animeId: playingAnime.id,
