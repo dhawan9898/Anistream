@@ -2,12 +2,14 @@
 // related entries) and "More Like This" (suggestions) rails on an anime's
 // page, Netflix-style.
 //
-// Primary source is the streaming site itself (the same HTML the rest of
-// aniCliCore scrapes): its genre pages, and the season switcher / "Related
-// Anime" / "Recommended" blocks on an anime's own page. When the site gives
-// nothing back (blocked, markup changed), this falls back to MyAnimeList via
-// the public Jikan API - entries found that way carry a malId and are matched
-// to a real site entry by title (resolveAnime) before they can be played.
+// Genres come from the streaming site itself (hianime.at's /genres/<name>
+// listing pages, same card markup as search), falling back to AniList when
+// the site gives nothing back. "More Like This" is similarity-ranked:
+// AniList's per-title recommendations first, then site titles that share the
+// most genres with this one - the site's own "Recommended" block is a
+// generic list, so it's only a last resort. Entries that came from AniList
+// carry an "al-" id and are matched to a real site entry by title
+// (resolveAnime) before they can be played.
 import {
   fetchSiteHtml,
   parseSearchResults,
@@ -15,119 +17,132 @@ import {
   sitePathOf,
   type AnimeItem
 } from '../core/aniCliCore';
-import { resolveMalId } from './aniSkipService';
 
 export interface Genre {
   slug: string;
   name: string;
-  // Site path of the genre's listing page.
+  // Site path of the genre's listing page, e.g. "/genres/action".
   path: string;
-  // MyAnimeList genre id, used only for the Jikan fallback.
-  malId?: number;
 }
 
 export interface GenrePage {
   items: AnimeItem[];
+  // Site path of the next page when the site links one; undefined when the
+  // listing is exhausted (or came from AniList, which pages by number).
+  nextPath?: string;
   hasMore: boolean;
 }
 
 export interface AnimeDetails {
   description?: string;
   genres: string[];
-  // Other seasons/parts/movies of the same franchise, in site order. May
-  // include the anime itself (flagged by id) so the rail reads as a whole
-  // collection.
+  // Other seasons/parts/movies of the same franchise. May include the anime
+  // itself (same id) so the rail reads as a whole collection.
   collection: AnimeItem[];
   suggestions: AnimeItem[];
 }
 
-// slug -> [display name, MAL genre id]
-const GENRE_TABLE: [string, string, number?][] = [
-  ['action', 'Action', 1],
-  ['adventure', 'Adventure', 2],
-  ['cars', 'Cars', 3],
-  ['comedy', 'Comedy', 4],
-  ['dementia', 'Dementia', 5],
-  ['demons', 'Demons', 6],
-  ['drama', 'Drama', 8],
-  ['ecchi', 'Ecchi', 9],
-  ['fantasy', 'Fantasy', 10],
-  ['game', 'Game', 11],
-  ['harem', 'Harem', 35],
-  ['historical', 'Historical', 13],
-  ['horror', 'Horror', 14],
-  ['isekai', 'Isekai', 62],
-  ['josei', 'Josei', 43],
-  ['kids', 'Kids', 15],
-  ['magic', 'Magic'],
-  ['martial-arts', 'Martial Arts', 17],
-  ['mecha', 'Mecha', 18],
-  ['military', 'Military', 38],
-  ['music', 'Music', 19],
-  ['mystery', 'Mystery', 7],
-  ['parody', 'Parody', 20],
-  ['police', 'Police', 39],
-  ['psychological', 'Psychological', 40],
-  ['romance', 'Romance', 22],
-  ['samurai', 'Samurai', 21],
-  ['school', 'School', 23],
-  ['sci-fi', 'Sci-Fi', 24],
-  ['seinen', 'Seinen', 42],
-  ['shoujo', 'Shoujo', 25],
-  ['shoujo-ai', 'Shoujo Ai', 26],
-  ['shounen', 'Shounen', 27],
-  ['shounen-ai', 'Shounen Ai', 28],
-  ['slice-of-life', 'Slice of Life', 36],
-  ['space', 'Space', 29],
-  ['sports', 'Sports', 30],
-  ['super-power', 'Super Power', 31],
-  ['supernatural', 'Supernatural', 37],
-  ['thriller', 'Thriller', 41],
-  ['vampire', 'Vampire', 32]
+const GENRE_NAMES: [string, string][] = [
+  ['action', 'Action'], ['adventure', 'Adventure'], ['cars', 'Cars'], ['comedy', 'Comedy'],
+  ['dementia', 'Dementia'], ['demons', 'Demons'], ['drama', 'Drama'], ['ecchi', 'Ecchi'],
+  ['fantasy', 'Fantasy'], ['game', 'Game'], ['harem', 'Harem'], ['historical', 'Historical'],
+  ['horror', 'Horror'], ['isekai', 'Isekai'], ['josei', 'Josei'], ['kids', 'Kids'],
+  ['magic', 'Magic'], ['martial-arts', 'Martial Arts'], ['mecha', 'Mecha'], ['military', 'Military'],
+  ['music', 'Music'], ['mystery', 'Mystery'], ['parody', 'Parody'], ['police', 'Police'],
+  ['psychological', 'Psychological'], ['romance', 'Romance'], ['samurai', 'Samurai'], ['school', 'School'],
+  ['sci-fi', 'Sci-Fi'], ['seinen', 'Seinen'], ['shoujo', 'Shoujo'], ['shoujo-ai', 'Shoujo Ai'],
+  ['shounen', 'Shounen'], ['shounen-ai', 'Shounen Ai'], ['slice-of-life', 'Slice of Life'], ['space', 'Space'],
+  ['sports', 'Sports'], ['super-power', 'Super Power'], ['supernatural', 'Supernatural'], ['thriller', 'Thriller'],
+  ['vampire', 'Vampire']
 ];
 
-export const DEFAULT_GENRES: Genre[] = GENRE_TABLE.map(([slug, name, malId]) => ({
-  slug,
-  name,
-  path: `/genre/${slug}`,
-  malId
-}));
+export const DEFAULT_GENRES: Genre[] = GENRE_NAMES.map(([slug, name]) => ({ slug, name, path: `/genres/${slug}` }));
 
-const JIKAN = 'https://api.jikan.moe/v4';
-const FETCH_TIMEOUT_MS = 8000;
-
-async function fetchJson(url: string): Promise<any> {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
-  try {
-    const res = await fetch(url, { signal: controller.signal });
-    if (!res.ok) throw new Error(`HTTP ${res.status} from ${url}`);
-    return await res.json();
-  } finally {
-    clearTimeout(timer);
-  }
+function slugify(name: string): string {
+  return name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
 }
 
-function jikanToAnime(entry: any): AnimeItem | null {
-  if (!entry || typeof entry.mal_id !== 'number') return null;
-  const poster = entry.images?.webp?.large_image_url || entry.images?.jpg?.large_image_url
-    || entry.images?.webp?.image_url || entry.images?.jpg?.image_url || '';
-  const title = entry.title_english || entry.title || '';
+// ------------------------------------------------------------------ AniList
+
+const ANILIST = 'https://graphql.anilist.co';
+const TIMEOUT_MS = 10000;
+
+// Promise.race rather than an AbortSignal: the native (CapacitorHttp) fetch
+// doesn't honor signals.
+function withTimeout<T>(promise: Promise<T>, ms = TIMEOUT_MS): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<T>((_, reject) => setTimeout(() => reject(new Error(`timed out after ${ms}ms`)), ms))
+  ]);
+}
+
+async function anilist(query: string, variables: Record<string, unknown>): Promise<any> {
+  const res = await withTimeout(fetch(ANILIST, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+    body: JSON.stringify({ query, variables })
+  }));
+  if (!res.ok) throw new Error(`AniList HTTP ${res.status}`);
+  const json = await res.json();
+  if (json?.errors?.length) throw new Error(`AniList: ${json.errors[0]?.message}`);
+  return json.data;
+}
+
+const MEDIA_FIELDS = `id format episodes genres synonyms
+  title { romaji english }
+  coverImage { extraLarge large }
+  startDate { year month }
+  description(asHtml: false)`;
+
+const FORMAT_LABELS: Record<string, string> = {
+  TV: 'TV', TV_SHORT: 'TV', MOVIE: 'Movie', SPECIAL: 'Special', OVA: 'OVA', ONA: 'ONA', MUSIC: 'Music'
+};
+
+function stripHtml(text: string | null | undefined): string | undefined {
+  if (!text) return undefined;
+  return text.replace(/<br\s*\/?>/gi, '\n').replace(/<[^>]+>/g, '').replace(/\n{3,}/g, '\n\n').trim() || undefined;
+}
+
+function anilistToAnime(m: any): AnimeItem | null {
+  if (!m || typeof m.id !== 'number') return null;
+  const title = m.title?.english || m.title?.romaji || '';
+  const poster = m.coverImage?.extraLarge || m.coverImage?.large || '';
   if (!title || !poster) return null;
-  const altTitles = [entry.title, entry.title_english, ...(entry.title_synonyms || [])]
+  const altTitles = [m.title?.romaji, m.title?.english, ...(m.synonyms || [])]
     .filter((t: unknown): t is string => typeof t === 'string' && !!t && t !== title);
   return {
-    id: `mal-${entry.mal_id}`,
-    malId: entry.mal_id,
+    id: `al-${m.id}`,
     title,
     altTitles,
     poster,
-    type: entry.type || undefined,
-    subCount: typeof entry.episodes === 'number' ? entry.episodes : undefined,
-    description: entry.synopsis || undefined,
-    genres: Array.isArray(entry.genres) ? entry.genres.map((g: any) => g.name).filter(Boolean) : undefined
+    type: FORMAT_LABELS[m.format] || undefined,
+    subCount: typeof m.episodes === 'number' ? m.episodes : undefined,
+    description: stripHtml(m.description),
+    genres: Array.isArray(m.genres) ? m.genres : undefined
   };
 }
+
+// AniList splits hianime's genres into real genres and tags.
+const ANILIST_GENRES = new Set(['Action', 'Adventure', 'Comedy', 'Drama', 'Ecchi', 'Fantasy', 'Horror',
+  'Mahou Shoujo', 'Mecha', 'Music', 'Mystery', 'Psychological', 'Romance', 'Sci-Fi', 'Slice of Life',
+  'Sports', 'Supernatural', 'Thriller']);
+const ANILIST_TAG_OVERRIDES: Record<string, string | null> = {
+  harem: 'Female Harem', game: 'Video Games', 'shoujo-ai': 'Yuri', 'shounen-ai': "Boys' Love",
+  dementia: null
+};
+
+function anilistFilterFor(genre: Genre): { genre?: string; tag?: string } | null {
+  const known = GENRE_NAMES.find(([slug]) => slug === genre.slug);
+  const name = known ? known[1] : genre.name;
+  if (ANILIST_GENRES.has(name)) return { genre: name };
+  if (genre.slug in ANILIST_TAG_OVERRIDES) {
+    const tag = ANILIST_TAG_OVERRIDES[genre.slug];
+    return tag ? { tag } : null;
+  }
+  return { tag: name };
+}
+
+// --------------------------------------------------------------- helpers
 
 function dedupe(items: AnimeItem[], exclude: Set<string> = new Set()): AnimeItem[] {
   const seen = new Set(exclude);
@@ -138,13 +153,57 @@ function dedupe(items: AnimeItem[], exclude: Set<string> = new Set()): AnimeItem
   });
 }
 
-// ---------------------------------------------------------------- genres
+function normalizeTitle(title: string): string {
+  return title.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+}
+
+function titlesMatch(a: string, b: string): boolean {
+  const x = normalizeTitle(a);
+  const y = normalizeTitle(b);
+  if (!x || !y) return false;
+  if (x === y) return true;
+  return Math.min(x.length, y.length) >= 3 && (x.startsWith(y) || y.startsWith(x));
+}
+
+// "Mushoku Tensei: Jobless Reincarnation Season 2 Part 2" -> "mushoku tensei"
+function franchiseKey(title: string): string {
+  const head = title.split(/[:\-–(]/)[0];
+  return normalizeTitle(head)
+    .replace(/\b(season|part|cour)\s*\d+\b.*$/, '')
+    .replace(/\b\d+(st|nd|rd|th)\s+season\b.*$/, '')
+    .replace(/\b(ii|iii|iv|2|3|4|5)$/, '')
+    .trim();
+}
+
+// Next-page link as the site itself renders it (?page=N or /page/N/),
+// so pagination follows whatever scheme hianime.at really uses. Relative
+// links ("?page=2") resolve against the listing's own path.
+function findNextPagePath(doc: Document, page: number, currentPath: string): string | undefined {
+  const next = page + 1;
+  const links = Array.from(doc.querySelectorAll('a[href]'));
+  const pattern = new RegExp(`([?&]page=${next}(&|$))|(/page/${next}/?$)`);
+  const byNumber = links.find(a => pattern.test(a.getAttribute('href') || ''));
+  const byRel = links.find(a => /\bnext\b/i.test(`${a.getAttribute('rel') || ''} ${a.getAttribute('title') || ''} ${a.className}`));
+  const href = (byNumber || byRel)?.getAttribute('href');
+  if (!href) return undefined;
+  let absolute: URL;
+  try {
+    absolute = new URL(href, `https://hianime.at${currentPath}`);
+  } catch {
+    return undefined;
+  }
+  const path = sitePathOf(absolute.toString());
+  if (!path || path + absolute.search === currentPath) return undefined;
+  return path + absolute.search;
+}
+
+// ------------------------------------------------------------------ genres
 
 let genresCache: Promise<Genre[]> | null = null;
 
-// The site's own genre links (from its home page sidebar/menu) when they can
-// be read - so the paths are the site's real ones - otherwise the standard
-// list. Either way every genre keeps its MAL id for the fallback.
+// The site's own genre links (from its home page menu) when they can be
+// read - so the paths are the site's real ones - otherwise the standard list
+// under /genres/.
 export function getGenres(): Promise<Genre[]> {
   if (!genresCache) {
     genresCache = (async () => {
@@ -153,14 +212,14 @@ export function getGenres(): Promise<Genre[]> {
         const doc = new DOMParser().parseFromString(html, 'text/html');
         const found: Genre[] = [];
         const seen = new Set<string>();
-        doc.querySelectorAll('a[href*="/genre/"]').forEach(a => {
-          const path = sitePathOf(a.getAttribute('href') || '');
-          const slug = path.split('/').filter(Boolean).pop() || '';
-          const name = (a.getAttribute('title') || a.textContent || '').trim();
-          if (!path || !slug || !name || seen.has(slug)) return;
+        doc.querySelectorAll('a[href*="/genre"]').forEach(a => {
+          const path = sitePathOf(a.getAttribute('href') || '').replace(/\/$/, '');
+          if (!/^\/genres?\/[^/]+$/.test(path)) return;
+          const slug = path.split('/').pop() || '';
+          const name = (a.getAttribute('title') || a.textContent || '').trim().replace(/\s+/g, ' ');
+          if (!slug || !name || name.length > 30 || seen.has(slug)) return;
           seen.add(slug);
-          const known = GENRE_TABLE.find(([s]) => s === slug);
-          found.push({ slug, name, path, malId: known?.[2] });
+          found.push({ slug, name, path });
         });
         if (found.length >= 5) {
           return found.sort((a, b) => a.name.localeCompare(b.name));
@@ -174,16 +233,23 @@ export function getGenres(): Promise<Genre[]> {
   return genresCache;
 }
 
+export async function findGenre(name: string): Promise<Genre | undefined> {
+  const all = await getGenres();
+  const slug = slugify(name);
+  return all.find(g => g.slug === slug || g.name.toLowerCase() === name.toLowerCase())
+    || DEFAULT_GENRES.find(g => g.slug === slug);
+}
+
 const genrePageCache = new Map<string, Promise<GenrePage>>();
 
-// One page of a genre's listing, most popular first. Cached for the session
-// so backing out of a title into a genre page (or the home rails) doesn't
-// refetch everything.
-export function getAnimeByGenre(genre: Genre, page = 1): Promise<GenrePage> {
+// One page of a genre's listing. `page` is 1-based; for page > 1 pass the
+// previous page's nextPath so the site's own pagination links are followed.
+// Cached for the session so backing out of a title doesn't refetch.
+export function getAnimeByGenre(genre: Genre, page = 1, nextPath?: string): Promise<GenrePage> {
   const key = `${genre.path}#${page}`;
   const cached = genrePageCache.get(key);
   if (cached) return cached;
-  const pending = loadGenrePage(genre, page);
+  const pending = loadGenrePage(genre, page, nextPath);
   genrePageCache.set(key, pending);
   pending.then(result => {
     if (result.items.length === 0) genrePageCache.delete(key);
@@ -191,60 +257,53 @@ export function getAnimeByGenre(genre: Genre, page = 1): Promise<GenrePage> {
   return pending;
 }
 
-async function loadGenrePage(genre: Genre, page: number): Promise<GenrePage> {
-  try {
-    const sep = genre.path.includes('?') ? '&' : '?';
-    const html = await fetchSiteHtml(`${genre.path}${sep}page=${page}`);
-    const items = parseSearchResults(html);
-    if (items.length > 0) {
-      const doc = new DOMParser().parseFromString(html, 'text/html');
-      const pagination = doc.querySelector('.pagination, .pre-pagination');
-      const hasNextLink = !!pagination?.querySelector(`a[href*="page=${page + 1}"], a[title="Next"]`);
-      return { items, hasMore: pagination ? hasNextLink : items.length >= 18 };
+async function loadGenrePage(genre: Genre, page: number, nextPath?: string): Promise<GenrePage> {
+  // Page 1 always tries the site; later pages come from the site only when
+  // it linked them (otherwise the listing is AniList's, paged by number).
+  if (page === 1 || nextPath) {
+    try {
+      const pagePath = page === 1 ? genre.path : nextPath!;
+      const html = await fetchSiteHtml(pagePath);
+      const items = parseSearchResults(html);
+      if (items.length > 0) {
+        const doc = new DOMParser().parseFromString(html, 'text/html');
+        const next = findNextPagePath(doc, page, pagePath);
+        return { items, nextPath: next, hasMore: !!next };
+      }
+      console.warn(`[catalogService] Genre page ${genre.path} had no parseable titles, using AniList`);
+    } catch (err) {
+      console.warn(`[catalogService] Genre page ${genre.path} failed, using AniList:`, err);
     }
-  } catch (err) {
-    console.warn(`[catalogService] Genre page ${genre.path} failed, trying MyAnimeList:`, err);
+    if (page > 1) return { items: [], hasMore: false };
   }
 
-  if (!genre.malId) return { items: [], hasMore: false };
+  const filter = anilistFilterFor(genre);
+  if (!filter) return { items: [], hasMore: false };
   try {
-    const data = await fetchJson(
-      `${JIKAN}/anime?genres=${genre.malId}&order_by=members&sort=desc&sfw=true&limit=24&page=${page}`
-    );
-    const items = (data?.data || []).map(jikanToAnime).filter(Boolean) as AnimeItem[];
-    return { items: dedupe(items), hasMore: !!data?.pagination?.has_next_page };
+    const data = await anilist(`query ($page: Int, $genre: String, $tag: String) {
+      Page(page: $page, perPage: 24) {
+        pageInfo { hasNextPage }
+        media(type: ANIME, isAdult: false, sort: POPULARITY_DESC, genre: $genre, tag: $tag) { ${MEDIA_FIELDS} }
+      }
+    }`, { page, ...filter });
+    const items = (data?.Page?.media || []).map(anilistToAnime).filter(Boolean) as AnimeItem[];
+    return { items: dedupe(items), hasMore: !!data?.Page?.pageInfo?.hasNextPage };
   } catch (err) {
-    console.warn('[catalogService] MyAnimeList genre lookup failed:', err);
+    console.warn('[catalogService] AniList genre lookup failed:', err);
     return { items: [], hasMore: false };
   }
 }
 
 // --------------------------------------------------------- title matching
 
-function normalizeTitle(title: string): string {
-  return title.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
-}
-
-// "Mushoku Tensei: Jobless Reincarnation Season 2 Part 2" -> "mushoku tensei"
-function franchiseKey(title: string): string {
-  const head = title.split(/[:\-–(]/)[0];
-  return normalizeTitle(head)
-    .replace(/\b(season|part|cour)\s*\d+\b.*$/, '')
-    .replace(/\b\d+(st|nd|rd|th)\s+season\b.*$/, '')
-    .replace(/\b(ii|iii|iv|2|3|4|5)$/, '')
-    .trim();
-}
-
-// Entries from MyAnimeList (malId set, "mal-" id) have no streaming-site id
-// yet - search the site under each of the entry's known titles and adopt a
-// result whose title actually matches. Never falls back to an unrelated
-// first result: throws if nothing matches. Site entries are returned as-is.
+// AniList-backed entries ("al-" ids) have no streaming-site id yet - search
+// the site under each of the entry's known titles and adopt a result whose
+// title actually matches. Never falls back to an unrelated first result:
+// throws if nothing matches. Site entries are returned as-is.
 export async function resolveAnime(anime: AnimeItem): Promise<AnimeItem> {
-  if (!anime.id.startsWith('mal-')) return anime;
+  if (!anime.id.startsWith('al-') && !anime.id.startsWith('mal-')) return anime;
   const titles = Array.from(new Set([anime.title, ...(anime.altTitles || [])]));
   for (const title of titles) {
-    const wanted = normalizeTitle(title);
-    if (!wanted) continue;
     let results: AnimeItem[] = [];
     try {
       results = await searchAnimeLive(title);
@@ -252,17 +311,13 @@ export async function resolveAnime(anime: AnimeItem): Promise<AnimeItem> {
       console.warn('[catalogService] resolve search failed:', err);
       continue;
     }
-    const best = results.find(r => normalizeTitle(r.title) === wanted)
-      || results.find(r => {
-        const got = normalizeTitle(r.title);
-        return got.length >= 3 && (got.startsWith(wanted) || wanted.startsWith(got));
-      });
+    const best = results.find(r => normalizeTitle(r.title) === normalizeTitle(title))
+      || results.find(r => titlesMatch(r.title, title));
     if (best) {
       return {
         ...best,
         description: best.description || anime.description,
-        genres: best.genres || anime.genres,
-        malId: anime.malId
+        genres: best.genres || anime.genres
       };
     }
   }
@@ -288,7 +343,7 @@ function linkToAnime(a: Element, container: Element, label?: string): AnimeItem 
   const id = path.split('/').filter(Boolean).pop() || '';
   const title = (a.getAttribute('title') || a.getAttribute('data-jname') || a.textContent || '').trim();
   const poster = posterOf(container);
-  if (!id || !title || id === 'home') return null;
+  if (!id || !title || id === 'home' || /^\/genres?\//.test(path)) return null;
   return { id, path, title, poster, seasonLabel: label, type: 'TV' };
 }
 
@@ -309,10 +364,14 @@ export function parseDetailPage(html: string): ParsedDetailPage {
     || ''
   ).trim() || undefined;
 
+  // Genre links in the title's own info block (never the site-wide menu).
+  const infoGenreLinks = doc.querySelectorAll(
+    '.anisc-info a[href*="/genre"], .anisc-detail a[href*="/genre"], .film-stats a[href*="/genre"]'
+  );
   const genres = Array.from(new Set(
-    Array.from(doc.querySelectorAll('.anisc-info a[href*="/genre/"], .anisc-detail a[href*="/genre/"]'))
+    Array.from(infoGenreLinks)
       .map(a => (a.getAttribute('title') || a.textContent || '').trim())
-      .filter(Boolean)
+      .filter(g => g && g.length <= 30)
   ));
 
   // Season switcher: <div class="os-list"><a class="os-item" href title>
@@ -348,6 +407,88 @@ export function parseDetailPage(html: string): ParsedDetailPage {
   return { description, genres, seasons, related: dedupe(related), recommended: dedupe(recommended) };
 }
 
+interface AniListInfo {
+  description?: string;
+  genres: string[];
+  relations: AnimeItem[];
+  recommendations: AnimeItem[];
+  // Release-order sort key (year*12+month) per relation id.
+  order: Map<string, number>;
+  selfOrder?: number;
+}
+
+const RELATION_TYPES = new Set(['PREQUEL', 'SEQUEL', 'PARENT', 'SIDE_STORY', 'SPIN_OFF', 'ALTERNATIVE', 'SUMMARY']);
+
+async function loadAniListInfo(anime: AnimeItem): Promise<AniListInfo | null> {
+  try {
+    const data = await anilist(`query ($search: String) {
+      Media(search: $search, type: ANIME) {
+        ${MEDIA_FIELDS}
+        relations { edges { relationType node { type ${MEDIA_FIELDS} } } }
+        recommendations(sort: RATING_DESC, perPage: 18) { nodes { mediaRecommendation { ${MEDIA_FIELDS} } } }
+      }
+    }`, { search: anime.title });
+    const media = data?.Media;
+    if (!media) return null;
+    // AniList's search is fuzzy - only trust it when it found this title.
+    const names = [media.title?.english, media.title?.romaji, ...(media.synonyms || [])].filter(Boolean) as string[];
+    if (!names.some(t => titlesMatch(t, anime.title) || franchiseKey(t) === franchiseKey(anime.title))) {
+      console.warn(`[catalogService] AniList matched "${names[0]}" for "${anime.title}" - ignoring`);
+      return null;
+    }
+    const dateKey = (m: any): number | undefined =>
+      (m?.startDate?.year ? m.startDate.year * 12 + (m.startDate.month || 1) : undefined);
+    const order = new Map<string, number>();
+    const relations: AnimeItem[] = [];
+    for (const edge of media.relations?.edges || []) {
+      if (edge?.node?.type !== 'ANIME' || !RELATION_TYPES.has(edge.relationType)) continue;
+      const item = anilistToAnime(edge.node);
+      if (!item) continue;
+      relations.push(item);
+      const key = dateKey(edge.node);
+      if (key) order.set(item.id, key);
+    }
+    const recommendations = (media.recommendations?.nodes || [])
+      .map((n: any) => anilistToAnime(n?.mediaRecommendation))
+      .filter(Boolean) as AnimeItem[];
+    return {
+      description: stripHtml(media.description),
+      genres: Array.isArray(media.genres) ? media.genres : [],
+      relations,
+      recommendations,
+      order,
+      selfOrder: dateKey(media)
+    };
+  } catch (err) {
+    console.warn('[catalogService] AniList lookup failed:', err);
+    return null;
+  }
+}
+
+// Site titles sharing the most genres with this one: the first page of each
+// of its genres (up to three), scored by how many of those lists a title
+// appears in, then by its best rank within them.
+async function suggestByGenres(genreNames: string[], exclude: Set<string>): Promise<AnimeItem[]> {
+  const genres = (await Promise.all(genreNames.slice(0, 3).map(findGenre))).filter(Boolean) as Genre[];
+  if (genres.length === 0) return [];
+  const pages = await Promise.all(genres.map(g => getAnimeByGenre(g, 1)));
+  const scores = new Map<string, { item: AnimeItem; hits: number; rank: number }>();
+  pages.forEach(page => page.items.forEach((item, rank) => {
+    if (exclude.has(item.id)) return;
+    const entry = scores.get(item.id);
+    if (entry) {
+      entry.hits += 1;
+      entry.rank = Math.min(entry.rank, rank);
+    } else {
+      scores.set(item.id, { item, hits: 1, rank });
+    }
+  }));
+  return Array.from(scores.values())
+    .sort((a, b) => b.hits - a.hits || a.rank - b.rank)
+    .slice(0, 18)
+    .map(s => s.item);
+}
+
 const detailsCache = new Map<string, Promise<AnimeDetails>>();
 
 export function getAnimeDetails(anime: AnimeItem): Promise<AnimeDetails> {
@@ -362,63 +503,59 @@ export function getAnimeDetails(anime: AnimeItem): Promise<AnimeDetails> {
   return pending;
 }
 
-async function loadAnimeDetails(anime: AnimeItem): Promise<AnimeDetails> {
-  let parsed: ParsedDetailPage = { genres: [], seasons: [], related: [], recommended: [] };
+async function loadSiteDetailPage(anime: AnimeItem): Promise<ParsedDetailPage> {
   const candidates = Array.from(new Set([anime.path, `/${anime.id}`].filter(Boolean) as string[]));
   for (const path of candidates) {
     try {
-      parsed = parseDetailPage(await fetchSiteHtml(path));
-      break;
+      return parseDetailPage(await fetchSiteHtml(path));
     } catch (err) {
       console.warn(`[catalogService] Detail page ${path} failed:`, err);
     }
   }
+  return { genres: [], seasons: [], related: [], recommended: [] };
+}
 
+async function loadAnimeDetails(anime: AnimeItem): Promise<AnimeDetails> {
+  const [parsed, aniList] = await Promise.all([loadSiteDetailPage(anime), loadAniListInfo(anime)]);
+
+  const description = parsed.description || aniList?.description;
+  const genres = parsed.genres.length ? parsed.genres : (aniList?.genres.length ? aniList.genres : (anime.genres || []));
+
+  // Collection: the site's season switcher / related block (directly
+  // playable), else AniList's relations in release order, else other site
+  // titles sharing this franchise's base title.
   let collection = dedupe([...parsed.seasons, ...parsed.related]);
-  let suggestions = dedupe(parsed.recommended, new Set(collection.map(c => c.id).concat(anime.id)));
-  let description = parsed.description;
-  let genres = parsed.genres;
-
-  // Collection fallback: other site entries sharing this franchise's base
-  // title (e.g. every "Mushoku Tensei" season).
+  if (collection.length <= 1 && aniList && aniList.relations.length > 0) {
+    const order = new Map(aniList.order);
+    if (aniList.selfOrder) order.set(anime.id, aniList.selfOrder);
+    collection = dedupe([anime, ...aniList.relations])
+      .sort((a, b) => (order.get(a.id) ?? Infinity) - (order.get(b.id) ?? Infinity));
+  }
   if (collection.length <= 1) {
     const key = franchiseKey(anime.title);
     if (key.length >= 3) {
       try {
         const results = await searchAnimeLive(key);
         const family = results.filter(r => franchiseKey(r.title) === key || normalizeTitle(r.title).startsWith(key));
-        if (family.some(r => r.id !== anime.id)) {
-          collection = dedupe([anime, ...family]);
-        }
+        if (family.some(r => r.id !== anime.id)) collection = dedupe([anime, ...family]);
       } catch (err) {
         console.warn('[catalogService] Collection search failed:', err);
       }
     }
   }
 
-  // Suggestions / synopsis fallback: MyAnimeList.
-  const needsMal = suggestions.length === 0 || !description || genres.length === 0;
-  const malId = needsMal ? (anime.malId ?? await resolveMalId(anime.title)) : null;
-  if (malId) {
-    if (suggestions.length === 0) {
-      try {
-        const data = await fetchJson(`${JIKAN}/anime/${malId}/recommendations`);
-        const items = (data?.data || []).slice(0, 18).map((r: any) => jikanToAnime(r.entry)).filter(Boolean) as AnimeItem[];
-        suggestions = dedupe(items, new Set(collection.map(c => c.id).concat(anime.id)));
-      } catch (err) {
-        console.warn('[catalogService] MyAnimeList recommendations failed:', err);
-      }
-    }
-    if (!description || genres.length === 0) {
-      try {
-        const data = await fetchJson(`${JIKAN}/anime/${malId}`);
-        const info = jikanToAnime(data?.data);
-        description = description || info?.description;
-        if (genres.length === 0) genres = info?.genres || [];
-      } catch (err) {
-        console.warn('[catalogService] MyAnimeList details failed:', err);
-      }
-    }
+  // More Like This: real similarity first (AniList recommendations), then
+  // the site's titles with the most genres in common.
+  const exclude = new Set(collection.map(c => c.id).concat(anime.id));
+  const franchise = franchiseKey(anime.title);
+  const notSameShow = (s: AnimeItem) => franchiseKey(s.title) !== franchise;
+  let suggestions = dedupe(aniList?.recommendations || [], exclude).filter(notSameShow);
+  if (suggestions.length < 6 && genres.length > 0) {
+    const byGenre = await suggestByGenres(genres, new Set([...exclude, ...suggestions.map(s => s.id)]));
+    suggestions = dedupe([...suggestions, ...byGenre.filter(notSameShow)]).slice(0, 18);
+  }
+  if (suggestions.length === 0) {
+    suggestions = dedupe(parsed.recommended, exclude).filter(notSameShow);
   }
 
   return { description, genres, collection: collection.length > 1 ? collection : [], suggestions };

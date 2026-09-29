@@ -1,6 +1,6 @@
 // App.tsx - Main Android Application Controller for AniStream
 import React, { useState, useEffect, useRef } from 'react';
-import { Home as HomeIcon, Search as SearchIcon, Library, Settings as SettingsIcon, Loader2 } from 'lucide-react';
+import { Home as HomeIcon, Search as SearchIcon, Library, Settings as SettingsIcon } from 'lucide-react';
 import { Capacitor } from '@capacitor/core';
 import { ExoPlayerPlugin } from './plugins/exoPlayerPlugin';
 import { HomeScreen } from './pages/HomeScreen';
@@ -80,6 +80,10 @@ export const App: React.FC = () => {
   const [streamLoading, setStreamLoading] = useState<boolean>(false);
   const [initialSeekTime, setInitialSeekTime] = useState<number>(0);
   const [streamErrorMessage, setStreamErrorMessage] = useState<string | null>(null);
+  // Bumped on every play request and whenever the native player is closed,
+  // so a slow stream resolution that finishes after the user moved on (or
+  // backed out of the player) is dropped instead of reopening the player.
+  const playRequestRef = useRef<number>(0);
 
   // The real episode list for whichever anime is currently playing - used to
   // find the actual next episode (real id/title) instead of guessing one,
@@ -145,6 +149,10 @@ export const App: React.FC = () => {
     // onProgressUpdate prop, native has no such prop path (it isn't even
     // mounted while native plays), so watch history only gets saved if we
     // save it here, from this bridged event.
+    const closedHandle = ExoPlayerPlugin.addListener('playerClosed', () => {
+      playRequestRef.current++;
+      setStreamLoading(false);
+    });
     const progressHandle = ExoPlayerPlugin.addListener('progressUpdate', ({ positionMs, durationMs }) => {
       const anime = playingAnimeRef.current;
       const episode = playingEpisodeRef.current;
@@ -166,6 +174,7 @@ export const App: React.FC = () => {
       nextEpHandle.then(h => h.remove());
       episodeSelectedHandle.then(h => h.remove());
       progressHandle.then(h => h.remove());
+      closedHandle.then(h => h.remove());
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -177,7 +186,17 @@ export const App: React.FC = () => {
     mode: 'sub' | 'dub' = 'sub',
     startTime = 0
   ) => {
+    const requestId = ++playRequestRef.current;
+    const isNative = Capacitor.isNativePlatform();
     setStreamLoading(true);
+    // Native: open the player right away in its loading state (title +
+    // spinner) instead of a blocking overlay here; the stream is handed to
+    // that same player once resolved. For next episode / audio switch the
+    // player is already open and simply shows its spinner again.
+    if (isNative) {
+      ExoPlayerPlugin.open({ title: anime.title, episode: episode.number, mode }).catch(err =>
+        console.warn('[App] ExoPlayer open failed:', err));
+    }
     setPlayingAnime(anime);
     setPlayingEpisode(episode);
     setPlayingMode(mode);
@@ -201,6 +220,9 @@ export const App: React.FC = () => {
         episodeListPromise
       ]);
 
+      // The user picked something else meanwhile, or closed the player.
+      if (requestId !== playRequestRef.current) return;
+
       if (needsEpisodeList) {
         setEpisodeList(resolvedEpisodeList);
         loadedEpisodeListAnimeId.current = anime.id;
@@ -215,9 +237,10 @@ export const App: React.FC = () => {
         source.quality = preferred.quality;
       }
 
+      if (requestId !== playRequestRef.current) return;
       setStreamSource(source);
 
-      if (Capacitor.isNativePlatform()) {
+      if (isNative) {
         try {
           console.log("[App] Launching Android Native ExoPlayer...");
           await ExoPlayerPlugin.play({
@@ -231,7 +254,8 @@ export const App: React.FC = () => {
             episodes: resolvedEpisodeList.map(e => ({ id: e.id, number: e.number })),
             isFallback: source.isFallback,
             intro: source.intro,
-            outro: source.outro
+            outro: source.outro,
+            startPositionMs: Math.max(0, Math.round(startTime * 1000))
           });
         } catch (e) {
           console.warn("[App] ExoPlayer plugin call failed, falling back to Web player:", e);
@@ -242,9 +266,15 @@ export const App: React.FC = () => {
       }
     } catch (err) {
       console.error("Failed to load stream:", err);
-      setStreamErrorMessage("Could not load stream from ani-cli. Please try another episode or server.");
+      if (requestId !== playRequestRef.current) return;
+      const message = "Could not load this episode. Please try another episode or server.";
+      if (isNative) {
+        ExoPlayerPlugin.fail({ message }).catch(() => setStreamErrorMessage(message));
+      } else {
+        setStreamErrorMessage(message);
+      }
     } finally {
-      setStreamLoading(false);
+      if (requestId === playRequestRef.current) setStreamLoading(false);
     }
   };
 
@@ -338,41 +368,10 @@ export const App: React.FC = () => {
         )}
       </div>
 
-      {/* Stream Loading Overlay */}
-      {streamLoading && (
-        <div style={{
-          position: 'fixed',
-          inset: 0,
-          backgroundColor: 'rgba(var(--bg-main-rgb), 0.85)',
-          backdropFilter: 'blur(12px)',
-          display: 'flex',
-          flexDirection: 'column',
-          alignItems: 'center',
-          justifyContent: 'center',
-          gap: '16px',
-          zIndex: 10000
-        }}>
-          <div style={{
-            width: '60px',
-            height: '60px',
-            borderRadius: '50%',
-            background: 'var(--accent-gradient)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            boxShadow: 'var(--shadow-glow)'
-          }}>
-            <Loader2 size={32} color="#fff" className="animate-spin" />
-          </div>
-          <div style={{ textAlign: 'center' }}>
-            <h3 style={{ fontSize: '16px', fontWeight: 700, color: 'var(--text-primary)' }}>
-              Resolving ani-cli Stream...
-            </h3>
-            <p style={{ fontSize: '13px', color: 'var(--text-secondary)', marginTop: '4px' }}>
-              Deobfuscating ZokoAnime server payload
-            </p>
-          </div>
-        </div>
+      {/* Stream loading: a slim, non-blocking bar at the top (the native
+          player shows its own spinner, so this only matters on web). */}
+      {streamLoading && !Capacitor.isNativePlatform() && (
+        <div className="stream-loading-bar" role="progressbar" aria-label="Loading episode" />
       )}
 
       <ConfirmModal

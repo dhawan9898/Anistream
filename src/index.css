@@ -416,3 +416,30 @@ input {
   outline: none;
   user-select: text;
 }
+
+/* Slim indeterminate loading bar shown while an episode's stream resolves */
+.stream-loading-bar {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 3px;
+  z-index: 10001;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.stream-loading-bar::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 40%;
+  background: #e50914;
+  animation: stream-loading-slide 1s ease-in-out infinite;
+}
+
+@keyframes stream-loading-slide {
+  from { left: -40%; }
+  to { left: 100%; }
+}

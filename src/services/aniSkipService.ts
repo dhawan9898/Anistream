@@ -16,14 +16,13 @@ const FETCH_TIMEOUT_MS = 6000;
 // pays for the MAL lookup once.
 const malIdCache = new Map<string, number | null>();
 
-async function fetchWithTimeout(url: string): Promise<Response> {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
-  try {
-    return await fetch(url, { signal: controller.signal });
-  } finally {
-    clearTimeout(timer);
-  }
+// Promise.race rather than an AbortSignal: the native (CapacitorHttp) fetch
+// doesn't honor signals.
+function fetchWithTimeout(url: string): Promise<Response> {
+  return Promise.race([
+    fetch(url),
+    new Promise<Response>((_, reject) => setTimeout(() => reject(new Error('timed out')), FETCH_TIMEOUT_MS))
+  ]);
 }
 
 export async function resolveMalId(title: string): Promise<number | null> {

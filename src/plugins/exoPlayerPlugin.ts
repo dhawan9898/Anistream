@@ -50,7 +50,22 @@ export interface ExoPlayerPluginInterface {
     // Opening/ending chapter markers in seconds, from the stream's sources payload.
     intro?: { start: number; end: number };
     outro?: { start: number; end: number };
+    // Where to start playing (resume), in ms.
+    startPositionMs?: number;
   }): Promise<{ success: boolean }>;
+
+  // Opens the player immediately in its loading state (title + spinner)
+  // while the stream is being resolved; play() then hands it the stream.
+  // If the player is already open it just shows its spinner again.
+  open(options: { title?: string; episode?: string; mode?: 'sub' | 'dub' }): Promise<void>;
+
+  // Shows a playback error inside the open player (stream resolution failed).
+  fail(options: { message: string }): Promise<void>;
+
+  addListener(
+    eventName: 'playerClosed',
+    listenerFunc: () => void
+  ): Promise<PluginListenerHandle>;
 
   addListener(
     eventName: 'modeSwitchRequested',

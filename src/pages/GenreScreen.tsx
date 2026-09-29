@@ -18,6 +18,9 @@ export const GenreScreen: React.FC<GenreScreenProps> = ({ genre, onBack, onSelec
   const [items, setItems] = useState<AnimeItem[]>([]);
   const [page, setPage] = useState(0);
   const [hasMore, setHasMore] = useState(true);
+  // The site's own link to the next page (undefined for AniList-backed
+  // listings, which page by number).
+  const nextPathRef = useRef<string | undefined>(undefined);
   const [loading, setLoading] = useState(false);
   const [pickerOpen, setPickerOpen] = useState(false);
   const loadingRef = useRef(false);
@@ -27,7 +30,8 @@ export const GenreScreen: React.FC<GenreScreenProps> = ({ genre, onBack, onSelec
     loadingRef.current = true;
     setLoading(true);
     const next = page + 1;
-    const result = await getAnimeByGenre(genre, next);
+    const result = await getAnimeByGenre(genre, next, nextPathRef.current);
+    nextPathRef.current = result.nextPath;
     setItems(prev => {
       const seen = new Set(prev.map(i => i.id));
       return [...prev, ...result.items.filter(i => !seen.has(i.id))];

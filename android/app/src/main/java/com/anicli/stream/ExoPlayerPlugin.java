@@ -30,6 +30,7 @@ public class ExoPlayerPlugin extends Plugin {
         boolean isFallback = call.getBoolean("isFallback", false);
         JSObject intro = call.getObject("intro");
         JSObject outro = call.getObject("outro");
+        Double startPositionMs = call.getDouble("startPositionMs");
 
         if (url == null || url.isEmpty()) {
             call.reject("Must provide a video URL");
@@ -50,7 +51,13 @@ public class ExoPlayerPlugin extends Plugin {
         intent.putExtra("isFallback", isFallback);
         putSkipRange(intent, "intro", intro);
         putSkipRange(intent, "outro", outro);
+        if (startPositionMs != null && startPositionMs > 0) {
+            intent.putExtra("startPositionMs", Math.round(startPositionMs));
+        }
 
+        // ExoPlayerActivity is singleTask: if it's already open (showing its
+        // loading spinner) this is delivered to it via onNewIntent instead
+        // of stacking a second player.
         getActivity().startActivity(intent);
 
         JSObject ret = new JSObject();
@@ -68,6 +75,38 @@ public class ExoPlayerPlugin extends Plugin {
         if (start < 0 || end <= start) return;
         intent.putExtra(prefix + "StartMs", Math.round(start * 1000));
         intent.putExtra(prefix + "EndMs", Math.round(end * 1000));
+    }
+
+    // Opens the player straight away in its loading state (title + spinner,
+    // no URL yet) so there's no blocking "resolving" screen in the app; the
+    // stream arrives later through play().
+    @PluginMethod
+    public void open(PluginCall call) {
+        activeInstance = this;
+        Intent intent = new Intent(getContext(), ExoPlayerActivity.class);
+        intent.putExtra("title", call.getString("title", "AniStream"));
+        intent.putExtra("episode", call.getString("episode", "1"));
+        intent.putExtra("mode", call.getString("mode", "sub"));
+        getActivity().startActivity(intent);
+        call.resolve();
+    }
+
+    // Stream resolution failed - show it inside the open player.
+    @PluginMethod
+    public void fail(PluginCall call) {
+        String message = call.getString("message", "Couldn't load this episode.");
+        ExoPlayerActivity activity = ExoPlayerActivity.current();
+        if (activity == null) {
+            call.reject("Player is not open");
+            return;
+        }
+        activity.runOnUiThread(() -> activity.showLoadFailure(message));
+        call.resolve();
+    }
+
+    static void notifyPlayerClosed() {
+        if (activeInstance == null) return;
+        activeInstance.notifyListeners("playerClosed", new JSObject());
     }
 
     static void notifyModeSwitchRequested(String title, String episode, String newMode) {

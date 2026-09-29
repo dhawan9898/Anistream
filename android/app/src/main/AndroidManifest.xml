@@ -28,6 +28,7 @@
         <activity
             android:name=".ExoPlayerActivity"
             android:configChanges="orientation|screenSize|screenLayout|keyboardHidden"
+            android:launchMode="singleTask"
             android:screenOrientation="sensorLandscape"
             android:theme="@style/Theme.AppCompat.NoActionBar"
             android:exported="false" />

@@ -238,16 +238,45 @@ public class ExoPlayerActivity extends AppCompatActivity {
         setupGestures();
         setupControlListeners();
 
-        Intent intent = getIntent();
+        currentActivity = new java.lang.ref.WeakReference<>(this);
+        loadFromIntent(getIntent());
+    }
+
+    // The open player, if any - lets ExoPlayerPlugin.fail() report a stream
+    // resolution failure into it.
+    private static java.lang.ref.WeakReference<ExoPlayerActivity> currentActivity;
+
+    static ExoPlayerActivity current() {
+        ExoPlayerActivity activity = currentActivity != null ? currentActivity.get() : null;
+        return activity != null && !activity.isFinishing() ? activity : null;
+    }
+
+    // singleTask: the JS side re-launches this activity with the resolved
+    // stream (or with a new episode after next/dub/episode picks) - load it
+    // into the same player instead of stacking a new one.
+    @Override
+    protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        setIntent(intent);
+        loadFromIntent(intent);
+    }
+
+    // An intent either carries a stream ("url") or only the title/episode
+    // to show while JS resolves one (ExoPlayerPlugin.open), in which case
+    // the player sits in its loading state until the stream arrives.
+    private void loadFromIntent(Intent intent) {
         String videoUrl = intent.getStringExtra("url");
         String referer = intent.getStringExtra("referer");
         String subtitlesJson = intent.getStringExtra("subtitles");
         String qualitiesJson = intent.getStringExtra("qualities");
         String episodesJson = intent.getStringExtra("episodes");
         boolean isFallback = intent.getBooleanExtra("isFallback", false);
-        animeTitle = intent.getStringExtra("title");
-        episodeNumber = intent.getStringExtra("episode");
-        currentMode = intent.getStringExtra("mode");
+        String title = intent.getStringExtra("title");
+        if (title != null) animeTitle = title;
+        String episode = intent.getStringExtra("episode");
+        if (episode != null) episodeNumber = episode;
+        String mode = intent.getStringExtra("mode");
+        if (mode != null && !mode.isEmpty()) currentMode = mode;
         if (currentMode == null || currentMode.isEmpty()) currentMode = "sub";
 
         if (referer == null || referer.isEmpty()) {
@@ -262,6 +291,25 @@ public class ExoPlayerActivity extends AppCompatActivity {
                 + ("dub".equals(currentMode) ? " · Dub" : "")
                 + (isFallback ? " · DEMO - SOURCE UNAVAILABLE" : ""));
 
+        if (episodesJson != null) parseEpisodes(episodesJson);
+        btnEpisodes.setVisibility(episodeOptions.size() > 1 ? View.VISIBLE : View.GONE);
+        btnNextEp.setVisibility(nextEpisodeNumber() != null ? View.VISIBLE : View.GONE);
+
+        if (videoUrl == null || videoUrl.isEmpty()) {
+            showLoadingState();
+            return;
+        }
+
+        // Fresh episode: reset everything that belonged to the previous one.
+        errorOverlay.setVisibility(View.GONE);
+        nextEpisodeTriggered = false;
+        postPlayDismissed = false;
+        hidePostPlay();
+        btnSkipIntro.setVisibility(View.GONE);
+        btnSkipOutro.setVisibility(View.GONE);
+        skipTimesFetched = false;
+        subtitleSelectionInitialized = false;
+
         // Quality choices (when there's a real one) live in the Audio &
         // Subtitles panel, like the rest of Netflix's track selection.
         parseQualities(qualitiesJson, videoUrl);
@@ -271,19 +319,61 @@ public class ExoPlayerActivity extends AppCompatActivity {
         introInterval = readSkipRange(intent, "intro");
         outroInterval = readSkipRange(intent, "outro");
 
-        parseEpisodes(episodesJson);
-        btnEpisodes.setVisibility(episodeOptions.size() > 1 ? View.VISIBLE : View.GONE);
-        btnNextEp.setVisibility(nextEpisodeNumber() != null ? View.VISIBLE : View.GONE);
+        releasePlayer();
+        pendingVideoUrl = videoUrl;
+        pendingReferer = referer;
+        pendingSubtitlesJson = subtitlesJson;
+        long startPositionMs = intent.getLongExtra("startPositionMs", 0L);
+        initializePlayer(videoUrl, referer, subtitlesJson, Math.max(0L, startPositionMs), true);
+    }
 
-        if (videoUrl != null && !videoUrl.isEmpty()) {
-            pendingVideoUrl = videoUrl;
-            pendingReferer = referer;
-            pendingSubtitlesJson = subtitlesJson;
-            initializePlayer(videoUrl, referer, subtitlesJson);
-        } else {
-            Log.e(TAG, "No video URL provided to ExoPlayerActivity");
-            finish();
+    private void releasePlayer() {
+        handler.removeCallbacks(progressTicker);
+        if (player != null) {
+            player.release();
+            player = null;
         }
+    }
+
+    // Black screen + spinner + title while JS resolves a stream - replaces
+    // the old full-screen "Resolving..." overlay in the app.
+    private void showLoadingState() {
+        releasePlayer();
+        playerView.setPlayer(null);
+        errorOverlay.setVisibility(View.GONE);
+        hidePostPlay();
+        btnSkipIntro.setVisibility(View.GONE);
+        btnSkipOutro.setVisibility(View.GONE);
+        seekBar.setProgress(0);
+        seekBar.setSecondaryProgress(0);
+        textRemainingTime.setText("");
+        btnPlayPause.setImageResource(R.drawable.ic_play);
+        bufferingSpinner.setVisibility(View.VISIBLE);
+        setControlsVisible(true);
+        handler.removeCallbacks(hideControlsRunnable);
+    }
+
+    // Next episode / audio switch / episode pick: JS re-resolves the stream
+    // and hands it back via onNewIntent - stay open, show the spinner.
+    private void enterLoading(String newEpisodeNumber, String newMode) {
+        reportProgressNow();
+        if (newEpisodeNumber != null) episodeNumber = newEpisodeNumber;
+        if (newMode != null) currentMode = newMode;
+        textEpisode.setText("E" + (episodeNumber != null ? episodeNumber : "1")
+                + ("dub".equals(currentMode) ? " · Dub" : ""));
+        btnNextEp.setVisibility(nextEpisodeNumber() != null ? View.VISIBLE : View.GONE);
+        showLoadingState();
+    }
+
+    // JS couldn't resolve a stream for the requested episode.
+    void showLoadFailure(String message) {
+        releasePlayer();
+        bufferingSpinner.setVisibility(View.GONE);
+        textErrorMessage.setText(message);
+        btnRetry.setText("Go Back");
+        btnRetry.setOnClickListener(v -> finish());
+        errorOverlay.setVisibility(View.VISIBLE);
+        setControlsVisible(true);
     }
 
     private void bindViews() {
@@ -727,7 +817,7 @@ public class ExoPlayerActivity extends AppCompatActivity {
     private void requestModeSwitch() {
         String newMode = "sub".equals(currentMode) ? "dub" : "sub";
         ExoPlayerPlugin.notifyModeSwitchRequested(animeTitle, episodeNumber, newMode);
-        finish();
+        enterLoading(null, newMode);
     }
 
     private void selectSubtitle(String label) {
@@ -1001,7 +1091,7 @@ public class ExoPlayerActivity extends AppCompatActivity {
     private void selectEpisode(EpisodeOption option) {
         if (option.number.equals(episodeNumber)) return;
         ExoPlayerPlugin.notifyEpisodeSelected(animeTitle, episodeNumber, option.number);
-        finish();
+        enterLoading(option.number, null);
     }
 
     private static final class MenuRow {
@@ -1034,8 +1124,9 @@ public class ExoPlayerActivity extends AppCompatActivity {
     private void triggerNextEpisode() {
         if (nextEpisodeTriggered) return;
         nextEpisodeTriggered = true;
+        String next = nextEpisodeNumber();
         ExoPlayerPlugin.notifyNextEpisodeRequested(animeTitle, episodeNumber);
-        finish();
+        enterLoading(next, null);
     }
 
     // Surfaces the real cause of a playback failure - an HTTP status code
@@ -1072,6 +1163,8 @@ public class ExoPlayerActivity extends AppCompatActivity {
     private void showPlaybackError(String message) {
         handler.removeCallbacksAndMessages(null);
         textErrorMessage.setText(message);
+        btnRetry.setText("Retry");
+        btnRetry.setOnClickListener(v -> retryPlayback());
         errorOverlay.setVisibility(View.VISIBLE);
         setControlsVisible(true);
     }
@@ -1537,6 +1630,8 @@ public class ExoPlayerActivity extends AppCompatActivity {
     @Override
     protected void onDestroy() {
         super.onDestroy();
+        if (isFinishing()) ExoPlayerPlugin.notifyPlayerClosed();
+        if (currentActivity != null && currentActivity.get() == this) currentActivity = null;
         handler.removeCallbacksAndMessages(null);
         if (player != null) {
             player.release();

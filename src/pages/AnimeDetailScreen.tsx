@@ -32,7 +32,7 @@ export const AnimeDetailScreen: React.FC<AnimeDetailScreenProps> = ({
   onResume,
   onSelectAnime
 }) => {
-  const [resolved, setResolved] = useState<AnimeItem | null>(anime.id.startsWith('mal-') ? null : anime);
+  const [resolved, setResolved] = useState<AnimeItem | null>(/^(al|mal)-/.test(anime.id) ? null : anime);
   const [resolveError, setResolveError] = useState<string | null>(null);
   const [mode, setMode] = useState<'sub' | 'dub'>('sub');
   const [episodes, setEpisodes] = useState<EpisodeItem[]>([]);
@@ -50,7 +50,7 @@ export const AnimeDetailScreen: React.FC<AnimeDetailScreenProps> = ({
     getUserPreferences().then(p => setMode(p.defaultMode));
   }, []);
 
-  // MyAnimeList-backed entries (opened from a suggestion) first need their
+  // AniList-backed entries (opened from a suggestion) first need their
   // real streaming-site entry. (App keys this screen by anime id, so this
   // runs once per title.)
   useEffect(() => {
