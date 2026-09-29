@@ -225,6 +225,39 @@ export async function getEpisodes(animeId: string): Promise<EpisodeItem[]> {
   }
 }
 
+export async function decryptToken(enc: string): Promise<string> {
+  try {
+    const base64 = enc.replace(/-/g, '+').replace(/_/g, '/');
+    const pad = base64.length % 4;
+    const fullBase64 = pad ? base64 + '='.repeat(4 - pad) : base64;
+    const raw = atob(fullBase64);
+    const encryptedBuf = new Uint8Array(raw.length);
+    for (let i = 0; i < raw.length; i++) {
+      encryptedBuf[i] = raw.charCodeAt(i);
+    }
+
+    const keyStr = "i?LMTAx0Q6,:}50U";
+    const keyBuf = new Uint8Array(32);
+    for (let i = 0; i < Math.min(32, keyStr.length); i++) {
+      keyBuf[i] = keyStr.charCodeAt(i);
+    }
+
+    const ivStr = "W0;27ToaUpl_P%'c";
+    const ivBuf = new Uint8Array(ivStr.length);
+    for (let i = 0; i < ivStr.length; i++) {
+      ivBuf[i] = ivStr.charCodeAt(i);
+    }
+
+    const cryptoObj = typeof window !== 'undefined' && window.crypto ? window.crypto : (globalThis as any).crypto;
+    const key = await cryptoObj.subtle.importKey('raw', keyBuf, { name: 'AES-CBC' }, false, ['decrypt']);
+    const decryptedBuf = await cryptoObj.subtle.decrypt({ name: 'AES-CBC', iv: ivBuf }, key, encryptedBuf);
+    return new TextDecoder().decode(decryptedBuf);
+  } catch (err) {
+    console.error("[aniCliCore] decryptToken error:", err);
+    return "";
+  }
+}
+
 // Fetch servers and resolve stream
 export async function getEpisodeStream(
   animeTitleOrId: string, 
@@ -232,42 +265,38 @@ export async function getEpisodeStream(
   mode: 'sub' | 'dub' = 'sub',
   animeId?: string
 ): Promise<StreamSource> {
-  // 1. First priority: Invoke real ani-cli shell core through the dev-only bridge.
-  // That bridge shells out to a local ani-cli script and only exists while
-  // running `npm run dev` on a machine with it installed - it can never work
-  // inside the built native app, so skip the attempt there entirely.
+  // 1. First priority: Invoke real ani-cli bridge (when running in Vite dev mode).
   if (!Capacitor.isNativePlatform()) {
     try {
       const cleanQuery = (animeId || animeTitleOrId).replace(/-[0-9]+$/, '').replace(/-/g, ' ');
       const epNum = episodeIdOrNumber.replace(/^.*-ep-/, '').replace(/[^0-9.]/g, '') || '1';
       const bridgeUrl = `/api/ani-cli/stream?query=${encodeURIComponent(cleanQuery)}&ep=${encodeURIComponent(epNum)}&mode=${mode}`;
-      console.log("[aniCliCore] Requesting stream from ani-cli:", bridgeUrl);
+      console.log("[aniCliCore] Requesting stream from bridge:", bridgeUrl);
       const res = await fetch(bridgeUrl);
       if (res.ok) {
         const data = await res.json();
         if (data.streamUrl) {
-          console.log("[aniCliCore] Received stream from ani-cli successfully:", data);
+          console.log("[aniCliCore] Received stream from bridge successfully:", data);
           return {
             streamUrl: data.streamUrl,
             quality: data.qualities?.[0]?.quality || "1080p",
             subtitles: data.subtitles || [],
-            referer: data.referer || 'https://zokoanime.video/',
+            referer: data.referer || 'https://hianime.at/',
             masterUrl: data.streamUrl,
             qualities: data.qualities || [{ quality: "1080p", url: data.streamUrl }]
           };
         }
       }
     } catch (err) {
-      console.warn("[aniCliCore] ani-cli bridge call failed, falling back to direct scraper:", err);
+      console.warn("[aniCliCore] bridge call failed, falling back to direct scraper:", err);
     }
   }
 
-  // 2. Secondary fallback: direct scrape
+  // 2. Secondary fallback (and primary path on Capacitor Native App): direct scrape
   try {
     let targetEpisodeId = episodeIdOrNumber;
-    // If targetEpisodeId is not a numeric episode ID (e.g. from episode.id which is >= 3 digits),
-    // resolve from anime episode list
-    if (!/^\d{3,}$/.test(targetEpisodeId)) {
+    // If targetEpisodeId is not a numeric episode ID, resolve from anime episode list
+    if (!/^\d+$/.test(targetEpisodeId)) {
       let numericAnimeId = (animeId || animeTitleOrId).includes("-") ? (animeId || animeTitleOrId).split("-").pop() : "";
       if (!numericAnimeId || !/^\d+$/.test(numericAnimeId)) {
         const found = await searchAnime(animeTitleOrId);
@@ -296,85 +325,82 @@ export async function getEpisodeStream(
       const parser = new DOMParser();
       const doc = parser.parseFromString(data.html, "text/html");
 
-      // Ground truth instead of another guess: log every server entry this
-      // episode's HTML actually lists, so it's visible whether "ZokoAnime"
-      // exists at all, what else is offered, and (crucially) whether this
-      // is even the same server list from one episode/anime to the next -
-      // if it is, the site itself is the reason, not this selector.
-      const serverEls = Array.from(doc.querySelectorAll('[data-type][data-hash], [data-type][data-server-name]'));
-      console.error(`[aniCliCore] episodeId=${targetEpisodeId} mode=${mode} servers found:`,
-        JSON.stringify(serverEls.map(el => ({
-          type: el.getAttribute('data-type'),
-          serverName: el.getAttribute('data-server-name'),
-          hash: el.getAttribute('data-hash')?.slice(0, 24)
-        }))));
-
-      // Prefer a genuine ZokoAnime entry, but fall back to any other server
-      // offering this mode if one isn't listed - removing that fallback
-      // entirely (tried in an earlier fix) turned out wrong: ZokoAnime
-      // apparently isn't reliably present in this site's current markup, so
-      // every request fell through to the demo clip instead, which is worse
-      // (always the same placeholder) than occasionally picking a
-      // real-but-different server. The two were previously combined into
-      // one comma-separated selector, which doesn't prioritize - querySelector
-      // returns whichever clause's match appears first in the DOM, not the
-      // first clause - so a real ZokoAnime entry further down the page could
-      // lose to an earlier unrelated one. Querying them in explicit
-      // preference order fixes that without giving up the fallback.
-      let zokoServer = doc.querySelector(`[data-type="${mode}"][data-server-name="ZokoAnime"]`);
-      if (!zokoServer) {
-        zokoServer = doc.querySelector(`[data-type="${mode}"][data-hash]`);
+      let serverEl = doc.querySelector(`[data-type="${mode}"][data-hash]`);
+      if (!serverEl) {
+        serverEl = doc.querySelector(`[data-hash]`);
       }
-      const hash = zokoServer?.getAttribute("data-hash");
+      const hash = serverEl?.getAttribute("data-hash");
 
       if (hash) {
         const embedUrl = atob(hash);
-        console.error(`[aniCliCore] episodeId=${targetEpisodeId} mode=${mode} resolved embedUrl:`, embedUrl);
-        const refr = embedUrl.replace(/^(https?:\/\/[^/]*).*/, '$1/');
-        const embedRes = await fetch(embedUrl, { headers: UPSTREAM_HEADERS });
-        if (!embedRes.ok) {
-          console.warn(`[aniCliCore] Direct scrape: embed page returned HTTP ${embedRes.status} for ${embedUrl}`);
-        }
-        const embedHtml = await embedRes.text();
-        const pMatch = embedHtml.match(/window\.__P\s*=\s*"([^"]+)"/);
-
-        if (pMatch && pMatch[1]) {
-          const jsonStr = deobfuscateBlob(pMatch[1]);
-          const parsed = JSON.parse(jsonStr);
-
-          if (parsed.src) {
-            const subtitles: SubtitleTrack[] = (parsed.subtitles || []).map((s: any) => ({
-              src: s.src,
-              label: s.lang || s.label || "English",
-              default: s.default === true
-            }));
-
-            // The single most important line for diagnosing "same/wrong
-            // video every time": if this URL is identical across different
-            // anime/episodes, the site itself is serving the same content
-            // (or something upstream of this point is), not this selector.
-            console.error(`[aniCliCore] episodeId=${targetEpisodeId} mode=${mode} RESOLVED STREAM URL:`, parsed.src);
-
-            return {
-              streamUrl: parsed.src,
-              quality: "1080p",
-              subtitles,
-              referer: refr,
-              masterUrl: parsed.src,
-              qualities: [
-                { quality: "1080p", url: parsed.src },
-                { quality: "720p", url: parsed.src },
-                { quality: "480p", url: parsed.src },
-                { quality: "Auto", url: parsed.src }
-              ]
-            };
+        console.log(`[aniCliCore] episodeId=${targetEpisodeId} mode=${mode} resolved embedUrl:`, embedUrl);
+        const embedRes = await fetch(embedUrl, {
+          headers: {
+            ...UPSTREAM_HEADERS,
+            'Referer': `${REMOTE_HOST}/`
           }
-          console.warn("[aniCliCore] Direct scrape: embed payload had no 'src' field", parsed);
-        } else {
-          console.warn("[aniCliCore] Direct scrape: embed page had no window.__P payload (site markup may have changed)");
+        });
+        if (embedRes.ok) {
+          const embedHtml = await embedRes.text();
+          const idMatch = embedHtml.match(/data-id="(\d+)"/i);
+          if (idMatch && idMatch[1]) {
+            const dataId = idMatch[1];
+            const embedOrigin = new URL(embedUrl).origin;
+            const sourcesUrl = `${embedOrigin}/stream/getSourcesNew?id=${dataId}`;
+            const sourcesRes = await fetch(sourcesUrl, {
+              headers: {
+                ...UPSTREAM_HEADERS,
+                'Referer': embedUrl,
+                'X-Requested-With': 'XMLHttpRequest'
+              }
+            });
+            if (sourcesRes.ok) {
+              const sourcesJson = await sourcesRes.json();
+              let rawStreamUrl = "";
+              if (sourcesJson.sources && sourcesJson.sources[0]?.file) {
+                rawStreamUrl = sourcesJson.sources[0].file;
+              } else if (sourcesJson.enc) {
+                const decStr = await decryptToken(sourcesJson.enc);
+                if (decStr) {
+                  try {
+                    const dec = JSON.parse(decStr);
+                    rawStreamUrl = dec.file || dec.src;
+                  } catch (e) {
+                    console.error("[aniCliCore] JSON parse error on decrypted token:", e);
+                  }
+                }
+              }
+
+              if (rawStreamUrl) {
+                const subtitles: SubtitleTrack[] = (sourcesJson.tracks || [])
+                  .filter((t: any) => t.kind === 'captions' || t.file)
+                  .map((s: any) => ({
+                    src: s.file || s.src,
+                    label: s.label || s.lang || "English",
+                    default: s.default === true
+                  }));
+
+                console.log(`[aniCliCore] episodeId=${targetEpisodeId} mode=${mode} RESOLVED STREAM URL:`, rawStreamUrl);
+
+                return {
+                  streamUrl: rawStreamUrl,
+                  quality: "1080p",
+                  subtitles,
+                  referer: embedOrigin + '/',
+                  masterUrl: rawStreamUrl,
+                  qualities: [
+                    { quality: "1080p", url: rawStreamUrl },
+                    { quality: "720p", url: rawStreamUrl },
+                    { quality: "480p", url: rawStreamUrl },
+                    { quality: "Auto", url: rawStreamUrl }
+                  ]
+                };
+              }
+            }
+          }
         }
       } else {
-        console.warn("[aniCliCore] Direct scrape: no ZokoAnime server entry found in servers HTML for mode", mode);
+        console.warn("[aniCliCore] Direct scrape: no server entry found in servers HTML for mode", mode);
       }
     } else {
       console.warn("[aniCliCore] Direct scrape: servers endpoint response had no 'html' field", data);
@@ -383,11 +409,7 @@ export async function getEpisodeStream(
     console.warn("[aniCliCore] Direct scrape threw - falling back to demo stream:", err);
   }
 
-  // Every real source failed. Rather than silently substitute unrelated
-  // content under the real anime's title, say so loudly in the console (the
-  // only place a fallback like this can be diagnosed from, since it always
-  // "succeeds" from the player's point of view) and return a clearly-marked
-  // demo stream so the *player* itself is still provably working.
+  // Every real source failed.
   console.error(
     `[aniCliCore] All real stream sources failed for "${animeTitleOrId}" ep ${episodeIdOrNumber} (${mode}) - ` +
     `showing a demo stream instead of the real episode. See warnings above for which step failed.`

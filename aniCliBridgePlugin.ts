@@ -1,10 +1,143 @@
-// aniCliBridgePlugin.ts - Vite plugin bridging the real ani-cli shell core & streaming proxy
+// aniCliBridgePlugin.ts - Vite plugin bridging stream resolution & streaming proxy
 import type { Plugin } from 'vite';
-import { exec } from 'child_process';
-import path from 'path';
+import crypto from 'crypto';
 import https from 'https';
 import http from 'http';
 import { URL } from 'url';
+
+function decryptToken(enc: string): string {
+  try {
+    const base64 = enc.replace(/-/g, '+').replace(/_/g, '/');
+    const pad = base64.length % 4;
+    const fullBase64 = pad ? base64 + '='.repeat(4 - pad) : base64;
+    const encryptedBuf = Buffer.from(fullBase64, 'base64');
+
+    const keyStr = 'i?LMTAx0Q6,:}50U';
+    const keyBuf = Buffer.alloc(32);
+    keyBuf.write(keyStr);
+
+    const ivBuf = Buffer.from("W0;27ToaUpl_P%'c");
+
+    const decipher = crypto.createDecipheriv('aes-256-cbc', keyBuf, ivBuf);
+    let decrypted = decipher.update(encryptedBuf, undefined, 'utf8');
+    decrypted += decipher.final('utf8');
+    return decrypted;
+  } catch (e) {
+    console.error('[ani-cli-bridge] decryptToken error:', e);
+    return '';
+  }
+}
+
+async function resolveStream(query: string, ep: string, mode: string) {
+  const REMOTE_HOST = 'https://hianime.at';
+  const headers = {
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+    'Referer': `${REMOTE_HOST}/`
+  };
+
+  // 1. Search anime
+  const searchRes = await fetch(`${REMOTE_HOST}/search?keyword=${encodeURIComponent(query)}`, { headers });
+  if (!searchRes.ok) throw new Error(`Search failed: HTTP ${searchRes.status}`);
+  const searchHtml = await searchRes.text();
+
+  const match = searchHtml.match(/href="https:\/\/hianime\.at\/([^"]+)"[^>]*title="([^"]+)"/i) ||
+                searchHtml.match(/href="\/([^"]+)"[^>]*title="([^"]+)"/i);
+  let numericAnimeId = '';
+  if (match && match[1]) {
+    numericAnimeId = match[1].split('-').pop() || '';
+  }
+  if (!numericAnimeId) throw new Error(`No anime found for query "${query}"`);
+
+  // 2. Episode list
+  const epRes = await fetch(`${REMOTE_HOST}/api/theme/episode/list/${numericAnimeId}`, { headers });
+  if (!epRes.ok) throw new Error(`Episodes failed: HTTP ${epRes.status}`);
+  const epData: any = await epRes.json();
+  if (!epData.html) throw new Error('Episode list returned no HTML');
+
+  const epMatches = Array.from((epData.html as string).matchAll(/data-number="([^"]+)"[^>]*data-id="([^"]+)"/g));
+  let targetEpId = '';
+  for (const m of epMatches) {
+    if (m[1] === ep) {
+      targetEpId = m[2];
+      break;
+    }
+  }
+  if (!targetEpId && epMatches.length > 0) {
+    targetEpId = epMatches[0][2];
+  }
+  if (!targetEpId) throw new Error(`Episode ${ep} not found in episode list`);
+
+  // 3. Servers
+  const serversRes = await fetch(`${REMOTE_HOST}/api/theme/episode/servers?episodeId=${targetEpId}`, { headers });
+  if (!serversRes.ok) throw new Error(`Servers failed: HTTP ${serversRes.status}`);
+  const serversData: any = await serversRes.json();
+  if (!serversData.html) throw new Error('Servers returned no HTML');
+
+  const htmlStr = serversData.html as string;
+  const hashMatch = htmlStr.match(new RegExp(`data-type="${mode}"[^>]*data-hash="([^"]+)"`, 'i')) ||
+                    htmlStr.match(/data-hash="([^"]+)"/i);
+  if (!hashMatch || !hashMatch[1]) throw new Error('No server embed hash found');
+
+  const embedUrl = Buffer.from(hashMatch[1], 'base64').toString('utf8');
+
+  // 4. Embed page
+  const embedRes = await fetch(embedUrl, {
+    headers: { ...headers, 'Referer': `${REMOTE_HOST}/` }
+  });
+  if (!embedRes.ok) throw new Error(`Embed failed: HTTP ${embedRes.status}`);
+  const embedHtml = await embedRes.text();
+
+  const idMatch = embedHtml.match(/data-id="(\d+)"/i);
+  if (!idMatch || !idMatch[1]) throw new Error('No data-id in embed HTML');
+  const dataId = idMatch[1];
+
+  // 5. getSourcesNew
+  const embedOrigin = new URL(embedUrl).origin;
+  const sourcesUrl = `${embedOrigin}/stream/getSourcesNew?id=${dataId}`;
+  const sourcesRes = await fetch(sourcesUrl, {
+    headers: {
+      ...headers,
+      'Referer': embedUrl,
+      'X-Requested-With': 'XMLHttpRequest'
+    }
+  });
+  if (!sourcesRes.ok) throw new Error(`getSources failed: HTTP ${sourcesRes.status}`);
+  const sourcesJson: any = await sourcesRes.json();
+
+  let rawVideoLink = '';
+  if (sourcesJson.sources && sourcesJson.sources[0]?.file) {
+    rawVideoLink = sourcesJson.sources[0].file;
+  } else if (sourcesJson.enc) {
+    const decStr = decryptToken(sourcesJson.enc);
+    if (decStr) {
+      const dec = JSON.parse(decStr);
+      rawVideoLink = dec.file || dec.src;
+    }
+  }
+
+  if (!rawVideoLink) throw new Error('Could not extract video link from sources payload');
+
+  const subtitles = (sourcesJson.tracks || [])
+    .filter((t: any) => t.kind === 'captions' || t.file)
+    .map((s: any) => {
+      const proxiedSub = `/stream-proxy?url=${encodeURIComponent(s.file || s.src)}&ref=${encodeURIComponent(embedOrigin + '/')}`;
+      return {
+        src: proxiedSub,
+        label: s.label || s.lang || 'English',
+        default: s.default === true
+      };
+    });
+
+  const proxiedStreamUrl = `/stream-proxy?url=${encodeURIComponent(rawVideoLink)}&ref=${encodeURIComponent(embedOrigin + '/')}`;
+
+  return {
+    streamUrl: proxiedStreamUrl,
+    rawStreamUrl: rawVideoLink,
+    subtitles,
+    qualities: [{ quality: '1080p', url: proxiedStreamUrl }],
+    referer: `${embedOrigin}/`
+  };
+}
 
 export function aniCliBridgePlugin(): Plugin {
   return {
@@ -20,71 +153,21 @@ export function aniCliBridgePlugin(): Plugin {
         const query = reqUrl.searchParams.get('query') || 'solo leveling';
         const ep = reqUrl.searchParams.get('ep') || '1';
         const mode = reqUrl.searchParams.get('mode') || 'sub';
-        const dubFlag = mode === 'dub' ? '--dub' : '';
 
-        console.log(`[ani-cli-bridge] Invoking ani-cli: query="${query}", ep=${ep}, mode=${mode}`);
+        console.log(`[ani-cli-bridge] Resolving stream: query="${query}", ep=${ep}, mode=${mode}`);
 
-        const projectRoot = path.resolve(process.cwd(), '..');
-        const shPath = 'C:\\Program Files\\Git\\bin\\sh.exe';
-        const aniCliPath = './ani-cli/ani-cli';
-        const cmd = `"${shPath}" -c "ANI_CLI_MENU=cat ANI_CLI_PLAYER=debug ${aniCliPath} ${dubFlag} -e ${ep} -S 1 '${query.replace(/'/g, "")}'"`;
-
-        exec(cmd, { cwd: projectRoot, timeout: 25000 }, (error, stdout, stderr) => {
-          if (error) {
-            console.error('[ani-cli-bridge] ani-cli error:', error, stderr);
-            res.statusCode = 500;
-            res.setHeader('Content-Type', 'application/json');
-            res.end(JSON.stringify({ error: 'Failed to resolve stream with ani-cli', details: stderr }));
-            return;
-          }
-
-          console.log('[ani-cli-bridge] ani-cli stdout:', stdout);
-
-          // Parse stdout
-          const selectedLinkMatch = stdout.match(/Selected link:\s*([^\r\n]+)/);
-          const subtitlesMatch = stdout.match(/Subtitles:\s*([^\r\n]+)/);
-          const allLinksSection = stdout.match(/All links:\s*([\s\S]*?)Selected link:/);
-
-          const rawVideoLink = selectedLinkMatch ? selectedLinkMatch[1].trim() : '';
-          const rawSubLink = subtitlesMatch ? subtitlesMatch[1].trim() : '';
-
-          if (!rawVideoLink) {
-            res.statusCode = 404;
-            res.setHeader('Content-Type', 'application/json');
-            res.end(JSON.stringify({ error: 'No video stream found in ani-cli output' }));
-            return;
-          }
-
-          // Parse qualities
-          const qualities: { quality: string; url: string }[] = [];
-          if (allLinksSection && allLinksSection[1]) {
-            const lines = allLinksSection[1].split('\n');
-            for (const line of lines) {
-              const qMatch = line.match(/^([0-9]+)\s*>\s*(https?:\/\/[^\s]+)/);
-              if (qMatch) {
-                const qLabel = `${qMatch[1]}p`;
-                const proxiedUrl = `/stream-proxy?url=${encodeURIComponent(qMatch[2])}&ref=${encodeURIComponent('https://zokoanime.video/')}`;
-                qualities.push({ quality: qLabel, url: proxiedUrl });
-              }
-            }
-          }
-
-          // Fallback or main stream proxy URL
-          const proxiedStreamUrl = `/stream-proxy?url=${encodeURIComponent(rawVideoLink)}&ref=${encodeURIComponent('https://zokoanime.video/')}`;
-          const proxiedSubUrl = rawSubLink 
-            ? `/stream-proxy?url=${encodeURIComponent(rawSubLink)}&ref=${encodeURIComponent('https://zokoanime.video/')}`
-            : '';
-
+        try {
+          const result = await resolveStream(query, ep, mode);
+          console.log('[ani-cli-bridge] Stream resolved successfully:', result.rawStreamUrl);
           res.setHeader('Content-Type', 'application/json');
           res.setHeader('Access-Control-Allow-Origin', '*');
-          res.end(JSON.stringify({
-            streamUrl: proxiedStreamUrl,
-            rawStreamUrl: rawVideoLink,
-            subtitles: proxiedSubUrl ? [{ src: proxiedSubUrl, label: 'English', default: true }] : [],
-            qualities: qualities.length > 0 ? qualities : [{ quality: '1080p', url: proxiedStreamUrl }],
-            referer: 'https://zokoanime.video/'
-          }));
-        });
+          res.end(JSON.stringify(result));
+        } catch (err: any) {
+          console.error('[ani-cli-bridge] Stream resolution error:', err);
+          res.statusCode = 500;
+          res.setHeader('Content-Type', 'application/json');
+          res.end(JSON.stringify({ error: err.message || 'Failed to resolve stream' }));
+        }
       });
 
       // 2. Stream Proxy: /stream-proxy?url=...&ref=...
