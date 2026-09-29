@@ -1,4 +1,4 @@
-name: Build AniStream v3.0 APK
+name: Build AniStream v4.0 APK
 
 on:
   push:
@@ -59,40 +59,34 @@ jobs:
       - name: Package APK for Release
         run: |
           mkdir -p build-output
-          cp android/app/build/outputs/apk/debug/app-debug.apk build-output/AniStream-v3.0.apk
+          cp android/app/build/outputs/apk/debug/app-debug.apk build-output/AniStream-v4.0.apk
 
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: AniStream-v3.0-APK
-          path: build-output/AniStream-v3.0.apk
+          name: AniStream-v4.0-APK
+          path: build-output/AniStream-v4.0.apk
           retention-days: 30
 
       - name: Create GitHub Release
         if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
         uses: softprops/action-gh-release@v2
         with:
-          files: build-output/AniStream-v3.0.apk
-          tag_name: v3.0
-          name: AniStream v3.0 Release
+          files: build-output/AniStream-v4.0.apk
+          tag_name: v4.0
+          name: AniStream v4.0 Release
           body: |
-            ## AniStream v3.0 - Android Anime Streaming App (Powered by ani-cli)
+            ## AniStream v4.0 - Android Anime Streaming App (Powered by ani-cli)
 
             ### 🚀 Updates in this build:
 
-            **Captions - root cause found and fixed:** the player was building its video source directly from `HlsMediaSource`/`ProgressiveMediaSource`, bypassing the only ExoPlayer component that actually merges side-loaded subtitles into playback (`DefaultMediaSourceFactory`). The subtitle track was silently never loaded at all, regardless of format - which is why picking a listed language never showed anything. Switched to `DefaultMediaSourceFactory`, which is the correct, documented way to attach external subtitles. This is a structural fix (not a guess about format/network like earlier attempts) - please verify captions now actually render.
-
-            - **Netflix-style captions/quality sheet**: a proper bottom sheet (dimmed background, rounded panel, big rows with checkmarks) instead of a small dropdown.
-            - **Glossier player chrome**: gradient + elevation/shadow on buttons and the sheet instead of flat color.
-            - **Real quality menu**: prefers actual adaptive renditions detected in the stream; never shows a fake "1080p/720p/480p" list pointing at the same file.
-            - **Fixed homepage flash of fake data**: mock anime list no longer flashes before real trending data loads - now a loading skeleton.
-            - **hasNextEpisode / Next Episode fixed**: previously hardcoded to always-true with a fabricated episode id; now looks up the real next episode from the actual episode list, so it can't try to play an episode that doesn't exist.
-            - **Settings preferences now actually work**: "Autoplay Next Episode" and "Default Audio" were saved but never read anywhere - now wired in. "Default Quality" is applied when a stream genuinely offers more than one rendition.
-            - **No more silent fake-video fallback**: a broken stream used to silently swap in an unrelated sample video with no indication anything failed; now shows a real error message.
-            - **Native dialogs replaced**: `window.confirm()`/`alert()` (jarring native browser popups) replaced with a themed in-app modal everywhere.
-            - Assorted correctness/consistency fixes: stable list keys (was using array index), fabricated "SUB 12" placeholder removed, light-theme badge contrast fixed, consistent danger-red color token, Settings loading state and version string fixed.
+            - **Netflix-style player toolbar**: Episodes / Subtitles / Quality selection moved from the top header down to a toolbar right above the seek bar, matching Netflix's actual mobile layout - each opens a proper bottom sheet with checkmarks, not a small dropdown.
+            - **New: Episode picker in the player**: pick any episode of the current anime directly from the player without backing out to the detail screen. Native player reports the pick back to JS, which re-resolves the real stream - never a guessed URL.
+            - **New: Per-item history delete**: remove a single watch-history entry without clearing everything.
+            - **New: Volume swipe gesture (web player)**: vertical swipe on the right half of the screen adjusts volume, matching the native player's existing gesture support.
+            - Fixed a race condition where the very first episode played for an anime could reach the native player before its real episode list had loaded.
 
             ### 📦 Download:
-            Download **`AniStream-v3.0.apk`** below and install on any Android device running Android 8.0 or later!
+            Download **`AniStream-v4.0.apk`** below and install on any Android device running Android 8.0 or later!
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
