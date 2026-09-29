@@ -1,6 +1,6 @@
 # build-apk.ps1 - Automated Android APK Build Script for AniStream
 Write-Host "=========================================" -ForegroundColor Cyan
-Write-Host "  Building AniStream v1.0 Android APK    " -ForegroundColor Green
+Write-Host "  Building AniStream v6.0 Android APK    " -ForegroundColor Green
 Write-Host "=========================================" -ForegroundColor Cyan
 
 # 1. Build Web Assets
@@ -30,9 +30,9 @@ if (Test-Path "$androidDir\gradlew.bat") {
 
     $apkPath = "$androidDir\app\build\outputs\apk\debug\app-debug.apk"
     if (Test-Path $apkPath) {
-        $finalApk = Join-Path $PSScriptRoot "AniStream-v1.0.apk"
+        $finalApk = Join-Path $PSScriptRoot "AniStream-v6.0.apk"
         Copy-Item $apkPath $finalApk -Force
-        Write-Host "`nSUCCESS! AniStream v1.0 APK generated at:" -ForegroundColor Green
+        Write-Host "`nSUCCESS! AniStream v6.0 APK generated at:" -ForegroundColor Green
         Write-Host $finalApk -ForegroundColor Cyan
     } else {
         Write-Host "`nNotice: To build the APK locally, ensure Android SDK is installed or open the project in Android Studio with:" -ForegroundColor Yellow

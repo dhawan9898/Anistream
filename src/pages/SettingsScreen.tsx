@@ -321,7 +321,7 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({ theme, onChangeT
             </div>
             <div style={{ flex: 1 }}>
               <h4 style={{ fontSize: '14px', fontWeight: 700, color: 'var(--text-primary)' }}>AniStream</h4>
-              <p style={{ fontSize: '12px', color: 'var(--text-secondary)', marginTop: '2px' }}>Version 5.0.0</p>
+              <p style={{ fontSize: '12px', color: 'var(--text-secondary)', marginTop: '2px' }}>Version 6.0.0</p>
             </div>
           </div>
           <div style={{ height: '1px', background: 'var(--border-subtle)', margin: '0 16px' }} />

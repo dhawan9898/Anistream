@@ -215,6 +215,18 @@ public class ExoPlayerActivity extends AppCompatActivity {
 
     private final Runnable hideControlsRunnable = () -> setControlsVisible(false);
 
+    // Transient network failures (dropped Wi-Fi, CDN hiccup, 5xx) are
+    // retried automatically with exponential backoff (1s, 2s, 4s) before the
+    // error overlay is shown; every retry resumes at the last position
+    // instead of restarting the episode from 0:00.
+    private static final int MAX_AUTO_RETRIES = 3;
+    private int autoRetryCount = 0;
+    private long lastKnownPositionMs = 0;
+    private final Runnable autoRetryRunnable = this::retryPlayback;
+    // A retry that fires while the app is in the background must not start
+    // playing audio there (onStop paused the player on purpose).
+    private boolean activityStopped = false;
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -324,11 +336,14 @@ public class ExoPlayerActivity extends AppCompatActivity {
         pendingReferer = referer;
         pendingSubtitlesJson = subtitlesJson;
         long startPositionMs = intent.getLongExtra("startPositionMs", 0L);
+        autoRetryCount = 0;
+        lastKnownPositionMs = Math.max(0L, startPositionMs);
         initializePlayer(videoUrl, referer, subtitlesJson, Math.max(0L, startPositionMs), true);
     }
 
     private void releasePlayer() {
         handler.removeCallbacks(progressTicker);
+        handler.removeCallbacks(autoRetryRunnable);
         if (player != null) {
             player.release();
             player = null;
@@ -1170,14 +1185,41 @@ public class ExoPlayerActivity extends AppCompatActivity {
     }
 
     private void retryPlayback() {
+        handler.removeCallbacks(autoRetryRunnable);
         errorOverlay.setVisibility(View.GONE);
+        long resumeAt = lastKnownPositionMs;
         if (player != null) {
+            resumeAt = Math.max(resumeAt, player.getCurrentPosition());
             player.release();
             player = null;
         }
         if (pendingVideoUrl != null) {
-            initializePlayer(pendingVideoUrl, pendingReferer, pendingSubtitlesJson);
+            initializePlayer(pendingVideoUrl, pendingReferer, pendingSubtitlesJson, Math.max(0L, resumeAt), !activityStopped);
         }
+    }
+
+    // Worth retrying automatically: connectivity/timeouts, and server-side
+    // HTTP failures (429/5xx). A 403/404 or a parsing/decoder error will
+    // fail the same way again, so those go straight to the error overlay.
+    private static boolean isTransientError(androidx.media3.common.PlaybackException error) {
+        switch (error.errorCode) {
+            case androidx.media3.common.PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_FAILED:
+            case androidx.media3.common.PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_TIMEOUT:
+            case androidx.media3.common.PlaybackException.ERROR_CODE_IO_UNSPECIFIED:
+            case androidx.media3.common.PlaybackException.ERROR_CODE_BEHIND_LIVE_WINDOW:
+                return true;
+            default:
+                break;
+        }
+        Throwable cause = error.getCause();
+        while (cause != null) {
+            if (cause instanceof HttpDataSource.InvalidResponseCodeException) {
+                int code = ((HttpDataSource.InvalidResponseCodeException) cause).responseCode;
+                return code == 429 || code >= 500;
+            }
+            cause = cause.getCause();
+        }
+        return false;
     }
 
     private void togglePlayPause() {
@@ -1281,6 +1323,8 @@ public class ExoPlayerActivity extends AppCompatActivity {
                 // "still loading", never a frozen/broken player.
                 bufferingSpinner.setVisibility(state == Player.STATE_BUFFERING ? View.VISIBLE : View.GONE);
                 if (state == Player.STATE_READY) {
+                    // Recovered - a later hiccup gets the full retry budget.
+                    autoRetryCount = 0;
                     textRemainingTime.setText(formatTime(Math.max(player.getDuration(), 0)));
                     maybeFetchSkipTimes();
                 }
@@ -1295,6 +1339,19 @@ public class ExoPlayerActivity extends AppCompatActivity {
             @Override
             public void onPlayerError(androidx.media3.common.PlaybackException error) {
                 Log.e(TAG, "Playback error", error);
+                if (player != null) {
+                    long position = player.getCurrentPosition();
+                    if (position > 0) lastKnownPositionMs = position;
+                }
+                if (isTransientError(error) && autoRetryCount < MAX_AUTO_RETRIES) {
+                    long delayMs = 1000L << autoRetryCount;
+                    autoRetryCount++;
+                    Log.w(TAG, "Transient playback error, retry " + autoRetryCount + "/" + MAX_AUTO_RETRIES + " in " + delayMs + "ms");
+                    bufferingSpinner.setVisibility(View.VISIBLE);
+                    handler.removeCallbacks(autoRetryRunnable);
+                    handler.postDelayed(autoRetryRunnable, delayMs);
+                    return;
+                }
                 showPlaybackError(describePlaybackError(error));
             }
         });
@@ -1393,6 +1450,7 @@ public class ExoPlayerActivity extends AppCompatActivity {
         if (player == null || userSeeking) return;
         long duration = Math.max(player.getDuration(), 0);
         long position = Math.max(player.getCurrentPosition(), 0);
+        if (position > 0) lastKnownPositionMs = position;
         if (duration > 0) {
             seekBar.setProgress((int) ((position * 1000) / duration));
             seekBar.setSecondaryProgress(player.getBufferedPercentage() * 10);
@@ -1619,8 +1677,15 @@ public class ExoPlayerActivity extends AppCompatActivity {
     }
 
     @Override
+    protected void onStart() {
+        super.onStart();
+        activityStopped = false;
+    }
+
+    @Override
     protected void onStop() {
         super.onStop();
+        activityStopped = true;
         reportProgressNow();
         if (player != null) {
             player.pause();

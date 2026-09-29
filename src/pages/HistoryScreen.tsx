@@ -3,7 +3,7 @@ import React, { useState, useEffect } from 'react';
 import { Clock, Bookmark, Trash2, Play, Loader2, X } from 'lucide-react';
 import {
   getWatchHistory, clearWatchHistory, removeWatchHistoryItem, getBookmarks,
-  type WatchHistoryItem
+  subscribeLibraryChanges, type WatchHistoryItem
 } from '../services/historyService';
 import type { AnimeItem } from '../core/aniCliCore';
 import { ConfirmModal } from '../components/ConfirmModal';
@@ -23,17 +23,23 @@ export const HistoryScreen: React.FC<HistoryScreenProps> = ({
   const [loading, setLoading] = useState<boolean>(true);
   const [confirmingClear, setConfirmingClear] = useState<boolean>(false);
 
-  const loadData = async () => {
-    const history = await getWatchHistory();
-    const bookmarks = await getBookmarks();
-    setHistoryList(history);
-    setBookmarkedAnime(bookmarks);
-    setLoading(false);
-  };
-
+  // Reloaded whenever history/bookmarks change (e.g. progress saved by the
+  // player that was opened from this screen).
   useEffect(() => {
+    let cancelled = false;
+    const loadData = async () => {
+      const [history, bookmarks] = await Promise.all([getWatchHistory(), getBookmarks()]);
+      if (cancelled) return;
+      setHistoryList(history);
+      setBookmarkedAnime(bookmarks);
+      setLoading(false);
+    };
     loadData();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    const unsubscribe = subscribeLibraryChanges(loadData);
+    return () => {
+      cancelled = true;
+      unsubscribe();
+    };
   }, []);
 
   const handleClearHistory = async () => {
@@ -148,7 +154,7 @@ export const HistoryScreen: React.FC<HistoryScreenProps> = ({
                     }}
                   >
                     <div style={{ position: 'relative', width: '80px', height: '60px', borderRadius: '8px', overflow: 'hidden', flexShrink: 0 }}>
-                      <img src={item.poster} alt={item.animeTitle} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                      <img src={item.poster} alt={item.animeTitle} loading="lazy" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
                       <div style={{
                         position: 'absolute',
                         inset: 0,
@@ -222,6 +228,7 @@ export const HistoryScreen: React.FC<HistoryScreenProps> = ({
                     <img
                       src={anime.poster}
                       alt={anime.title}
+                      loading="lazy"
                       style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', objectFit: 'cover' }}
                     />
                   </div>

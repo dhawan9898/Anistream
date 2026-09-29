@@ -1,5 +1,5 @@
 // App.tsx - Main Android Application Controller for AniStream
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo, Suspense, lazy } from 'react';
 import { Home as HomeIcon, Search as SearchIcon, Library, Settings as SettingsIcon } from 'lucide-react';
 import { Capacitor } from '@capacitor/core';
 import { ExoPlayerPlugin } from './plugins/exoPlayerPlugin';
@@ -10,7 +10,6 @@ import { HistoryScreen } from './pages/HistoryScreen';
 import { GenreScreen } from './pages/GenreScreen';
 import type { Genre } from './services/catalogService';
 import { SettingsScreen } from './pages/SettingsScreen';
-import { VideoPlayer } from './components/VideoPlayer';
 import { ConfirmModal } from './components/ConfirmModal';
 import {
   getEpisodeStream,
@@ -20,10 +19,41 @@ import {
   type StreamSource,
   FEATURED_ANIME
 } from './core/aniCliCore';
-import { saveWatchProgress, getUserPreferences, type WatchHistoryItem } from './services/historyService';
+import { saveWatchProgress, getUserPreferences, isEpisodeFinished, type WatchHistoryItem } from './services/historyService';
 import { getTheme, getStoredThemeSync, setTheme as persistTheme, type ThemeMode } from './services/themeService';
 
+// The web player (and hls.js, the largest dependency) is only needed once
+// something actually plays in the browser - on Android the native
+// ExoPlayer is used - so it's split out of the startup bundle.
+const VideoPlayer = lazy(() => import('./components/VideoPlayer').then(m => ({ default: m.VideoPlayer })));
+
 type Tab = 'home' | 'search' | 'library' | 'settings';
+
+interface PlaybackSession {
+  anime: AnimeItem;
+  episode: EpisodeItem;
+  mode: 'sub' | 'dub';
+  source: StreamSource;
+  startTime: number;
+}
+
+// Persists a position report for a committed session. The demo fallback
+// clip is never the real episode, so its "progress" must not overwrite the
+// user's real resume point.
+function saveSessionProgress(session: PlaybackSession, currentTime: number, duration: number) {
+  if (session.source.isFallback || !(duration > 0)) return;
+  saveWatchProgress({
+    animeId: session.anime.id,
+    animeTitle: session.anime.title,
+    poster: session.anime.poster,
+    episodeId: session.episode.id,
+    episodeNumber: session.episode.number,
+    currentTime,
+    duration,
+    updatedAt: Date.now(),
+    mode: session.mode
+  });
+}
 
 const TABS: { id: Tab; label: string; icon: React.ComponentType<{ size?: number }> }[] = [
   { id: 'home', label: 'Home', icon: HomeIcon },
@@ -76,9 +106,15 @@ export const App: React.FC = () => {
   const [playingAnime, setPlayingAnime] = useState<AnimeItem | null>(null);
   const [playingEpisode, setPlayingEpisode] = useState<EpisodeItem | null>(null);
   const [playingMode, setPlayingMode] = useState<'sub' | 'dub'>('sub');
-  const [streamSource, setStreamSource] = useState<StreamSource | null>(null);
   const [streamLoading, setStreamLoading] = useState<boolean>(false);
-  const [initialSeekTime, setInitialSeekTime] = useState<number>(0);
+  // What the player is *actually* playing. playingAnime/Episode/Mode above
+  // flip as soon as a new episode is requested (so next/prev taps chain
+  // correctly), but the old stream keeps playing until the new one
+  // resolves - progress must be saved against this committed session, or
+  // the old episode's position ends up recorded under the new episode.
+  const [nowPlaying, setNowPlaying] = useState<PlaybackSession | null>(null);
+  const nowPlayingRef = useRef<PlaybackSession | null>(null);
+  nowPlayingRef.current = nowPlaying;
   const [streamErrorMessage, setStreamErrorMessage] = useState<string | null>(null);
   // Bumped on every play request and whenever the native player is closed,
   // so a slow stream resolution that finishes after the user moved on (or
@@ -153,21 +189,14 @@ export const App: React.FC = () => {
       playRequestRef.current++;
       setStreamLoading(false);
     });
-    const progressHandle = ExoPlayerPlugin.addListener('progressUpdate', ({ positionMs, durationMs }) => {
-      const anime = playingAnimeRef.current;
-      const episode = playingEpisodeRef.current;
-      if (!anime || !episode || durationMs <= 0) return;
-      saveWatchProgress({
-        animeId: anime.id,
-        animeTitle: anime.title,
-        poster: anime.poster,
-        episodeId: episode.id,
-        episodeNumber: episode.number,
-        currentTime: positionMs / 1000,
-        duration: durationMs / 1000,
-        updatedAt: Date.now(),
-        mode: playingModeRef.current
-      });
+    const progressHandle = ExoPlayerPlugin.addListener('progressUpdate', ({ episode, mode, positionMs, durationMs }) => {
+      // The native player sends its final report for episode N *after* it
+      // asked for N+1, so match the report to the session it describes
+      // rather than to whatever was requested last.
+      const session = nowPlayingRef.current;
+      if (!session || durationMs <= 0) return;
+      if (episode !== session.episode.number || (mode && mode !== session.mode)) return;
+      saveSessionProgress(session, positionMs / 1000, durationMs / 1000);
     });
     return () => {
       modeHandle.then(h => h.remove());
@@ -200,7 +229,6 @@ export const App: React.FC = () => {
     setPlayingAnime(anime);
     setPlayingEpisode(episode);
     setPlayingMode(mode);
-    setInitialSeekTime(startTime);
 
     // Real episode list for this anime, used for hasNextEpisode/next-episode
     // lookups and the native player's episode picker - only re-fetched when
@@ -238,7 +266,7 @@ export const App: React.FC = () => {
       }
 
       if (requestId !== playRequestRef.current) return;
-      setStreamSource(source);
+      setNowPlaying({ anime, episode, mode, source, startTime });
 
       if (isNative) {
         try {
@@ -293,7 +321,30 @@ export const App: React.FC = () => {
       title: `Episode ${historyItem.episodeNumber}`
     };
 
-    handlePlayEpisode(matchedAnime, resumeEpisode, historyItem.mode, historyItem.currentTime);
+    // Resuming a finished episode used to drop the viewer straight into its
+    // end credits (and the next-episode countdown) - start it over instead.
+    const startAt = isEpisodeFinished(historyItem) ? 0 : historyItem.currentTime;
+    handlePlayEpisode(matchedAnime, resumeEpisode, historyItem.mode, startAt);
+  };
+
+  // Progress handler bound to one committed session: the player captures it
+  // per stream, so its final report on an episode change still lands on
+  // the episode that was actually playing.
+  const handleProgressUpdate = useMemo(() => {
+    if (!nowPlaying) return undefined;
+    const session = nowPlaying;
+    return (time: number, dur: number, streamUrl: string) => {
+      if (streamUrl !== session.source.streamUrl) return;
+      saveSessionProgress(session, time, dur);
+    };
+  }, [nowPlaying]);
+
+  const closeWebPlayer = () => {
+    // Also drop any stream still resolving, so it can't reopen the player
+    // a moment after the user backed out.
+    playRequestRef.current++;
+    setStreamLoading(false);
+    setIsPlaying(false);
   };
 
   // Next episode handler (manual "Next" tap) - always honored regardless of
@@ -351,6 +402,7 @@ export const App: React.FC = () => {
             onResumeEpisode={handleResumeEpisode}
             onOpenSearch={() => switchTab('search')}
             onSelectGenre={openGenre}
+            paused={isPlaying}
           />
         ) : currentTab === 'search' ? (
           <SearchScreen
@@ -384,33 +436,23 @@ export const App: React.FC = () => {
       />
 
       {/* Fullscreen Cinema Player */}
-      {isPlaying && streamSource && playingAnime && playingEpisode && (
+      {isPlaying && nowPlaying && (
+        <Suspense fallback={<div style={{ position: 'fixed', inset: 0, background: '#000', zIndex: 9999 }} />}>
         <VideoPlayer
-          streamSource={streamSource}
-          animeTitle={playingAnime.title}
-          episode={playingEpisode}
-          mode={playingMode}
-          initialTime={initialSeekTime}
-          onBack={() => setIsPlaying(false)}
+          streamSource={nowPlaying.source}
+          animeTitle={nowPlaying.anime.title}
+          episode={nowPlaying.episode}
+          mode={nowPlaying.mode}
+          initialTime={nowPlaying.startTime}
+          onBack={closeWebPlayer}
           onNextEpisode={handleNextEpisode}
           hasNextEpisode={hasNextEpisode}
           episodeList={episodeList}
-          onSelectEpisode={(ep) => handlePlayEpisode(playingAnime, ep, playingMode, 0)}
-          onSwitchMode={(newMode) => handlePlayEpisode(playingAnime, playingEpisode, newMode, 0)}
-          onProgressUpdate={(time, dur) => {
-            saveWatchProgress({
-              animeId: playingAnime.id,
-              animeTitle: playingAnime.title,
-              poster: playingAnime.poster,
-              episodeId: playingEpisode.id,
-              episodeNumber: playingEpisode.number,
-              currentTime: time,
-              duration: dur,
-              updatedAt: Date.now(),
-              mode: playingMode
-            });
-          }}
+          onSelectEpisode={(ep) => handlePlayEpisode(nowPlaying.anime, ep, playingMode, 0)}
+          onSwitchMode={(newMode) => handlePlayEpisode(nowPlaying.anime, nowPlaying.episode, newMode, 0)}
+          onProgressUpdate={handleProgressUpdate}
         />
+        </Suspense>
       )}
 
       {/* Floating Apple-TV style glass dock (hidden during player and detail view).

@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Play, Flame, Clock, ChevronRight, ChevronDown, Bookmark, Search as SearchIcon } from 'lucide-react';
 import { getTrendingAnime, type AnimeItem } from '../core/aniCliCore';
-import { getWatchHistory, type WatchHistoryItem } from '../services/historyService';
+import { getWatchHistory, subscribeLibraryChanges, type WatchHistoryItem } from '../services/historyService';
 import { getAnimeByGenre, getGenres, type Genre } from '../services/catalogService';
 import { PosterCard } from '../components/PosterCard';
 import { GenrePicker } from '../components/GenrePicker';
@@ -59,13 +59,16 @@ interface HomeScreenProps {
   onResumeEpisode: (history: WatchHistoryItem) => void;
   onOpenSearch: () => void;
   onSelectGenre: (genre: Genre) => void;
+  // True while a player covers this screen.
+  paused?: boolean;
 }
 
 export const HomeScreen: React.FC<HomeScreenProps> = ({
   onSelectAnime,
   onResumeEpisode,
   onOpenSearch,
-  onSelectGenre
+  onSelectGenre,
+  paused = false
 }) => {
   const [pickerOpen, setPickerOpen] = useState<boolean>(false);
   const [rowGenres, setRowGenres] = useState<Genre[]>([]);
@@ -82,24 +85,44 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
   const [loadingTrending, setLoadingTrending] = useState<boolean>(true);
 
   useEffect(() => {
+    let cancelled = false;
     getTrendingAnime().then(list => {
+      if (cancelled) return;
       setTrending(list);
       setFeaturedIndex(0);
       setLoadingTrending(false);
     });
+    return () => { cancelled = true; };
   }, []);
 
-  // Auto-cycle hero banner every 6 seconds
+  // Auto-cycle hero banner every 6 seconds - but not while the app is in
+  // the background or a player covers the screen (this screen stays
+  // mounted under the web player, and re-rendering the whole home feed
+  // every 6s there costs frames during playback).
   useEffect(() => {
+    if (trending.length < 2 || paused) return;
     const timer = setInterval(() => {
-      setFeaturedIndex(prev => (prev + 1) % (Math.min(trending.length, 8) || 1));
+      if (document.hidden) return;
+      setFeaturedIndex(prev => (prev + 1) % Math.min(trending.length, 8));
     }, 6000);
     return () => clearInterval(timer);
-  }, [trending]);
+  }, [trending, paused]);
 
+  // Continue Watching stays current: it follows library changes while this
+  // screen is visible, and reloads once when the player covering it closes
+  // (not on every progress save during playback, which would re-render the
+  // whole feed under the video every few seconds).
   useEffect(() => {
-    getWatchHistory().then(setHistory);
-  }, []);
+    if (paused) return;
+    let cancelled = false;
+    const load = () => getWatchHistory().then(list => { if (!cancelled) setHistory(list); });
+    load();
+    const unsubscribe = subscribeLibraryChanges(load);
+    return () => {
+      cancelled = true;
+      unsubscribe();
+    };
+  }, [paused]);
 
   const heroAnime = trending[featuredIndex] || trending[0];
 
@@ -224,7 +247,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
             <span className="glass-pill-dark" style={{ fontSize: '11px', fontWeight: 600, padding: '3px 8px', borderRadius: '6px', color: '#cbd5e1' }}>
               {heroAnime.type || 'TV'}
             </span>
-            {heroAnime.subCount && (
+            {!!heroAnime.subCount && (
               <span className="glass-pill-dark" style={{ fontSize: '11px', fontWeight: 600, padding: '3px 8px', borderRadius: '6px', color: '#818cf8' }}>
                 SUB: {heroAnime.subCount}
               </span>
@@ -488,7 +511,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
                   {anime.title}
                 </h3>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                  {anime.subCount && (
+                  {!!anime.subCount && (
                     <span style={{
                       fontSize: '10px',
                       fontWeight: 700,
@@ -500,7 +523,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
                       SUB {anime.subCount}
                     </span>
                   )}
-                  {anime.dubCount && (
+                  {!!anime.dubCount && (
                     <span style={{
                       fontSize: '10px',
                       fontWeight: 700,

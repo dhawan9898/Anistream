@@ -17,6 +17,15 @@ interface PosterCardProps {
 export const PosterCard: React.FC<PosterCardProps> = ({ anime, onClick, width, caption, highlighted, badge }) => (
   <div
     onClick={onClick}
+    onKeyDown={(e) => {
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        onClick();
+      }
+    }}
+    role="button"
+    tabIndex={0}
+    aria-label={caption && caption !== anime.title ? `${anime.title} - ${caption}` : anime.title}
     className="interactive"
     style={{
       flex: width ? `0 0 ${width}px` : undefined,
@@ -41,6 +50,7 @@ export const PosterCard: React.FC<PosterCardProps> = ({ anime, onClick, width, c
           src={anime.poster}
           alt={anime.title}
           loading="lazy"
+          decoding="async"
           style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }}
         />
       )}

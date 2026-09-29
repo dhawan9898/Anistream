@@ -1,7 +1,7 @@
 // SearchScreen.tsx - Rapid anime search powered by ani-cli scraper
 import React, { useState, useEffect, useRef } from 'react';
 import { Search as SearchIcon, X, Loader2, ArrowLeft } from 'lucide-react';
-import { searchAnime, type AnimeItem } from '../core/aniCliCore';
+import { searchAnimeLive, type AnimeItem } from '../core/aniCliCore';
 import { getGenres, type Genre } from '../services/catalogService';
 
 // Tile colors for the "Browse by genre" grid, cycled in order.
@@ -32,12 +32,15 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({
   const [genres, setGenres] = useState<Genre[]>([]);
 
   useEffect(() => {
-    getGenres().then(setGenres);
+    let cancelled = false;
+    getGenres().then(list => { if (!cancelled) setGenres(list); });
+    return () => { cancelled = true; };
   }, []);
 
   const [query, setQuery] = useState<string>('');
   const [results, setResults] = useState<AnimeItem[]>([]);
   const [loading, setLoading] = useState<boolean>(false);
+  const [searchError, setSearchError] = useState<boolean>(false);
   const inputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
@@ -54,12 +57,22 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({
     searchSeq.current++;
   }, []);
 
+  // Live results only: the old path silently swapped in made-up "results"
+  // when the site was unreachable, which looked like real anime that then
+  // failed to play. A failure is now shown as such, with a retry.
   const runSearch = async (searchTerm: string) => {
     const seq = ++searchSeq.current;
     setLoading(true);
+    setSearchError(false);
     try {
-      const list = await searchAnime(searchTerm);
+      const list = await searchAnimeLive(searchTerm);
       if (seq === searchSeq.current) setResults(list);
+    } catch (err) {
+      console.warn('[SearchScreen] search failed:', err);
+      if (seq === searchSeq.current) {
+        setResults([]);
+        setSearchError(true);
+      }
     } finally {
       if (seq === searchSeq.current) setLoading(false);
     }
@@ -72,6 +85,7 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({
       searchSeq.current++;
       setResults([]);
       setLoading(false);
+      setSearchError(false);
       return;
     }
     if (immediate) {
@@ -133,6 +147,8 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({
             type="text"
             value={query}
             placeholder="Search anime or movie..."
+            aria-label="Search anime"
+            enterKeyHint="search"
             onChange={(e) => handleSearch(e.target.value, false)}
             style={{
               flex: 1,
@@ -147,6 +163,7 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({
             <button
               onClick={() => handleSearch('')}
               className="interactive"
+              aria-label="Clear search"
               style={{ background: 'none', border: 'none', color: 'var(--text-muted)', display: 'flex' }}
             >
               <X size={18} />
@@ -223,6 +240,18 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({
             ))}
           </div>
         </div>
+      ) : searchError ? (
+        <div style={{ textAlign: 'center', padding: '60px 20px', color: 'var(--text-secondary)' }}>
+          <p style={{ fontSize: '16px', fontWeight: 600, marginBottom: '6px', color: 'var(--text-primary)' }}>Couldn't reach the server</p>
+          <p style={{ fontSize: '13px', marginBottom: '16px' }}>Check your connection and try again.</p>
+          <button
+            onClick={() => handleSearch(query)}
+            className="interactive glass-pill chip active"
+            style={{ padding: '10px 22px', borderRadius: 'var(--radius-full)', fontSize: '13px', fontWeight: 700 }}
+          >
+            Retry
+          </button>
+        </div>
       ) : results.length === 0 ? (
         <div style={{ textAlign: 'center', padding: '60px 20px', color: 'var(--text-secondary)' }}>
           <p style={{ fontSize: '16px', fontWeight: 600, marginBottom: '6px', color: 'var(--text-primary)' }}>No anime found</p>
@@ -234,6 +263,15 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({
             <div
               key={anime.id}
               onClick={() => onSelectAnime(anime)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault();
+                  onSelectAnime(anime);
+                }
+              }}
+              role="button"
+              tabIndex={0}
+              aria-label={anime.title}
               className="interactive glass-panel"
               style={{
                 borderRadius: 'var(--radius-md)',
@@ -246,6 +284,8 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({
                 <img
                   src={anime.poster}
                   alt={anime.title}
+                  loading="lazy"
+                  decoding="async"
                   style={{
                     position: 'absolute',
                     top: 0,
@@ -286,7 +326,7 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({
                   {anime.title}
                 </h3>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                  {anime.subCount && (
+                  {!!anime.subCount && (
                     <span style={{
                       fontSize: '10px',
                       fontWeight: 700,
@@ -298,7 +338,7 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({
                       SUB {anime.subCount}
                     </span>
                   )}
-                  {anime.dubCount && (
+                  {!!anime.dubCount && (
                     <span style={{
                       fontSize: '10px',
                       fontWeight: 700,

@@ -1,4 +1,4 @@
-name: Build AniStream v5.0 APK
+name: Build AniStream v6.0 APK
 
 on:
   push:
@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
     inputs:
       release_tag:
-        description: 'Tag to publish this build under (e.g. v5.0) - leave empty to just build, no release'
+        description: 'Tag to publish this build under (e.g. v6.0) - leave empty to just build, no release'
         required: false
         default: ''
 
@@ -64,13 +64,13 @@ jobs:
       - name: Package APK for Release
         run: |
           mkdir -p build-output
-          cp android/app/build/outputs/apk/debug/app-debug.apk build-output/AniStream-v5.0.apk
+          cp android/app/build/outputs/apk/debug/app-debug.apk build-output/AniStream-v6.0.apk
 
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: AniStream-v5.0-APK
-          path: build-output/AniStream-v5.0.apk
+          name: AniStream-v6.0-APK
+          path: build-output/AniStream-v6.0.apk
           retention-days: 30
 
       - name: Create GitHub Release
@@ -81,21 +81,22 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch' && inputs.release_tag != '')
         uses: softprops/action-gh-release@v2
         with:
-          files: build-output/AniStream-v5.0.apk
+          files: build-output/AniStream-v6.0.apk
           tag_name: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || inputs.release_tag }}
           name: AniStream ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || inputs.release_tag }} Release
           body: |
-            ## AniStream v5.0 - Android Anime Streaming App (Powered by ani-cli)
+            ## AniStream v6.0 - Android Anime Streaming App (Powered by ani-cli)
 
-            ### 🚀 What's new in v5.0:
+            ### 🚀 What's new in v6.0:
 
-            - **Tablet & landscape ready**: poster, genre, collection and episode grids now adapt to the screen width (more columns on tablets and wide windows instead of a stretched phone layout), and the layout fills the real viewport height so the bottom dock is never hidden behind mobile browser toolbars.
-            - **Faster, more reliable playback loading**: every step of stream resolution now has a timeout, so a stalled server can no longer leave the player spinning forever - it fails cleanly and lets you retry.
-            - **Smoother search**: typing is debounced and stale responses are ignored, so results always match what is in the search box and the server isn't hammered on every keystroke.
-            - **Safer watch history & My List**: saves are serialized and coalesced, so rapid progress updates can no longer overwrite bookmarks or history entries, and storage is written far less often during playback.
-            - Plus everything from v4.x: in-player episode loading, genre browsing, Collection / More Like This, and the Netflix-style player.
+            - **Server fallback**: when the first mirror for an episode is dead, the remaining servers for the same audio (SUB/DUB) are tried before anything falls back to the demo clip.
+            - **Self-healing playback**: dropped connections and CDN 5xx errors are retried automatically with backoff (native ExoPlayer and web player), and **Retry** resumes where playback stopped instead of restarting at 0:00.
+            - **Accurate Continue Watching**: progress can no longer be saved under the wrong episode while the next one loads, the demo clip never overwrites your resume point, and Home / title page / Library update live after you watch. Finished episodes offer the next episode instead of resuming into the credits.
+            - **Lighter & smoother**: the startup bundle is ~65% smaller (the web player loads on demand), progress writes are throttled, player timers/listeners are cleaned up on close, and site pages/episode lists are cached so the source isn't hammered.
+            - **Fixes**: correct Skip Intro timing after switching episodes, no stray "0" badges, a real error state (with Retry) when search can't reach the server, subtitle menu no longer lists the thumbnail track, fullscreen state stays in sync.
+            - Plus everything from v5.x: tablet/landscape layouts, request timeouts, debounced search, serialized history writes.
 
             ### 📦 Download:
-            Download **`AniStream-v5.0.apk`** below and install or update on any Android device running Android 8.0 or later!
+            Download **`AniStream-v6.0.apk`** below and install or update on any Android device running Android 8.0 or later!
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
