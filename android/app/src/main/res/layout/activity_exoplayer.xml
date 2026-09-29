@@ -317,7 +317,7 @@
          above the (still-visible) transport controls it visually overlaps. -->
     <LinearLayout
         android:id="@+id/error_overlay"
-        android:layout_width="260dp"
+        android:layout_width="300dp"
         android:layout_height="wrap_content"
         android:layout_gravity="center"
         android:orientation="vertical"
@@ -331,7 +331,7 @@
             android:layout_height="wrap_content"
             android:gravity="center"
             android:textColor="#ffffff"
-            android:textSize="13sp"
+            android:textSize="12sp"
             android:layout_marginBottom="14dp" />
 
         <TextView

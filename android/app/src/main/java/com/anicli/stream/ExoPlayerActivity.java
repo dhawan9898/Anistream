@@ -34,6 +34,7 @@ import androidx.media3.common.TrackSelectionOverride;
 import androidx.media3.common.Tracks;
 import androidx.media3.common.util.UnstableApi;
 import androidx.media3.datasource.DefaultHttpDataSource;
+import androidx.media3.datasource.HttpDataSource;
 import androidx.media3.exoplayer.ExoPlayer;
 import androidx.media3.exoplayer.hls.HlsMediaSource;
 import androidx.media3.exoplayer.source.MediaSource;
@@ -744,6 +745,35 @@ public class ExoPlayerActivity extends AppCompatActivity {
         finish();
     }
 
+    // Surfaces the real cause of a playback failure - an HTTP status code
+    // when the CDN itself rejected a request (blocked/expired link), or the
+    // specific exception otherwise (e.g. an unrecognized container/codec) -
+    // instead of one generic message that can't be told apart from any other
+    // failure. Needed because this app has no real device to test against;
+    // this is what turns the next report into an actual diagnosis.
+    private String describePlaybackError(androidx.media3.common.PlaybackException error) {
+        StringBuilder sb = new StringBuilder("Couldn't play this stream.\n");
+        sb.append(error.getErrorCodeName());
+        Throwable cause = error.getCause();
+        while (cause != null) {
+            if (cause instanceof HttpDataSource.InvalidResponseCodeException) {
+                HttpDataSource.InvalidResponseCodeException httpEx = (HttpDataSource.InvalidResponseCodeException) cause;
+                sb.append("\nHTTP ").append(httpEx.responseCode);
+                if (httpEx.dataSpec != null && httpEx.dataSpec.uri != null) {
+                    String uri = httpEx.dataSpec.uri.toString();
+                    sb.append(" - ").append(uri.length() > 80 ? uri.substring(0, 80) + "…" : uri);
+                }
+                break;
+            }
+            if (cause.getMessage() != null && !cause.getMessage().isEmpty()) {
+                sb.append("\n").append(cause.getClass().getSimpleName()).append(": ").append(cause.getMessage());
+                break;
+            }
+            cause = cause.getCause();
+        }
+        return sb.toString();
+    }
+
     // A failed stream used to just hang on a black screen with an infinite
     // buffering spinner - show what happened and let the user retry or back out.
     private void showPlaybackError(String message) {
@@ -877,7 +907,7 @@ public class ExoPlayerActivity extends AppCompatActivity {
             @Override
             public void onPlayerError(androidx.media3.common.PlaybackException error) {
                 Log.e(TAG, "Playback error", error);
-                showPlaybackError("Couldn't play this stream. The server may be blocking it or the format isn't supported.");
+                showPlaybackError(describePlaybackError(error));
             }
         });
 
