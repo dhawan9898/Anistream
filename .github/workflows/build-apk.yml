@@ -78,13 +78,11 @@ jobs:
           body: |
             ## AniStream v4.0 - Android Anime Streaming App (Powered by ani-cli)
 
-            ### 🚀 Updates in this build:
+            ### 🐛 Bug fixes in this update:
 
-            - **Netflix-style player toolbar**: Episodes / Subtitles / Quality selection moved from the top header down to a toolbar right above the seek bar, matching Netflix's actual mobile layout - each opens a proper bottom sheet with checkmarks, not a small dropdown.
-            - **New: Episode picker in the player**: pick any episode of the current anime directly from the player without backing out to the detail screen. Native player reports the pick back to JS, which re-resolves the real stream - never a guessed URL.
-            - **New: Per-item history delete**: remove a single watch-history entry without clearing everything.
-            - **New: Volume swipe gesture (web player)**: vertical swipe on the right half of the screen adjusts volume, matching the native player's existing gesture support.
-            - Fixed a race condition where the very first episode played for an anime could reach the native player before its real episode list had loaded.
+            - **Episode picker not scrolling**: the native episode/subtitle/quality bottom sheet had no scroll container at all, so an anime with a long episode list overflowed the screen with no way to reach the rest. It's now wrapped in a capped-height `ScrollView`.
+            - **Video not loading**: reverted the native player's media source construction back to the explicit HLS/Progressive branching this app always used, instead of relying on `DefaultMediaSourceFactory`'s file-extension-based auto-detection, which can misdetect real/proxied stream URLs that don't carry a recognizable extension. Subtitle merging is preserved via an explicit `MergingMediaSource`. **Note:** this could not be reproduced or confirmed fixed from the dev sandbox (no access to the live streaming site or a real device) - it's the most likely diagnosis based on what changed since the last working build. Please confirm on-device and report back if it still doesn't play.
+            - **Skip Intro/Outro ported to native, and Outro added to both platforms**: the web player only had "Skip Intro" (from AniSkip's real per-episode data); the native player had a fake hardcoded skip range that didn't match every anime/episode. Both platforms now look up real per-episode opening *and* ending timestamps from AniSkip and only show a Skip button when real data exists for that anime/episode - never a guessed range.
 
             ### 📦 Download:
             Download **`AniStream-v4.0.apk`** below and install on any Android device running Android 8.0 or later!
