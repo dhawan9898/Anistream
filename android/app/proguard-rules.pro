@@ -1,21 +1,37 @@
-# Add project specific ProGuard rules here.
-# You can control the set of applied configuration files using the
-# proguardFiles setting in build.gradle.
+# R8 rules for the minified release build.
 #
-# For more details, see
-#   http://developer.android.com/guide/developing/tools/proguard.html
+# Capacitor finds plugins and their @PluginMethod methods by reflection and
+# calls into the WebView through @JavascriptInterface methods, so none of
+# those may be renamed or stripped. Capacitor's library ships consumer rules
+# for this already; these are kept here explicitly as a safety net.
 
-# If your project uses WebView with JS, uncomment the following
-# and specify the fully qualified class name to the JavaScript interface
-# class:
-#-keepclassmembers class fqcn.of.javascript.interface.for.webview {
-#   public *;
-#}
+# Annotations are read at runtime (@CapacitorPlugin, @PluginMethod, ...).
+-keepattributes *Annotation*,Signature,InnerClasses,EnclosingMethod
 
-# Uncomment this to preserve the line number information for
-# debugging stack traces.
-#-keepattributes SourceFile,LineNumberTable
+# Readable crash stack traces (mapping.txt is uploaded by CI).
+-keepattributes SourceFile,LineNumberTable
+-renamesourcefileattribute SourceFile
 
-# If you keep the line number information, uncomment this to
-# hide the original source file name.
-#-renamesourcefileattribute SourceFile
+# Capacitor bridge + plugins.
+-keep class com.getcapacitor.** { *; }
+-keep @com.getcapacitor.annotation.CapacitorPlugin public class * {
+    @com.getcapacitor.PluginMethod public <methods>;
+}
+-keep public class * extends com.getcapacitor.Plugin { *; }
+
+# WebView <-> JS bridge methods.
+-keepclassmembers class * {
+    @android.webkit.JavascriptInterface <methods>;
+}
+
+# This app's plugin and activities (registered by class / manifest name).
+-keep class com.anicli.stream.ExoPlayerPlugin { *; }
+-keep class com.anicli.stream.MainActivity
+-keep class com.anicli.stream.ExoPlayerActivity
+
+# Cordova compatibility layer bundled by Capacitor.
+-keep public class * extends org.apache.cordova.* {
+    public <methods>;
+    public <fields>;
+}
+-dontwarn org.apache.cordova.**

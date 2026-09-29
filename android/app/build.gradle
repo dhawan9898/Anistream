@@ -32,8 +32,12 @@ android {
         }
         release {
             signingConfig signingConfigs.release
-            minifyEnabled false
-            proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
+            // R8 code shrinking/obfuscation + unused-resource removal. Keep
+            // rules for Capacitor's reflection-based plugin bridge live in
+            // proguard-rules.pro (plus Capacitor's own consumer rules).
+            minifyEnabled true
+            shrinkResources true
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
         }
     }
 }

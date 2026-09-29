@@ -25,10 +25,10 @@ $androidDir = Join-Path $PSScriptRoot "android"
 
 if (Test-Path "$androidDir\gradlew.bat") {
     Push-Location $androidDir
-    .\gradlew.bat assembleDebug
+    .\gradlew.bat assembleRelease
     Pop-Location
 
-    $apkPath = "$androidDir\app\build\outputs\apk\debug\app-debug.apk"
+    $apkPath = "$androidDir\app\build\outputs\apk\release\app-release.apk"
     if (Test-Path $apkPath) {
         $finalApk = Join-Path $PSScriptRoot "AniStream-v6.0.apk"
         Copy-Item $apkPath $finalApk -Force

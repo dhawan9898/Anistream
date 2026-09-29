@@ -57,14 +57,17 @@ jobs:
       - name: Make Gradlew Executable
         run: chmod +x android/gradlew
 
-      - name: Build Android APK
+      # Minified (R8) + resource-shrunk release build, signed with the same
+      # key as every earlier release so it installs as an in-place update.
+      - name: Build Android APK (release, minified)
         working-directory: ./android
-        run: ./gradlew assembleDebug --stacktrace
+        run: ./gradlew assembleRelease --stacktrace
 
       - name: Package APK for Release
         run: |
           mkdir -p build-output
-          cp android/app/build/outputs/apk/debug/app-debug.apk build-output/AniStream-v6.0.apk
+          cp android/app/build/outputs/apk/release/app-release.apk build-output/AniStream-v6.0.apk
+          ls -lh build-output/AniStream-v6.0.apk
 
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
@@ -72,6 +75,25 @@ jobs:
           name: AniStream-v6.0-APK
           path: build-output/AniStream-v6.0.apk
           retention-days: 30
+
+      # R8 mapping - needed to de-obfuscate stack traces from this build.
+      - name: Upload R8 Mapping
+        uses: actions/upload-artifact@v4
+        with:
+          name: AniStream-v6.0-mapping
+          path: android/app/build/outputs/mapping/release/mapping.txt
+          retention-days: 90
+          if-no-files-found: warn
+
+      # A manual run republishing an existing tag (e.g. rebuilding v6.0)
+      # replaces that release and its tag, so the tag always points at the
+      # commit this APK was built from. Tag pushes are never touched.
+      - name: Replace Existing Release (manual runs only)
+        if: github.event_name == 'workflow_dispatch' && inputs.release_tag != ''
+        run: gh release delete "${{ inputs.release_tag }}" --cleanup-tag --yes || true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
 
       - name: Create GitHub Release
         # A real tag push (refs/tags/vX.Y) always releases under that tag. A
@@ -83,6 +105,9 @@ jobs:
         with:
           files: build-output/AniStream-v6.0.apk
           tag_name: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || inputs.release_tag }}
+          # Without this a new tag is created on the default branch, not on
+          # the commit that was actually built.
+          target_commitish: ${{ github.sha }}
           name: AniStream ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || inputs.release_tag }} Release
           body: |
             ## AniStream v6.0 - Android Anime Streaming App (Powered by ani-cli)
@@ -95,6 +120,8 @@ jobs:
             - **Lighter & smoother**: the startup bundle is ~65% smaller (the web player loads on demand), progress writes are throttled, player timers/listeners are cleaned up on close, and site pages/episode lists are cached so the source isn't hammered.
             - **Fixes**: correct Skip Intro timing after switching episodes, no stray "0" badges, a real error state (with Retry) when search can't reach the server, subtitle menu no longer lists the thumbnail track, fullscreen state stays in sync.
             - Plus everything from v5.x: tablet/landscape layouts, request timeouts, debounced search, serialized history writes.
+
+            - **Smaller, optimized APK**: now a minified (R8) release build with unused code and resources stripped.
 
             ### 📦 Download:
             Download **`AniStream-v6.0.apk`** below and install or update on any Android device running Android 8.0 or later!

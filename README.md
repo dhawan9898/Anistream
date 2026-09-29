@@ -123,12 +123,12 @@ npm run build          # type-check + production web bundle -> dist/
 npx cap sync android   # copy dist/ into the Android project
 cd android
 chmod +x gradlew
-./gradlew assembleDebug
+./gradlew assembleRelease   # minified (R8) + resource-shrunk, signed
 ```
 
-The APK is written to `android/app/build/outputs/apk/debug/app-debug.apk`.
+The APK is written to `android/app/build/outputs/apk/release/app-release.apk`. The R8 mapping file for de-obfuscating crash stack traces is at `android/app/build/outputs/mapping/release/mapping.txt`. For a faster, unminified build while developing, use `./gradlew assembleDebug`, which writes `apk/debug/app-debug.apk`.
 
-On **Windows**, use `gradlew.bat assembleDebug`, or run `.\build-apk.ps1`, which does all of the above and copies the APK next to the script.
+On **Windows**, use `gradlew.bat assembleRelease`, or run `.\build-apk.ps1`, which does all of the above and copies the APK next to the script.
 
 ### Android Studio
 
@@ -155,13 +155,13 @@ Use the browser's device toolbar (Ctrl+Shift+M in Chrome) to preview phone and t
 
 ## 7. CI builds & releases
 
-`.github/workflows/build-apk.yml` builds the APK on GitHub Actions. The steps are: lint, web build, `cap sync`, then `assembleDebug`. It runs:
+`.github/workflows/build-apk.yml` builds the APK on GitHub Actions. The steps are: lint, web build, `cap sync`, then `assembleRelease` (minified with R8, signed with the release key). It runs:
 
 | Trigger | Result |
 |---------|--------|
-| Push to `main` / `master` | APK uploaded as a workflow artifact (`AniStream-v6.0-APK`, kept 30 days) |
+| Push to `main` / `master` | APK uploaded as a workflow artifact (`AniStream-v6.0-APK`, kept 30 days), plus the R8 mapping (`AniStream-v6.0-mapping`) |
 | Push a tag `v*` (e.g. `git tag v6.0 && git push origin v6.0`) | Artifact plus a GitHub Release under that tag with the APK attached |
-| **Actions ▸ Build AniStream v6.0 APK ▸ Run workflow** | Builds any branch. Fill in `release_tag` (e.g. `v6.0`) to also publish a release. Leave it empty to only build. |
+| **Actions ▸ Build AniStream v6.0 APK ▸ Run workflow** | Builds any branch. Fill in `release_tag` (e.g. `v6.0`) to also publish a release. If that release already exists, it and its tag are replaced so the tag points at the built commit. Leave it empty to only build. |
 
 ---
 
@@ -237,6 +237,9 @@ Network requests to the site go through a small in-memory cache (5 min for pages
 - The web player and hls.js are code-split, so the startup bundle is 320 KB instead of 920 KB (96 KB gzipped instead of 282 KB).
 - The hero carousel pauses while the player is open or the app is in the background.
 - Site pages and episode lists are cached, and in-flight requests are de-duplicated.
+
+**Build**
+- The APK is now a minified (R8) release build with unused resources removed, signed with the same key as earlier releases, so it installs as an update.
 
 **UI & accessibility**
 - Fixed a stray "0" badge on titles with no sub/dub count.
