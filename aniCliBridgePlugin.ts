@@ -105,6 +105,10 @@ async function resolveStream(query: string, ep: string, mode: string) {
   const sourcesJson: any = await sourcesRes.json();
 
   let rawVideoLink = '';
+  // Chapter markers (seconds) used for Skip Intro / Skip Outro - forwarded
+  // as-is; the client validates them.
+  let intro = sourcesJson.intro;
+  let outro = sourcesJson.outro;
   if (sourcesJson.sources && sourcesJson.sources[0]?.file) {
     rawVideoLink = sourcesJson.sources[0].file;
   } else if (sourcesJson.enc) {
@@ -112,6 +116,8 @@ async function resolveStream(query: string, ep: string, mode: string) {
     if (decStr) {
       const dec = JSON.parse(decStr);
       rawVideoLink = dec.file || dec.src;
+      intro = intro || dec.intro;
+      outro = outro || dec.outro;
     }
   }
 
@@ -135,7 +141,9 @@ async function resolveStream(query: string, ep: string, mode: string) {
     rawStreamUrl: rawVideoLink,
     subtitles,
     qualities: [{ quality: '1080p', url: proxiedStreamUrl }],
-    referer: `${embedOrigin}/`
+    referer: `${embedOrigin}/`,
+    intro,
+    outro
   };
 }
 

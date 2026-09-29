@@ -28,6 +28,8 @@ public class ExoPlayerPlugin extends Plugin {
         JSArray qualities = call.getArray("qualities");
         JSArray episodes = call.getArray("episodes");
         boolean isFallback = call.getBoolean("isFallback", false);
+        JSObject intro = call.getObject("intro");
+        JSObject outro = call.getObject("outro");
 
         if (url == null || url.isEmpty()) {
             call.reject("Must provide a video URL");
@@ -46,12 +48,26 @@ public class ExoPlayerPlugin extends Plugin {
         intent.putExtra("qualities", qualities != null ? qualities.toString() : null);
         intent.putExtra("episodes", episodes != null ? episodes.toString() : null);
         intent.putExtra("isFallback", isFallback);
+        putSkipRange(intent, "intro", intro);
+        putSkipRange(intent, "outro", outro);
 
         getActivity().startActivity(intent);
 
         JSObject ret = new JSObject();
         ret.put("success", true);
         call.resolve(ret);
+    }
+
+    // Chapter markers from the stream's sources payload, in seconds - passed
+    // on as <prefix>StartMs / <prefix>EndMs extras. Missing or empty (0/0)
+    // markers are simply omitted.
+    private static void putSkipRange(Intent intent, String prefix, JSObject range) {
+        if (range == null) return;
+        double start = range.optDouble("start", -1);
+        double end = range.optDouble("end", -1);
+        if (start < 0 || end <= start) return;
+        intent.putExtra(prefix + "StartMs", Math.round(start * 1000));
+        intent.putExtra(prefix + "EndMs", Math.round(end * 1000));
     }
 
     static void notifyModeSwitchRequested(String title, String episode, String newMode) {

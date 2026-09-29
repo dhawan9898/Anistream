@@ -4,7 +4,7 @@ import Hls from 'hls.js';
 import {
   Play, Pause, RotateCcw, RotateCw, ArrowLeft, Settings,
   Subtitles, Maximize, Minimize, SkipForward, FastForward, Volume2, VolumeX,
-  ListVideo, Check, Loader2
+  ListVideo, Check, Loader2, X
 } from 'lucide-react';
 import type { StreamSource, EpisodeItem } from '../core/aniCliCore';
 import { getUserPreferences } from '../services/historyService';
@@ -60,6 +60,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   const [showQualityMenu, setShowQualityMenu] = useState<boolean>(false);
   const [showSubtitleMenu, setShowSubtitleMenu] = useState<boolean>(false);
   const [showEpisodeMenu, setShowEpisodeMenu] = useState<boolean>(false);
+  const episodeGridRef = useRef<HTMLDivElement | null>(null);
   const [volumeIndicator, setVolumeIndicator] = useState<number | null>(null);
   const dragStartYRef = useRef<number | null>(null);
   const dragStartVolumeRef = useRef<number>(1);
@@ -96,11 +97,13 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     introLookupRef.current = null;
     setShowSkipIntro(false);
     setShowSkipOutro(false);
-    setIntroInterval(null);
-    setOutroInterval(null);
+    // Markers from the stream's own sources payload (HiAnime-style) are
+    // known up front; AniSkip below only fills in whichever half is missing.
+    setIntroInterval(streamSource.intro ?? null);
+    setOutroInterval(streamSource.outro ?? null);
     setSelectedQuality(streamSource.quality || '1080p');
     setActiveSubtitle(streamSource.subtitles.find(s => s.default)?.label ?? streamSource.subtitles[0]?.label ?? null);
-  }, [streamSource.streamUrl, streamSource.quality, streamSource.subtitles]);
+  }, [streamSource.streamUrl, streamSource.quality, streamSource.subtitles, streamSource.intro, streamSource.outro]);
 
   // Keep the browser's native text tracks in sync with the chosen caption
   // label - selecting a caption in the menu only updates state, so without
@@ -124,12 +127,13 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     if (!duration || duration <= 0) return;
     if (introLookupRef.current === streamSource.streamUrl) return;
     introLookupRef.current = streamSource.streamUrl;
+    if (streamSource.intro && streamSource.outro) return;
 
     getEpisodeSkipIntervals(animeTitle, episode.number, duration).then(({ opening, ending }) => {
-      setIntroInterval(opening);
-      setOutroInterval(ending);
+      if (!streamSource.intro) setIntroInterval(opening);
+      if (!streamSource.outro) setOutroInterval(ending);
     });
-  }, [duration, streamSource.streamUrl, animeTitle, episode.number]);
+  }, [duration, streamSource.streamUrl, streamSource.intro, streamSource.outro, animeTitle, episode.number]);
 
   // Initialize Hls / Video stream
   useEffect(() => {
@@ -250,6 +254,17 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     };
   }, [streamSource.streamUrl, streamSource.referer, initialTime]);
 
+  // Opening the episode window centers the grid on the playing episode, so
+  // late episodes of a long series don't need a manual scroll to find.
+  useEffect(() => {
+    if (!showEpisodeMenu) return;
+    const grid = episodeGridRef.current;
+    const current = grid?.querySelector<HTMLElement>('[data-current]');
+    if (grid && current) {
+      grid.scrollTop = current.offsetTop - grid.clientHeight / 2 + current.clientHeight / 2;
+    }
+  }, [showEpisodeMenu]);
+
   // Controls auto-hide logic
   const resetControlsTimer = useCallback(() => {
     setShowControls(true);
@@ -261,7 +276,6 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
         setShowControls(false);
         setShowQualityMenu(false);
         setShowSubtitleMenu(false);
-        setShowEpisodeMenu(false);
       }, 3500);
     }
   }, [isPlaying]);
@@ -811,6 +825,111 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
         </button>
       )}
 
+      {/* Episode picker - a floating window over the video, independent
+          of the auto-hiding controls so it stays put while browsing a long
+          list. Touch events stop here so the container's volume-swipe
+          gesture doesn't fight scrolling the grid. */}
+      {showEpisodeMenu && episodeList && onSelectEpisode && (
+        <div
+          onClick={(e) => {
+            e.stopPropagation();
+            setShowEpisodeMenu(false);
+          }}
+          onTouchStart={(e) => e.stopPropagation()}
+          onTouchMove={(e) => e.stopPropagation()}
+          style={{
+            position: 'absolute',
+            inset: 0,
+            backgroundColor: 'rgba(0, 0, 0, 0.45)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            padding: 'calc(var(--safe-top) + 16px) 16px calc(var(--safe-bottom) + 16px) 16px',
+            zIndex: 60,
+            animation: 'fadeIn 0.15s ease-out'
+          }}
+        >
+          <div
+            className="glass-panel-dark animate-pop-in"
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              width: '100%',
+              maxWidth: '420px',
+              maxHeight: '80%',
+              display: 'flex',
+              flexDirection: 'column',
+              borderRadius: 'var(--radius-lg, 16px)',
+              boxShadow: 'var(--shadow-lg)',
+              overflow: 'hidden'
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '14px 16px 10px 16px' }}>
+              <div>
+                <div style={{ fontSize: '15px', fontWeight: 700, color: '#f8fafc' }}>Episodes</div>
+                <div style={{ fontSize: '12px', color: '#94a3b8', marginTop: '2px' }}>
+                  {episodeList.length} episodes · Now playing Ep {episode.number}
+                </div>
+              </div>
+              <button
+                onClick={() => setShowEpisodeMenu(false)}
+                className="interactive glass-pill"
+                aria-label="Close episode list"
+                style={{
+                  width: '32px',
+                  height: '32px',
+                  borderRadius: '50%',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  border: 'none',
+                  color: '#fff'
+                }}
+              >
+                <X size={16} />
+              </button>
+            </div>
+            <div
+              ref={episodeGridRef}
+              style={{
+                overflowY: 'auto',
+                padding: '4px 12px 14px 12px',
+                display: 'grid',
+                gridTemplateColumns: 'repeat(auto-fill, minmax(56px, 1fr))',
+                gap: '6px'
+              }}
+            >
+              {episodeList.map((ep) => {
+                const isCurrent = ep.id === episode.id;
+                return (
+                  <button
+                    key={ep.id}
+                    data-current={isCurrent || undefined}
+                    title={ep.title}
+                    onClick={() => {
+                      setShowEpisodeMenu(false);
+                      if (!isCurrent) onSelectEpisode(ep);
+                    }}
+                    className="interactive"
+                    style={{
+                      padding: '10px 4px',
+                      borderRadius: 'var(--radius-sm)',
+                      background: isCurrent ? 'var(--accent-gradient)' : 'rgba(255, 255, 255, 0.06)',
+                      color: isCurrent ? '#ffffff' : '#cbd5e1',
+                      fontSize: '13px',
+                      fontWeight: isCurrent ? 700 : 500,
+                      border: 'none',
+                      textAlign: 'center'
+                    }}
+                  >
+                    {ep.number}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Controls Overlay */}
       <div 
         style={{
@@ -1022,60 +1141,6 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
               <span>{selectedQuality}</span>
             </button>
           </div>
-
-          {/* Episode Menu - scrollable, opens upward above the toolbar.
-              Stops touch events here from reaching the container's volume-
-              swipe gesture handler, which would otherwise fight a finger
-              scrolling this list. */}
-          {showEpisodeMenu && episodeList && onSelectEpisode && (
-            <div
-              className="glass-panel-dark"
-              onClick={(e) => e.stopPropagation()}
-              onTouchStart={(e) => e.stopPropagation()}
-              onTouchMove={(e) => e.stopPropagation()}
-              style={{
-                position: 'absolute',
-                bottom: 'calc(100% + 8px)',
-                right: 0,
-                left: 0,
-                maxHeight: '260px',
-                overflowY: 'auto',
-                borderRadius: 'var(--radius-md)',
-                padding: '8px',
-                display: 'grid',
-                gridTemplateColumns: 'repeat(4, 1fr)',
-                gap: '6px',
-                zIndex: 50,
-                boxShadow: 'var(--shadow-lg)'
-              }}
-            >
-              {episodeList.map((ep) => {
-                const isCurrent = ep.id === episode.id;
-                return (
-                  <button
-                    key={ep.id}
-                    onClick={() => {
-                      setShowEpisodeMenu(false);
-                      if (!isCurrent) onSelectEpisode(ep);
-                    }}
-                    className="interactive"
-                    style={{
-                      padding: '10px 4px',
-                      borderRadius: 'var(--radius-sm)',
-                      backgroundColor: isCurrent ? 'rgba(255, 255, 255, 0.14)' : 'transparent',
-                      color: isCurrent ? '#ffffff' : '#cbd5e1',
-                      fontSize: '13px',
-                      fontWeight: isCurrent ? 700 : 500,
-                      border: 'none',
-                      textAlign: 'center'
-                    }}
-                  >
-                    {ep.number}
-                  </button>
-                );
-              })}
-            </div>
-          )}
 
           {/* Quality Menu Overlay - opens upward above the toolbar */}
           {showQualityMenu && (

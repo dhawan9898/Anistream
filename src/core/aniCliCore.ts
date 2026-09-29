@@ -26,6 +26,12 @@ export interface SubtitleTrack {
   default?: boolean;
 }
 
+// Chapter interval in seconds, e.g. { start: 85, end: 175 }.
+export interface SkipRange {
+  start: number;
+  end: number;
+}
+
 export interface StreamSource {
   streamUrl: string;
   quality: string;
@@ -37,6 +43,23 @@ export interface StreamSource {
   // demo clip - callers must make this visible, never present it as if it
   // were the real episode.
   isFallback?: boolean;
+  // Opening/ending intervals served by the embed player's own sources
+  // endpoint (the same data HiAnime's "Skip Intro"/"Skip Outro" uses).
+  // Absent when the server didn't tag this episode.
+  intro?: SkipRange;
+  outro?: SkipRange;
+}
+
+// The sources payload carries chapter markers as { start, end } (seconds);
+// some mirrors send [start, end] or numeric strings instead. Untagged
+// episodes come back as { start: 0, end: 0 } - treat that as "no data".
+export function parseSkipRange(raw: any): SkipRange | undefined {
+  if (!raw) return undefined;
+  const pair = Array.isArray(raw) ? raw : [raw.start ?? raw.startTime, raw.end ?? raw.endTime];
+  const start = Number(pair[0]);
+  const end = Number(pair[1]);
+  if (!isFinite(start) || !isFinite(end) || start < 0 || end <= start) return undefined;
+  return { start, end };
 }
 
 // 1. Deobfuscator using exact ani-cli XOR algorithm: "otaku-embed-v1"
@@ -283,7 +306,9 @@ export async function getEpisodeStream(
             subtitles: data.subtitles || [],
             referer: data.referer || 'https://hianime.at/',
             masterUrl: data.streamUrl,
-            qualities: data.qualities || [{ quality: "1080p", url: data.streamUrl }]
+            qualities: data.qualities || [{ quality: "1080p", url: data.streamUrl }],
+            intro: parseSkipRange(data.intro),
+            outro: parseSkipRange(data.outro)
           };
         }
       }
@@ -357,6 +382,8 @@ export async function getEpisodeStream(
             if (sourcesRes.ok) {
               const sourcesJson = await sourcesRes.json();
               let rawStreamUrl = "";
+              let intro = parseSkipRange(sourcesJson.intro);
+              let outro = parseSkipRange(sourcesJson.outro);
               if (sourcesJson.sources && sourcesJson.sources[0]?.file) {
                 rawStreamUrl = sourcesJson.sources[0].file;
               } else if (sourcesJson.enc) {
@@ -365,6 +392,8 @@ export async function getEpisodeStream(
                   try {
                     const dec = JSON.parse(decStr);
                     rawStreamUrl = dec.file || dec.src;
+                    intro = intro || parseSkipRange(dec.intro);
+                    outro = outro || parseSkipRange(dec.outro);
                   } catch (e) {
                     console.error("[aniCliCore] JSON parse error on decrypted token:", e);
                   }
@@ -381,6 +410,7 @@ export async function getEpisodeStream(
                   }));
 
                 console.log(`[aniCliCore] episodeId=${targetEpisodeId} mode=${mode} RESOLVED STREAM URL:`, rawStreamUrl);
+                console.log(`[aniCliCore] episodeId=${targetEpisodeId} skip markers: intro=`, intro, 'outro=', outro);
 
                 return {
                   streamUrl: rawStreamUrl,
@@ -393,7 +423,9 @@ export async function getEpisodeStream(
                     { quality: "720p", url: rawStreamUrl },
                     { quality: "480p", url: rawStreamUrl },
                     { quality: "Auto", url: rawStreamUrl }
-                  ]
+                  ],
+                  intro,
+                  outro
                 };
               }
             }

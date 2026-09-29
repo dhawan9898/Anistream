@@ -47,6 +47,9 @@ export interface ExoPlayerPluginInterface {
     qualities?: QualityOption[];
     episodes?: PlayEpisodeOption[];
     isFallback?: boolean;
+    // Opening/ending chapter markers in seconds, from the stream's sources payload.
+    intro?: { start: number; end: number };
+    outro?: { start: number; end: number };
   }): Promise<{ success: boolean }>;
 
   addListener(

@@ -247,6 +247,11 @@ public class ExoPlayerActivity extends AppCompatActivity {
         // turn this on even if the URL list didn't qualify.
         btnQuality.setVisibility(qualityOptions.size() > 1 ? View.VISIBLE : View.GONE);
 
+        // Markers served alongside the stream (HiAnime-style) win; AniSkip
+        // only fills in a half the server didn't tag - see maybeFetchSkipTimes().
+        introInterval = readSkipRange(intent, "intro");
+        outroInterval = readSkipRange(intent, "outro");
+
         parseEpisodes(episodesJson);
         btnEpisodes.setVisibility(episodeOptions.size() > 1 ? View.VISIBLE : View.GONE);
 
@@ -594,13 +599,140 @@ public class ExoPlayerActivity extends AppCompatActivity {
         }
     }
 
+    // Floating window centered over the video: a rounded card with a grid of
+    // episode-number tiles (current one highlighted and scrolled into view),
+    // dismissed by the close button, a tap outside, or back.
     private void showEpisodeMenu(View anchor) {
-        java.util.List<MenuRow> rows = new java.util.ArrayList<>();
+        float density = getResources().getDisplayMetrics().density;
+        int screenW = getResources().getDisplayMetrics().widthPixels;
+        int screenH = getResources().getDisplayMetrics().heightPixels;
+
+        Dialog dialog = new Dialog(this);
+        dialog.requestWindowFeature(Window.FEATURE_NO_TITLE);
+
+        LinearLayout card = new LinearLayout(this);
+        card.setOrientation(LinearLayout.VERTICAL);
+        GradientDrawable cardBg = new GradientDrawable();
+        cardBg.setOrientation(GradientDrawable.Orientation.TOP_BOTTOM);
+        cardBg.setColors(new int[]{Color.parseColor("#2a2a38"), Color.parseColor("#16161e")});
+        cardBg.setStroke(Math.round(density), Color.argb(60, 255, 255, 255));
+        cardBg.setCornerRadius(20f * density);
+        card.setBackground(cardBg);
+        card.setElevation(16f * density);
+        int pad = Math.round(16 * density);
+        card.setPadding(pad, Math.round(14 * density), pad, pad);
+
+        // Header: title + subtitle on the left, close button on the right.
+        LinearLayout header = new LinearLayout(this);
+        header.setOrientation(LinearLayout.HORIZONTAL);
+        header.setGravity(Gravity.CENTER_VERTICAL);
+        header.setPadding(0, 0, 0, Math.round(12 * density));
+
+        LinearLayout titles = new LinearLayout(this);
+        titles.setOrientation(LinearLayout.VERTICAL);
+        titles.setLayoutParams(new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+        TextView titleView = new TextView(this);
+        titleView.setText("Episodes");
+        titleView.setTextColor(Color.WHITE);
+        titleView.setTextSize(17);
+        titleView.setTypeface(titleView.getTypeface(), android.graphics.Typeface.BOLD);
+        titles.addView(titleView);
+        TextView subtitleView = new TextView(this);
+        subtitleView.setText(episodeOptions.size() + " episodes • Now playing Ep "
+                + (episodeNumber != null ? episodeNumber : "?"));
+        subtitleView.setTextColor(Color.parseColor("#94a3b8"));
+        subtitleView.setTextSize(12);
+        titles.addView(subtitleView);
+        header.addView(titles);
+
+        TextView close = new TextView(this);
+        close.setText("✕");
+        close.setTextColor(Color.WHITE);
+        close.setTextSize(15);
+        close.setGravity(Gravity.CENTER);
+        int closeSize = Math.round(34 * density);
+        close.setLayoutParams(new LinearLayout.LayoutParams(closeSize, closeSize));
+        GradientDrawable closeBg = new GradientDrawable();
+        closeBg.setShape(GradientDrawable.OVAL);
+        closeBg.setColor(Color.argb(40, 255, 255, 255));
+        close.setBackground(closeBg);
+        close.setOnClickListener(v -> dialog.dismiss());
+        header.addView(close);
+        card.addView(header);
+
+        // Grid of episode tiles; column count adapts to the card width.
+        int cardWidth = Math.min(Math.round(440 * density), screenW - Math.round(32 * density));
+        int tileSize = Math.round(56 * density);
+        int gap = Math.round(6 * density);
+        int columns = Math.max(3, (cardWidth - 2 * pad + gap) / (tileSize + gap));
+
+        android.widget.GridLayout grid = new android.widget.GridLayout(this);
+        grid.setColumnCount(columns);
+        View currentTile = null;
         for (EpisodeOption option : episodeOptions) {
             boolean isCurrent = option.number.equals(episodeNumber);
-            rows.add(new MenuRow("Episode " + option.number, isCurrent, () -> selectEpisode(option)));
+            TextView tile = new TextView(this);
+            tile.setText(option.number);
+            tile.setGravity(Gravity.CENTER);
+            tile.setTextSize(14);
+            tile.setTextColor(isCurrent ? Color.WHITE : Color.parseColor("#cbd5e1"));
+            if (isCurrent) tile.setTypeface(tile.getTypeface(), android.graphics.Typeface.BOLD);
+            GradientDrawable tileBg = new GradientDrawable();
+            tileBg.setCornerRadius(10f * density);
+            if (isCurrent) {
+                tileBg.setOrientation(GradientDrawable.Orientation.LEFT_RIGHT);
+                tileBg.setColors(new int[]{Color.parseColor("#6366f1"), Color.parseColor("#a855f7")});
+            } else {
+                tileBg.setColor(Color.argb(18, 255, 255, 255));
+            }
+            tile.setBackground(tileBg);
+            android.widget.GridLayout.LayoutParams lp = new android.widget.GridLayout.LayoutParams(
+                    android.widget.GridLayout.spec(android.widget.GridLayout.UNDEFINED),
+                    android.widget.GridLayout.spec(android.widget.GridLayout.UNDEFINED, 1f));
+            lp.width = 0;
+            lp.height = Math.round(44 * density);
+            lp.setMargins(gap / 2, gap / 2, gap / 2, gap / 2);
+            tile.setLayoutParams(lp);
+            tile.setClickable(true);
+            tile.setOnClickListener(v -> {
+                dialog.dismiss();
+                selectEpisode(option);
+            });
+            grid.addView(tile);
+            if (isCurrent) currentTile = tile;
         }
-        showBottomSheetMenu("Episodes", rows);
+
+        android.widget.ScrollView scrollView = new android.widget.ScrollView(this);
+        int rows = (episodeOptions.size() + columns - 1) / columns;
+        int gridHeight = rows * (Math.round(44 * density) + gap);
+        int maxGridHeight = Math.round(screenH * 0.8f) - Math.round(90 * density);
+        scrollView.setLayoutParams(new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                gridHeight > maxGridHeight ? maxGridHeight : LinearLayout.LayoutParams.WRAP_CONTENT));
+        scrollView.addView(grid);
+        card.addView(scrollView);
+
+        if (currentTile != null) {
+            final View target = currentTile;
+            scrollView.post(() -> scrollView.scrollTo(0,
+                    Math.max(0, target.getTop() - scrollView.getHeight() / 2 + target.getHeight() / 2)));
+        }
+
+        dialog.setContentView(card);
+        dialog.setCanceledOnTouchOutside(true);
+        Window window = dialog.getWindow();
+        if (window != null) {
+            window.setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));
+            window.setLayout(cardWidth, WindowManager.LayoutParams.WRAP_CONTENT);
+            window.setGravity(Gravity.CENTER);
+            window.setDimAmount(0.45f);
+            // Keep the player immersive while the window is up.
+            window.setFlags(WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
+                    WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE);
+            window.getDecorView().setSystemUiVisibility(getWindow().getDecorView().getSystemUiVisibility());
+        }
+        dialog.show();
+        if (window != null) window.clearFlags(WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE);
     }
 
     // Reports the pick back to JS (which knows how to re-resolve a stream
@@ -995,14 +1127,25 @@ public class ExoPlayerActivity extends AppCompatActivity {
     // progress tick.
     private void maybeFetchSkipTimes() {
         if (skipTimesFetched || player == null) return;
+        if (introInterval != null && outroInterval != null) {
+            skipTimesFetched = true;
+            return;
+        }
         long durationMs = player.getDuration();
         if (durationMs <= 0) return;
         skipTimesFetched = true;
         AniSkipClient.fetchSkipIntervals(animeTitle, episodeNumber, durationMs / 1000, handler,
                 (opening, ending) -> {
-                    introInterval = opening;
-                    outroInterval = ending;
+                    if (introInterval == null) introInterval = opening;
+                    if (outroInterval == null) outroInterval = ending;
                 });
+    }
+
+    private static AniSkipClient.SkipInterval readSkipRange(Intent intent, String prefix) {
+        long startMs = intent.getLongExtra(prefix + "StartMs", -1);
+        long endMs = intent.getLongExtra(prefix + "EndMs", -1);
+        if (startMs < 0 || endMs <= startMs) return null;
+        return new AniSkipClient.SkipInterval(startMs, endMs);
     }
 
     private void updateProgress() {
