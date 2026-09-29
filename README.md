@@ -1,6 +1,6 @@
 # AniStream — Android Anime Streaming App (powered by `ani-cli`)
 
-[![Version](https://img.shields.io/badge/Version-v6.0-indigo?style=for-the-badge&logo=android)](https://github.com/dhawan9898/Anistream/releases)
+[![Version](https://img.shields.io/badge/Version-v6.2-indigo?style=for-the-badge&logo=android)](https://github.com/dhawan9898/Anistream/releases)
 [![Android](https://img.shields.io/badge/Android-8.0%2B-green?style=for-the-badge&logo=android)](https://github.com/dhawan9898/Anistream/releases)
 [![License](https://img.shields.io/badge/License-GPLv3-blue?style=for-the-badge)](https://www.gnu.org/licenses/gpl-3.0)
 
@@ -23,15 +23,15 @@ steps as [`ani-cli`](https://github.com/pystardust/ani-cli).
 7. [CI builds & releases](#7-ci-builds--releases)
 8. [Architecture](#8-architecture)
 9. [Troubleshooting](#9-troubleshooting)
-10. [What's new in v6.0](#10-whats-new-in-v60)
+10. [What's new in v6.2 / v6.0](#10-whats-new-in-v62--v60)
 11. [License](#11-license)
 
 ---
 
 ## 1. Install the APK
 
-1. Open the **[Releases page](https://github.com/dhawan9898/Anistream/releases)** and pick the latest release (**v6.0**).
-2. Under **Assets**, download **`AniStream-v6.0.apk`**.
+1. Open the **[Releases page](https://github.com/dhawan9898/Anistream/releases)** and pick the latest release (**v6.2**).
+2. Under **Assets**, download **`AniStream-v6.2.apk`**.
 3. Open the file on your phone. If Android asks, enable **Install unknown apps** for your browser or file manager.
 4. Tap **Install**. If you already have AniStream, the new version installs over it and keeps your history and My List, because every release is signed with the same key.
 
@@ -159,9 +159,9 @@ Use the browser's device toolbar (Ctrl+Shift+M in Chrome) to preview phone and t
 
 | Trigger | Result |
 |---------|--------|
-| Push to `main` / `master` | APK uploaded as a workflow artifact (`AniStream-v6.0-APK`, kept 30 days), plus the R8 mapping (`AniStream-v6.0-mapping`) |
-| Push a tag `v*` (e.g. `git tag v6.0 && git push origin v6.0`) | Artifact plus a GitHub Release under that tag with the APK attached |
-| **Actions ▸ Build AniStream v6.0 APK ▸ Run workflow** | Builds any branch. Fill in `release_tag` (e.g. `v6.0`) to also publish a release. If that release already exists, it and its tag are replaced so the tag points at the built commit. Leave it empty to only build. |
+| Push to `main` / `master` | APK uploaded as a workflow artifact (`AniStream-v6.2-APK`, kept 30 days), plus the R8 mapping (`AniStream-v6.2-mapping`) |
+| Push a tag `v*` (e.g. `git tag v6.2 && git push origin v6.2`) | Artifact plus a GitHub Release under that tag with the APK attached |
+| **Actions ▸ Build AniStream v6.2 APK ▸ Run workflow** | Builds any branch. Fill in `release_tag` (e.g. `v6.2`) to also publish a release. If that release already exists, it and its tag are replaced so the tag points at the built commit. Leave it empty to only build. |
 
 ---
 
@@ -215,7 +215,11 @@ Network requests to the site go through a small in-memory cache (5 min for pages
 
 ---
 
-## 10. What's new in v6.0
+## 10. What's new in v6.2 / v6.0
+
+**v6.2** rolls back v6.1, which broke playback (every episode opened the same video). It is the v6.0 code below, re-released with a higher version number so it installs over v6.1 without uninstalling.
+
+### v6.0
 
 **Playback reliability**
 - Server fallback: if the first mirror is dead, the other servers for the same audio type are tried before falling back to the demo clip.

@@ -1,4 +1,4 @@
-name: Build AniStream v6.0 APK
+name: Build AniStream v6.2 APK
 
 on:
   push:
@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
     inputs:
       release_tag:
-        description: 'Tag to publish this build under (e.g. v6.0) - leave empty to just build, no release'
+        description: 'Tag to publish this build under (e.g. v6.2) - leave empty to just build, no release'
         required: false
         default: ''
 
@@ -66,26 +66,26 @@ jobs:
       - name: Package APK for Release
         run: |
           mkdir -p build-output
-          cp android/app/build/outputs/apk/release/app-release.apk build-output/AniStream-v6.0.apk
-          ls -lh build-output/AniStream-v6.0.apk
+          cp android/app/build/outputs/apk/release/app-release.apk build-output/AniStream-v6.2.apk
+          ls -lh build-output/AniStream-v6.2.apk
 
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: AniStream-v6.0-APK
-          path: build-output/AniStream-v6.0.apk
+          name: AniStream-v6.2-APK
+          path: build-output/AniStream-v6.2.apk
           retention-days: 30
 
       # R8 mapping - needed to de-obfuscate stack traces from this build.
       - name: Upload R8 Mapping
         uses: actions/upload-artifact@v4
         with:
-          name: AniStream-v6.0-mapping
+          name: AniStream-v6.2-mapping
           path: android/app/build/outputs/mapping/release/mapping.txt
           retention-days: 90
           if-no-files-found: warn
 
-      # A manual run republishing an existing tag (e.g. rebuilding v6.0)
+      # A manual run republishing an existing tag (e.g. rebuilding v6.2)
       # replaces that release and its tag, so the tag always points at the
       # commit this APK was built from. Tag pushes are never touched.
       - name: Replace Existing Release (manual runs only)
@@ -103,16 +103,20 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch' && inputs.release_tag != '')
         uses: softprops/action-gh-release@v2
         with:
-          files: build-output/AniStream-v6.0.apk
+          files: build-output/AniStream-v6.2.apk
           tag_name: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || inputs.release_tag }}
           # Without this a new tag is created on the default branch, not on
           # the commit that was actually built.
           target_commitish: ${{ github.sha }}
           name: AniStream ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || inputs.release_tag }} Release
           body: |
-            ## AniStream v6.0 - Android Anime Streaming App (Powered by ani-cli)
+            ## AniStream v6.2 - Android Anime Streaming App (Powered by ani-cli)
 
-            ### 🚀 What's new in v6.0:
+            ### What's in v6.2:
+
+            - **v6.1 rolled back.** v6.1 broke playback (every episode opened the same video). v6.2 is the v6.0 code exactly, re-released with a higher version number so it installs directly over v6.1 without uninstalling (your history and My List are kept).
+
+            ### From v6.0:
 
             - **Server fallback**: when the first mirror for an episode is dead, the remaining servers for the same audio (SUB/DUB) are tried before anything falls back to the demo clip.
             - **Self-healing playback**: dropped connections and CDN 5xx errors are retried automatically with backoff (native ExoPlayer and web player), and **Retry** resumes where playback stopped instead of restarting at 0:00.
@@ -124,6 +128,6 @@ jobs:
             - **Smaller, optimized APK**: now a minified (R8) release build with unused code and resources stripped.
 
             ### 📦 Download:
-            Download **`AniStream-v6.0.apk`** below and install or update on any Android device running Android 8.0 or later!
+            Download **`AniStream-v6.2.apk`** below and install or update on any Android device running Android 8.0 or later!
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
