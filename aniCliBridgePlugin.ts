@@ -132,19 +132,29 @@ export function aniCliBridgePlugin(): Plugin {
             const isM3U8 = targetUrl.includes('.m3u8') || contentType.includes('mpegurl');
 
             if (isM3U8) {
-              // Rewrite relative segments in M3U8 playlist
+              // Rewrite relative segments, sub-playlists, keys, and media URIs in M3U8 playlist
               let body = '';
               proxyRes.setEncoding('utf8');
               proxyRes.on('data', (chunk) => { body += chunk; });
               proxyRes.on('end', () => {
-                const baseUrl = targetUrl.substring(0, targetUrl.lastIndexOf('/') + 1);
                 const rewritten = body.split('\n').map(line => {
                   const trimmed = line.trim();
-                  if (!trimmed || trimmed.startsWith('#')) {
+                  if (!trimmed) return line;
+
+                  // 1. Rewrite any URI="..." or URI='...' attributes inside tag lines (e.g. #EXT-X-STREAM-INF, #EXT-X-MEDIA, #EXT-X-KEY, #EXT-X-MAP)
+                  if (trimmed.startsWith('#')) {
+                    if (trimmed.includes('URI=')) {
+                      return line.replace(/URI=(["'])([^"']+)\1/g, (_match, quote, uri) => {
+                        const fullUrl = new URL(uri, targetUrl).toString();
+                        const proxied = `/stream-proxy?url=${encodeURIComponent(fullUrl)}&ref=${encodeURIComponent(referer)}`;
+                        return `URI=${quote}${proxied}${quote}`;
+                      });
+                    }
                     return line;
                   }
-                  // It's a segment or sub-playlist URL
-                  const fullUrl = trimmed.startsWith('http') ? trimmed : baseUrl + trimmed;
+
+                  // 2. Rewrite non-# lines (segment or sub-playlist URLs) using proper URL resolution
+                  const fullUrl = new URL(trimmed, targetUrl).toString();
                   return `/stream-proxy?url=${encodeURIComponent(fullUrl)}&ref=${encodeURIComponent(referer)}`;
                 }).join('\n');
 

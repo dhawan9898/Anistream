@@ -1,4 +1,4 @@
-name: Build AniStream v4.0 APK
+name: Build AniStream v4.1 APK
 
 on:
   push:
@@ -52,39 +52,45 @@ jobs:
       - name: Make Gradlew Executable
         run: chmod +x android/gradlew
 
-      - name: Build Android Debug APK
+      - name: Build Android APK
         working-directory: ./android
         run: ./gradlew assembleDebug --stacktrace
 
       - name: Package APK for Release
         run: |
           mkdir -p build-output
-          cp android/app/build/outputs/apk/debug/app-debug.apk build-output/AniStream-v4.0.apk
+          cp android/app/build/outputs/apk/debug/app-debug.apk build-output/AniStream-v4.1.apk
 
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: AniStream-v4.0-APK
-          path: build-output/AniStream-v4.0.apk
+          name: AniStream-v4.1-APK
+          path: build-output/AniStream-v4.1.apk
           retention-days: 30
 
       - name: Create GitHub Release
-        if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
+        if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
         uses: softprops/action-gh-release@v2
         with:
-          files: build-output/AniStream-v4.0.apk
-          tag_name: v4.0
-          name: AniStream v4.0 Release
+          files: build-output/AniStream-v4.1.apk
+          tag_name: v4.1
+          name: AniStream v4.1 Release
           body: |
-            ## AniStream v4.0 - Android Anime Streaming App (Powered by ani-cli)
+            ## AniStream v4.1 - Android Anime Streaming App (Powered by ani-cli)
 
-            ### 🐛 Bug fixes in this update:
+            ### 🚀 Highlights & Bug Fixes in v4.1:
 
-            - **Episode picker not scrolling**: the native episode/subtitle/quality bottom sheet had no scroll container at all, so an anime with a long episode list overflowed the screen with no way to reach the rest. It's now wrapped in a capped-height `ScrollView`.
-            - **Video not loading - real cause found and fixed**: the on-device error was traced to the app's own built-in emergency fallback video (a public Google-hosted sample clip used only when a real stream can't be resolved) - Google had revoked public access to that bucket, so the fallback itself was broken, surfacing as "couldn't play this stream" on every episode that reached it. Replaced it with a plain MP4 verified live and byte-inspected for compatibility, and it's now always clearly labeled "DEMO - SOURCE UNAVAILABLE" so it can never be mistaken for a real episode. **Still open:** why real stream resolution is failing on every attempt is not yet known - the player error overlay now shows the actual HTTP status/exception (not just a generic message) to help pin that down from the next report.
-            - **Skip Intro/Outro ported to native, and Outro added to both platforms**: the web player only had "Skip Intro" (from AniSkip's real per-episode data); the native player had a fake hardcoded skip range that didn't match every anime/episode. Both platforms now look up real per-episode opening *and* ending timestamps from AniSkip and only show a Skip button when real data exists for that anime/episode - never a guessed range.
+            - **Video Playback ("Content Malformed") Fixed**:
+              - Refactored native Android ExoPlayer to use `DefaultMediaSourceFactory` with explicit `MimeTypes.APPLICATION_M3U8` and `setSubtitleConfigurations`.
+              - Fixed dev-server `/stream-proxy` M3U8 tag URI rewriting (`URI="..."`) and relative segment URL calculations so sub-playlists, audio tracks, init segments, and AES-128 encryption keys proxy cleanly without resolving to `index.html`.
+              - Corrected HLS format detection in web player component.
+            - **Seamless App Updates (No Reinstall Required)**:
+              - Configured persistent signing using `release.keystore` across debug and release builds.
+              - Incremented `versionCode` to 5 (`versionName` 4.1). Existing installations can now update directly in-place without losing watch history or data.
+            - **Featured Feed & Scraper Updates**:
+              - Updated featured anime IDs to valid `hianime.at` numeric IDs and added automatic title-search recovery for episode list resolving.
 
             ### 📦 Download:
-            Download **`AniStream-v4.0.apk`** below and install on any Android device running Android 8.0 or later!
+            Download **`AniStream-v4.1.apk`** below and install or update on any Android device running Android 8.0 or later!
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

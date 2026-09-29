@@ -158,7 +158,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     };
     video.addEventListener('timeupdate', checkVideoTrack);
 
-    const isMp4 = streamUrl.includes('.mp4') || !streamUrl.includes('.m3u8');
+    const isMp4 = streamUrl.toLowerCase().split('?')[0].endsWith('.mp4');
 
     if (isMp4) {
       video.src = streamUrl;

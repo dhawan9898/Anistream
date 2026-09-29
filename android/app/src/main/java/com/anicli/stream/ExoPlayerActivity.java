@@ -843,21 +843,13 @@ public class ExoPlayerActivity extends AppCompatActivity {
                 .setReadTimeoutMs(30000);
 
         Uri uri = Uri.parse(videoUrl);
-        MediaItem mediaItem = new MediaItem.Builder().setUri(uri).build();
+        MediaItem.Builder mediaItemBuilder = new MediaItem.Builder().setUri(uri);
 
-        // Build the main video source with the exact same direct
-        // HLS/Progressive branching this app always used (proven reliable -
-        // no auto-detection involved), then merge in subtitles explicitly
-        // via SingleSampleMediaSource instead of leaning on
-        // DefaultMediaSourceFactory's own type-inference for the main
-        // source too. DefaultMediaSourceFactory infers HLS vs progressive
-        // from the URL's file extension, which real/proxied stream URLs
-        // don't always carry - safer to keep that decision explicit.
-        MediaSource videoSource;
-        if (videoUrl.contains(".m3u8")) {
-            videoSource = new HlsMediaSource.Factory(dataSourceFactory).createMediaSource(mediaItem);
-        } else {
-            videoSource = new ProgressiveMediaSource.Factory(dataSourceFactory).createMediaSource(mediaItem);
+        // Explicitly set MIME type for HLS streams so DefaultMediaSourceFactory creates HlsMediaSource
+        // even when the URL is proxied, redirected, or has query parameters without a literal .m3u8 extension
+        boolean isHls = videoUrl.contains("m3u8") || videoUrl.contains("/hls/") || videoUrl.contains("master") || videoUrl.contains("index") || !videoUrl.toLowerCase(java.util.Locale.US).contains(".mp4");
+        if (isHls) {
+            mediaItemBuilder.setMimeType(MimeTypes.APPLICATION_M3U8);
         }
 
         java.util.List<MediaItem.SubtitleConfiguration> subtitleConfigs = parseSubtitles(subtitlesJson);
@@ -866,22 +858,18 @@ public class ExoPlayerActivity extends AppCompatActivity {
             subtitleSelectionInitialized = true;
         }
 
-        MediaSource mediaSource;
-        if (subtitleConfigs.isEmpty()) {
-            mediaSource = videoSource;
-        } else {
-            MediaSource[] sources = new MediaSource[subtitleConfigs.size() + 1];
-            sources[0] = videoSource;
-            for (int i = 0; i < subtitleConfigs.size(); i++) {
-                sources[i + 1] = new SingleSampleMediaSource.Factory(dataSourceFactory)
-                        .createMediaSource(subtitleConfigs.get(i), C.TIME_UNSET);
-            }
-            mediaSource = new MergingMediaSource(sources);
+        if (!subtitleConfigs.isEmpty()) {
+            mediaItemBuilder.setSubtitleConfigurations(subtitleConfigs);
         }
 
-        player = new ExoPlayer.Builder(this).build();
+        MediaItem mediaItem = mediaItemBuilder.build();
+        DefaultMediaSourceFactory mediaSourceFactory = new DefaultMediaSourceFactory(dataSourceFactory);
+
+        player = new ExoPlayer.Builder(this)
+                .setMediaSourceFactory(mediaSourceFactory)
+                .build();
         playerView.setPlayer(player);
-        player.setMediaSource(mediaSource);
+        player.setMediaItem(mediaItem);
         player.prepare();
         if (startPositionMs > 0) {
             player.seekTo(startPositionMs);
