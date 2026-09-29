@@ -63,6 +63,18 @@ export async function clearWatchHistory(): Promise<void> {
   await Preferences.remove({ key: HISTORY_KEY });
 }
 
+// Removes a single history entry (one per anime - saveWatchProgress already
+// de-dupes by animeId) without touching the rest of the list.
+export async function removeWatchHistoryItem(animeId: string): Promise<WatchHistoryItem[]> {
+  const list = await getWatchHistory();
+  const filtered = list.filter(h => h.animeId !== animeId);
+  await Preferences.set({
+    key: HISTORY_KEY,
+    value: JSON.stringify(filtered)
+  });
+  return filtered;
+}
+
 // Bookmarks store the full AnimeItem, not just its id: the Saved tab needs to
 // render posters/titles for anime that may only exist as live search/home
 // results, not in the small curated FEATURED_ANIME list.

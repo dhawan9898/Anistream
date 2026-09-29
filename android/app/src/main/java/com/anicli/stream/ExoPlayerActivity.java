@@ -68,6 +68,7 @@ public class ExoPlayerActivity extends AppCompatActivity {
     private TextView btnForward;
     private TextView btnAudioSubs;
     private TextView btnQuality;
+    private TextView btnEpisodes;
     private TextView btnSkipIntro;
     private TextView textTitle;
     private TextView textEpisode;
@@ -119,6 +120,11 @@ public class ExoPlayerActivity extends AppCompatActivity {
     private final java.util.List<QualityOption> qualityOptions = new java.util.ArrayList<>();
     private String currentQualityLabel;
 
+    // Real episode list for this anime (id + number only, enough to render a
+    // picker and report a selection back to JS) - only populated when the JS
+    // side actually supplied one, never guessed.
+    private final java.util.List<EpisodeOption> episodeOptions = new java.util.ArrayList<>();
+
     private final Handler handler = new Handler(Looper.getMainLooper());
     private boolean userSeeking = false;
     private String currentMode = "sub";
@@ -132,6 +138,16 @@ public class ExoPlayerActivity extends AppCompatActivity {
         QualityOption(String label, String url) {
             this.label = label;
             this.url = url;
+        }
+    }
+
+    private static final class EpisodeOption {
+        final String id;
+        final String number;
+
+        EpisodeOption(String id, String number) {
+            this.id = id;
+            this.number = number;
         }
     }
 
@@ -190,6 +206,7 @@ public class ExoPlayerActivity extends AppCompatActivity {
         String referer = intent.getStringExtra("referer");
         String subtitlesJson = intent.getStringExtra("subtitles");
         String qualitiesJson = intent.getStringExtra("qualities");
+        String episodesJson = intent.getStringExtra("episodes");
         animeTitle = intent.getStringExtra("title");
         episodeNumber = intent.getStringExtra("episode");
         currentMode = intent.getStringExtra("mode");
@@ -207,6 +224,9 @@ public class ExoPlayerActivity extends AppCompatActivity {
         // adaptive renditions (detected later, once tracks resolve) can still
         // turn this on even if the URL list didn't qualify.
         btnQuality.setVisibility(qualityOptions.size() > 1 ? View.VISIBLE : View.GONE);
+
+        parseEpisodes(episodesJson);
+        btnEpisodes.setVisibility(episodeOptions.size() > 1 ? View.VISIBLE : View.GONE);
 
         if (videoUrl != null && !videoUrl.isEmpty()) {
             pendingVideoUrl = videoUrl;
@@ -230,6 +250,7 @@ public class ExoPlayerActivity extends AppCompatActivity {
         btnForward = findViewById(R.id.btn_forward);
         btnAudioSubs = findViewById(R.id.btn_audio_subs);
         btnQuality = findViewById(R.id.btn_quality);
+        btnEpisodes = findViewById(R.id.btn_episodes);
         btnSkipIntro = findViewById(R.id.btn_skip_intro);
         textTitle = findViewById(R.id.text_title);
         textEpisode = findViewById(R.id.text_episode);
@@ -253,6 +274,7 @@ public class ExoPlayerActivity extends AppCompatActivity {
         pill(btnBack, 20f, 0.35f);
         pill(btnAudioSubs, 20f, 0.35f);
         pill(btnQuality, 20f, 0.35f);
+        pill(btnEpisodes, 18f, 0.35f);
         pill(btnRewind, 29f, 0.32f);
         pill(btnForward, 29f, 0.32f);
         pill(btnSkipIntro, 24f, 0.55f);
@@ -317,6 +339,7 @@ public class ExoPlayerActivity extends AppCompatActivity {
         });
         btnAudioSubs.setOnClickListener(this::showAudioSubtitlesMenu);
         btnQuality.setOnClickListener(this::showQualityMenu);
+        btnEpisodes.setOnClickListener(this::showEpisodeMenu);
         btnPlayNextNow.setOnClickListener(v -> triggerNextEpisode());
         btnRetry.setOnClickListener(v -> retryPlayback());
 
@@ -517,6 +540,42 @@ public class ExoPlayerActivity extends AppCompatActivity {
             rows.add(new MenuRow(option.label, option.label.equals(currentQualityLabel), () -> switchQuality(option)));
         }
         showBottomSheetMenu("Video Quality", rows);
+    }
+
+    // Populates episodeOptions from the "episodes" intent extra - the real
+    // episode list JS already fetched, not something reconstructed here.
+    private void parseEpisodes(String episodesJson) {
+        episodeOptions.clear();
+        if (episodesJson == null || episodesJson.isEmpty()) return;
+        try {
+            JSONArray arr = new JSONArray(episodesJson);
+            for (int i = 0; i < arr.length(); i++) {
+                JSONObject obj = arr.getJSONObject(i);
+                String id = obj.optString("id", "");
+                String number = obj.optString("number", "");
+                if (id.isEmpty() || number.isEmpty()) continue;
+                episodeOptions.add(new EpisodeOption(id, number));
+            }
+        } catch (Exception e) {
+            Log.w(TAG, "Failed to parse episodes JSON", e);
+        }
+    }
+
+    private void showEpisodeMenu(View anchor) {
+        java.util.List<MenuRow> rows = new java.util.ArrayList<>();
+        for (EpisodeOption option : episodeOptions) {
+            boolean isCurrent = option.number.equals(episodeNumber);
+            rows.add(new MenuRow("Episode " + option.number, isCurrent, () -> selectEpisode(option)));
+        }
+        showBottomSheetMenu("Episodes", rows);
+    }
+
+    // Reports the pick back to JS (which knows how to re-resolve a stream
+    // for it) and closes, mirroring triggerNextEpisode()'s handoff.
+    private void selectEpisode(EpisodeOption option) {
+        if (option.number.equals(episodeNumber)) return;
+        ExoPlayerPlugin.notifyEpisodeSelected(animeTitle, episodeNumber, option.number);
+        finish();
     }
 
     private static final class MenuRow {

@@ -26,6 +26,7 @@ public class ExoPlayerPlugin extends Plugin {
         String mode = call.getString("mode", "sub");
         JSArray subtitles = call.getArray("subtitles");
         JSArray qualities = call.getArray("qualities");
+        JSArray episodes = call.getArray("episodes");
 
         if (url == null || url.isEmpty()) {
             call.reject("Must provide a video URL");
@@ -42,6 +43,7 @@ public class ExoPlayerPlugin extends Plugin {
         intent.putExtra("mode", mode);
         intent.putExtra("subtitles", subtitles != null ? subtitles.toString() : null);
         intent.putExtra("qualities", qualities != null ? qualities.toString() : null);
+        intent.putExtra("episodes", episodes != null ? episodes.toString() : null);
 
         getActivity().startActivity(intent);
 
@@ -65,5 +67,14 @@ public class ExoPlayerPlugin extends Plugin {
         data.put("title", title);
         data.put("episode", episode);
         activeInstance.notifyListeners("nextEpisodeRequested", data);
+    }
+
+    static void notifyEpisodeSelected(String title, String episode, String selectedNumber) {
+        if (activeInstance == null) return;
+        JSObject data = new JSObject();
+        data.put("title", title);
+        data.put("episode", episode);
+        data.put("selectedNumber", selectedNumber);
+        activeInstance.notifyListeners("episodeSelected", data);
     }
 }

@@ -1,8 +1,8 @@
 // HistoryScreen.tsx - User watch history, bookmarks, and preferences
 import React, { useState, useEffect } from 'react';
-import { Clock, Bookmark, Trash2, Play, Loader2 } from 'lucide-react';
+import { Clock, Bookmark, Trash2, Play, Loader2, X } from 'lucide-react';
 import {
-  getWatchHistory, clearWatchHistory, getBookmarks,
+  getWatchHistory, clearWatchHistory, removeWatchHistoryItem, getBookmarks,
   type WatchHistoryItem
 } from '../services/historyService';
 import type { AnimeItem } from '../core/aniCliCore';
@@ -40,6 +40,12 @@ export const HistoryScreen: React.FC<HistoryScreenProps> = ({
     await clearWatchHistory();
     setHistoryList([]);
     setConfirmingClear(false);
+  };
+
+  const handleRemoveItem = async (e: React.MouseEvent, animeId: string) => {
+    e.stopPropagation(); // don't trigger onResumeEpisode on the card underneath
+    const updated = await removeWatchHistoryItem(animeId);
+    setHistoryList(updated);
   };
 
   return (
@@ -166,6 +172,26 @@ export const HistoryScreen: React.FC<HistoryScreenProps> = ({
                         Episode {item.episodeNumber} • {progressPct}% watched
                       </p>
                     </div>
+
+                    <button
+                      onClick={(e) => handleRemoveItem(e, item.animeId)}
+                      className="interactive"
+                      style={{
+                        width: '32px',
+                        height: '32px',
+                        borderRadius: '50%',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        border: 'none',
+                        background: 'none',
+                        color: 'var(--text-muted)',
+                        flexShrink: 0
+                      }}
+                      aria-label={`Remove ${item.animeTitle} from history`}
+                    >
+                      <X size={18} />
+                    </button>
                   </div>
                 );
               })}

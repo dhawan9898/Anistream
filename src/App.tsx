@@ -115,9 +115,17 @@ export const App: React.FC = () => {
       if (!next) return; // no real next episode - never guess one
       handlePlayEpisode(anime, next, playingModeRef.current, 0);
     });
+    const episodeSelectedHandle = ExoPlayerPlugin.addListener('episodeSelected', ({ selectedNumber }) => {
+      const anime = playingAnimeRef.current;
+      if (!anime) return;
+      const selected = episodeListRef.current.find(e => e.number === selectedNumber);
+      if (!selected) return; // not a real episode from the list - never guess one
+      handlePlayEpisode(anime, selected, playingModeRef.current, 0);
+    });
     return () => {
       modeHandle.then(h => h.remove());
       nextEpHandle.then(h => h.remove());
+      episodeSelectedHandle.then(h => h.remove());
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -136,18 +144,27 @@ export const App: React.FC = () => {
     setInitialSeekTime(startTime);
 
     // Real episode list for this anime, used for hasNextEpisode/next-episode
-    // lookups - only re-fetched when the anime actually changes (advancing to
-    // the next episode of the same anime reuses what's already loaded).
-    if (loadedEpisodeListAnimeId.current !== anime.id) {
-      getEpisodes(anime.id || anime.title).then(eps => {
-        const sorted = [...eps].sort((a, b) => parseFloat(a.number) - parseFloat(b.number));
-        setEpisodeList(sorted);
-        loadedEpisodeListAnimeId.current = anime.id;
-      });
-    }
+    // lookups and the native player's episode picker - only re-fetched when
+    // the anime actually changes (advancing to the next episode of the same
+    // anime reuses what's already loaded). Fetched in parallel with the
+    // stream itself but awaited before use, so the very first episode
+    // played for a given anime doesn't race a stale/empty list into the
+    // native "Episodes" button.
+    const needsEpisodeList = loadedEpisodeListAnimeId.current !== anime.id;
+    const episodeListPromise = needsEpisodeList
+      ? getEpisodes(anime.id || anime.title).then(eps => [...eps].sort((a, b) => parseFloat(a.number) - parseFloat(b.number)))
+      : Promise.resolve(episodeListRef.current);
 
     try {
-      const source = await getEpisodeStream(anime.id || anime.title, episode.id || episode.number, mode, anime.id);
+      const [source, resolvedEpisodeList] = await Promise.all([
+        getEpisodeStream(anime.id || anime.title, episode.id || episode.number, mode, anime.id),
+        episodeListPromise
+      ]);
+
+      if (needsEpisodeList) {
+        setEpisodeList(resolvedEpisodeList);
+        loadedEpisodeListAnimeId.current = anime.id;
+      }
 
       // Apply the "Default Quality" preference when the stream actually
       // offers more than one distinct rendition to choose from.
@@ -170,7 +187,8 @@ export const App: React.FC = () => {
             referer: source.referer,
             mode,
             subtitles: source.subtitles,
-            qualities: source.qualities
+            qualities: source.qualities,
+            episodes: resolvedEpisodeList.map(e => ({ id: e.id, number: e.number }))
           });
         } catch (e) {
           console.warn("[App] ExoPlayer plugin call failed, falling back to Web player:", e);
@@ -318,6 +336,8 @@ export const App: React.FC = () => {
           onBack={() => setIsPlaying(false)}
           onNextEpisode={handleNextEpisode}
           hasNextEpisode={hasNextEpisode}
+          episodeList={episodeList}
+          onSelectEpisode={(ep) => handlePlayEpisode(playingAnime, ep, playingMode, 0)}
           onProgressUpdate={(time, dur) => {
             saveWatchProgress({
               animeId: playingAnime.id,

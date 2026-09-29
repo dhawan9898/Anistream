@@ -2,8 +2,9 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import Hls from 'hls.js';
 import {
-  Play, Pause, RotateCcw, RotateCw, ArrowLeft, Settings, 
-  Subtitles, Maximize, Minimize, SkipForward, FastForward, Volume2, VolumeX 
+  Play, Pause, RotateCcw, RotateCw, ArrowLeft, Settings,
+  Subtitles, Maximize, Minimize, SkipForward, FastForward, Volume2, VolumeX,
+  ListVideo, Check
 } from 'lucide-react';
 import type { StreamSource, EpisodeItem } from '../core/aniCliCore';
 import { getUserPreferences } from '../services/historyService';
@@ -25,6 +26,8 @@ interface VideoPlayerProps {
   hasNextEpisode?: boolean;
   onProgressUpdate?: (currentTime: number, duration: number) => void;
   initialTime?: number;
+  episodeList?: EpisodeItem[];
+  onSelectEpisode?: (ep: EpisodeItem) => void;
 }
 
 export const VideoPlayer: React.FC<VideoPlayerProps> = ({
@@ -36,7 +39,9 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   onNextEpisode,
   hasNextEpisode,
   onProgressUpdate,
-  initialTime = 0
+  initialTime = 0,
+  episodeList,
+  onSelectEpisode
 }) => {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -53,6 +58,13 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   const [selectedQuality, setSelectedQuality] = useState<string>(streamSource.quality || '1080p');
   const [showQualityMenu, setShowQualityMenu] = useState<boolean>(false);
   const [showSubtitleMenu, setShowSubtitleMenu] = useState<boolean>(false);
+  const [showEpisodeMenu, setShowEpisodeMenu] = useState<boolean>(false);
+  const [volumeIndicator, setVolumeIndicator] = useState<number | null>(null);
+  const dragStartYRef = useRef<number | null>(null);
+  const dragStartVolumeRef = useRef<number>(1);
+  const isDraggingVolumeRef = useRef<boolean>(false);
+  const suppressNextTapRef = useRef<boolean>(false);
+  const volumeIndicatorTimerRef = useRef<number | null>(null);
   const [activeSubtitle, setActiveSubtitle] = useState<string | null>(
     () => streamSource.subtitles.find(s => s.default)?.label ?? streamSource.subtitles[0]?.label ?? null
   );
@@ -221,6 +233,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
         setShowControls(false);
         setShowQualityMenu(false);
         setShowSubtitleMenu(false);
+        setShowEpisodeMenu(false);
       }, 3500);
     }
   }, [isPlaying]);
@@ -309,6 +322,14 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
 
   // Double tap to seek (left side: -10s, right side: +10s)
   const handleTap = (e: React.MouseEvent<HTMLDivElement>) => {
+    // A volume-swipe gesture just ended on this same touch sequence - the
+    // browser still fires a click after touchend, which would otherwise
+    // toggle the controls or register as a tap right after dragging.
+    if (suppressNextTapRef.current) {
+      suppressNextTapRef.current = false;
+      return;
+    }
+
     const now = Date.now();
     const rect = e.currentTarget.getBoundingClientRect();
     const x = e.clientX - rect.left;
@@ -331,6 +352,52 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
       resetControlsTimer();
     }
     lastTapRef.current = { time: now, x };
+  };
+
+  // Vertical swipe on the right half of the screen adjusts volume (Netflix/
+  // native-player-style gesture). Requires a real drag past a small jitter
+  // threshold before it takes over, so it never eats an ordinary tap.
+  const handleTouchStart = (e: React.TouchEvent<HTMLDivElement>) => {
+    const touch = e.touches[0];
+    const rect = e.currentTarget.getBoundingClientRect();
+    const x = touch.clientX - rect.left;
+    if (x < rect.width * 0.5) {
+      dragStartYRef.current = null;
+      return;
+    }
+    dragStartYRef.current = touch.clientY;
+    dragStartVolumeRef.current = videoRef.current?.volume ?? 1;
+    isDraggingVolumeRef.current = false;
+  };
+
+  const handleTouchMove = (e: React.TouchEvent<HTMLDivElement>) => {
+    if (dragStartYRef.current === null) return;
+    const touch = e.touches[0];
+    const deltaY = dragStartYRef.current - touch.clientY;
+    const rect = e.currentTarget.getBoundingClientRect();
+
+    if (!isDraggingVolumeRef.current) {
+      if (Math.abs(deltaY) < 12) return; // jitter guard
+      isDraggingVolumeRef.current = true;
+    }
+
+    const video = videoRef.current;
+    if (!video) return;
+    const newVolume = Math.max(0, Math.min(1, dragStartVolumeRef.current + deltaY / rect.height));
+    video.volume = newVolume;
+    video.muted = newVolume === 0;
+    setIsMuted(newVolume === 0);
+    setVolumeIndicator(Math.round(newVolume * 100));
+    if (volumeIndicatorTimerRef.current) window.clearTimeout(volumeIndicatorTimerRef.current);
+  };
+
+  const handleTouchEnd = () => {
+    dragStartYRef.current = null;
+    if (isDraggingVolumeRef.current) {
+      isDraggingVolumeRef.current = false;
+      suppressNextTapRef.current = true;
+      volumeIndicatorTimerRef.current = window.setTimeout(() => setVolumeIndicator(null), 500);
+    }
   };
 
   // Time & progress tracker
@@ -426,6 +493,9 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
         overflow: 'hidden'
       }}
       onClick={handleTap}
+      onTouchStart={handleTouchStart}
+      onTouchMove={handleTouchMove}
+      onTouchEnd={handleTouchEnd}
     >
       {/* Video Element */}
       <video
@@ -522,6 +592,29 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
           >
             Go Back
           </button>
+        </div>
+      )}
+
+      {/* Volume swipe indicator (right-side vertical drag) */}
+      {volumeIndicator !== null && (
+        <div style={{
+          position: 'absolute',
+          right: '10%',
+          top: '50%',
+          transform: 'translateY(-50%)',
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'center',
+          gap: '8px',
+          color: '#fff',
+          backgroundColor: 'rgba(0,0,0,0.6)',
+          padding: '16px 20px',
+          borderRadius: 'var(--radius-md)',
+          pointerEvents: 'none',
+          zIndex: 15
+        }}>
+          {volumeIndicator === 0 ? <VolumeX size={24} /> : <Volume2 size={24} />}
+          <span style={{ fontSize: '13px', fontWeight: 700 }}>{volumeIndicator}%</span>
         </div>
       )}
 
@@ -641,204 +734,47 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
           e.stopPropagation();
           setShowQualityMenu(false);
           setShowSubtitleMenu(false);
+          setShowEpisodeMenu(false);
         }}
       >
-        {/* Top Header Bar */}
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
-            <button 
-              onClick={onBack}
-              className="interactive glass-pill"
-              style={{
-                width: '40px',
-                height: '40px',
-                borderRadius: '50%',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                border: 'none',
-                color: '#fff'
-              }}
-            >
-              <ArrowLeft size={20} />
-            </button>
-            <div>
-              <h2 style={{ fontSize: '15px', fontWeight: 700, color: '#f8fafc', whiteSpace: 'nowrap', maxWidth: '180px', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                {animeTitle}
-              </h2>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '2px' }}>
-                <span style={{ fontSize: '12px', color: '#94a3b8' }}>Ep {episode.number}</span>
-                <span style={{
-                  fontSize: '10px',
-                  fontWeight: 700,
-                  backgroundColor: mode === 'sub' ? '#6366f1' : '#a855f7',
-                  color: '#fff',
-                  padding: '1px 6px',
-                  borderRadius: '4px'
-                }}>
-                  {mode.toUpperCase()}
-                </span>
-              </div>
+        {/* Top Header Bar - Netflix keeps this minimal: back + title only.
+            Subtitles/quality/episodes live in a toolbar near the seek bar. */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
+          <button
+            onClick={onBack}
+            className="interactive glass-pill"
+            style={{
+              width: '40px',
+              height: '40px',
+              borderRadius: '50%',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              border: 'none',
+              color: '#fff'
+            }}
+          >
+            <ArrowLeft size={20} />
+          </button>
+          <div>
+            <h2 style={{ fontSize: '15px', fontWeight: 700, color: '#f8fafc', whiteSpace: 'nowrap', maxWidth: '180px', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+              {animeTitle}
+            </h2>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '2px' }}>
+              <span style={{ fontSize: '12px', color: '#94a3b8' }}>Ep {episode.number}</span>
+              <span style={{
+                fontSize: '10px',
+                fontWeight: 700,
+                backgroundColor: mode === 'sub' ? '#6366f1' : '#a855f7',
+                color: '#fff',
+                padding: '1px 6px',
+                borderRadius: '4px'
+              }}>
+                {mode.toUpperCase()}
+              </span>
             </div>
           </div>
-
-          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-            {/* Subtitles Button */}
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
-                setShowSubtitleMenu(prev => !prev);
-                setShowQualityMenu(false);
-              }}
-              className="interactive glass-pill"
-              style={{
-                padding: '6px 12px',
-                borderRadius: 'var(--radius-full)',
-                display: 'flex',
-                alignItems: 'center',
-                gap: '6px',
-                border: 'none',
-                color: activeSubtitle ? '#ffffff' : '#94a3b8',
-                fontSize: '12px',
-                fontWeight: 600
-              }}
-            >
-              <Subtitles size={16} />
-              <span>CC</span>
-            </button>
-
-            {/* Quality Button */}
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
-                setShowQualityMenu(prev => !prev);
-                setShowSubtitleMenu(false);
-              }}
-              className="interactive glass-pill"
-              style={{
-                padding: '6px 12px',
-                borderRadius: 'var(--radius-full)',
-                display: 'flex',
-                alignItems: 'center',
-                gap: '6px',
-                border: 'none',
-                color: '#fff',
-                fontSize: '12px',
-                fontWeight: 600
-              }}
-            >
-              <Settings size={15} />
-              <span>{selectedQuality}</span>
-            </button>
-          </div>
         </div>
-
-        {/* Quality Menu Overlay */}
-        {showQualityMenu && (
-          <div
-            className="glass-panel-dark"
-            onClick={(e) => e.stopPropagation()}
-            style={{
-              position: 'absolute',
-              top: '70px',
-              right: '20px',
-              borderRadius: 'var(--radius-md)',
-              padding: '8px',
-              display: 'flex',
-              flexDirection: 'column',
-              gap: '4px',
-              zIndex: 50,
-              minWidth: '130px',
-              boxShadow: 'var(--shadow-lg)'
-            }}
-          >
-            {(streamSource.qualities && streamSource.qualities.length > 0
-              ? streamSource.qualities
-              : [{ quality: '1080p', url: streamSource.streamUrl }]
-            ).map((item) => (
-              <button
-                key={item.quality}
-                onClick={() => switchQuality(item)}
-                className="interactive"
-                style={{
-                  padding: '8px 14px',
-                  borderRadius: 'var(--radius-sm)',
-                  backgroundColor: selectedQuality === item.quality ? 'rgba(255, 255, 255, 0.14)' : 'transparent',
-                  color: selectedQuality === item.quality ? '#ffffff' : '#cbd5e1',
-                  fontSize: '13px',
-                  fontWeight: selectedQuality === item.quality ? 700 : 500,
-                  border: 'none',
-                  textAlign: 'left'
-                }}
-              >
-                {item.quality}
-              </button>
-            ))}
-          </div>
-        )}
-
-        {/* Subtitle Menu Overlay */}
-        {showSubtitleMenu && (
-          <div
-            className="glass-panel-dark"
-            onClick={(e) => e.stopPropagation()}
-            style={{
-              position: 'absolute',
-              top: '70px',
-              right: '90px',
-              borderRadius: 'var(--radius-md)',
-              padding: '8px',
-              display: 'flex',
-              flexDirection: 'column',
-              gap: '4px',
-              zIndex: 50,
-              minWidth: '140px',
-              boxShadow: 'var(--shadow-lg)'
-            }}
-          >
-            <button
-              onClick={() => {
-                setActiveSubtitle(null);
-                setShowSubtitleMenu(false);
-              }}
-              className="interactive"
-              style={{
-                padding: '8px 14px',
-                borderRadius: 'var(--radius-sm)',
-                backgroundColor: activeSubtitle === null ? 'rgba(255, 255, 255, 0.14)' : 'transparent',
-                color: activeSubtitle === null ? '#ffffff' : '#cbd5e1',
-                fontSize: '13px',
-                fontWeight: activeSubtitle === null ? 700 : 500,
-                border: 'none',
-                textAlign: 'left'
-              }}
-            >
-              Off
-            </button>
-            {streamSource.subtitles.map((s, i) => (
-              <button
-                key={i}
-                onClick={() => {
-                  setActiveSubtitle(s.label);
-                  setShowSubtitleMenu(false);
-                }}
-                className="interactive"
-                style={{
-                  padding: '8px 14px',
-                  borderRadius: 'var(--radius-sm)',
-                  backgroundColor: activeSubtitle === s.label ? 'rgba(255, 255, 255, 0.14)' : 'transparent',
-                  color: activeSubtitle === s.label ? '#ffffff' : '#cbd5e1',
-                  fontSize: '13px',
-                  fontWeight: activeSubtitle === s.label ? 700 : 500,
-                  border: 'none',
-                  textAlign: 'left'
-                }}
-              >
-                {s.label}
-              </button>
-            ))}
-          </div>
-        )}
 
         {/* Center Playback Controls */}
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '36px' }}>
@@ -897,7 +833,261 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
         </div>
 
         {/* Bottom Control Bar */}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', width: '100%' }}>
+        <div style={{ position: 'relative', display: 'flex', flexDirection: 'column', gap: '10px', width: '100%' }}>
+          {/* Netflix-style toolbar: episode / subtitles / quality selection,
+              anchored right above the seek bar instead of the top header.
+              Wrapped in its own relative container so the dropdown panels
+              (bottom: 100%) clear this row exactly, regardless of how tall
+              the progress bar/timestamps below it are. */}
+          <div style={{ position: 'relative' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: '8px' }}>
+            {episodeList && episodeList.length > 0 && onSelectEpisode && (
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setShowEpisodeMenu(prev => !prev);
+                  setShowSubtitleMenu(false);
+                  setShowQualityMenu(false);
+                }}
+                className="interactive glass-pill"
+                style={{
+                  padding: '6px 12px',
+                  borderRadius: 'var(--radius-full)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  border: 'none',
+                  color: '#fff',
+                  fontSize: '12px',
+                  fontWeight: 600
+                }}
+              >
+                <ListVideo size={16} />
+                <span>Episodes</span>
+              </button>
+            )}
+
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                setShowSubtitleMenu(prev => !prev);
+                setShowQualityMenu(false);
+                setShowEpisodeMenu(false);
+              }}
+              className="interactive glass-pill"
+              style={{
+                padding: '6px 12px',
+                borderRadius: 'var(--radius-full)',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '6px',
+                border: 'none',
+                color: activeSubtitle ? '#ffffff' : '#94a3b8',
+                fontSize: '12px',
+                fontWeight: 600
+              }}
+            >
+              <Subtitles size={16} />
+              <span>CC</span>
+            </button>
+
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                setShowQualityMenu(prev => !prev);
+                setShowSubtitleMenu(false);
+                setShowEpisodeMenu(false);
+              }}
+              className="interactive glass-pill"
+              style={{
+                padding: '6px 12px',
+                borderRadius: 'var(--radius-full)',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '6px',
+                border: 'none',
+                color: '#fff',
+                fontSize: '12px',
+                fontWeight: 600
+              }}
+            >
+              <Settings size={15} />
+              <span>{selectedQuality}</span>
+            </button>
+          </div>
+
+          {/* Episode Menu - scrollable, opens upward above the toolbar */}
+          {showEpisodeMenu && episodeList && onSelectEpisode && (
+            <div
+              className="glass-panel-dark"
+              onClick={(e) => e.stopPropagation()}
+              style={{
+                position: 'absolute',
+                bottom: 'calc(100% + 8px)',
+                right: 0,
+                left: 0,
+                maxHeight: '260px',
+                overflowY: 'auto',
+                borderRadius: 'var(--radius-md)',
+                padding: '8px',
+                display: 'grid',
+                gridTemplateColumns: 'repeat(4, 1fr)',
+                gap: '6px',
+                zIndex: 50,
+                boxShadow: 'var(--shadow-lg)'
+              }}
+            >
+              {episodeList.map((ep) => {
+                const isCurrent = ep.id === episode.id;
+                return (
+                  <button
+                    key={ep.id}
+                    onClick={() => {
+                      setShowEpisodeMenu(false);
+                      if (!isCurrent) onSelectEpisode(ep);
+                    }}
+                    className="interactive"
+                    style={{
+                      padding: '10px 4px',
+                      borderRadius: 'var(--radius-sm)',
+                      backgroundColor: isCurrent ? 'rgba(255, 255, 255, 0.14)' : 'transparent',
+                      color: isCurrent ? '#ffffff' : '#cbd5e1',
+                      fontSize: '13px',
+                      fontWeight: isCurrent ? 700 : 500,
+                      border: 'none',
+                      textAlign: 'center'
+                    }}
+                  >
+                    {ep.number}
+                  </button>
+                );
+              })}
+            </div>
+          )}
+
+          {/* Quality Menu Overlay - opens upward above the toolbar */}
+          {showQualityMenu && (
+            <div
+              className="glass-panel-dark"
+              onClick={(e) => e.stopPropagation()}
+              style={{
+                position: 'absolute',
+                bottom: 'calc(100% + 8px)',
+                right: 0,
+                borderRadius: 'var(--radius-md)',
+                padding: '8px',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: '4px',
+                zIndex: 50,
+                minWidth: '130px',
+                boxShadow: 'var(--shadow-lg)'
+              }}
+            >
+              {(streamSource.qualities && streamSource.qualities.length > 0
+                ? streamSource.qualities
+                : [{ quality: '1080p', url: streamSource.streamUrl }]
+              ).map((item) => (
+                <button
+                  key={item.quality}
+                  onClick={() => switchQuality(item)}
+                  className="interactive"
+                  style={{
+                    padding: '8px 14px',
+                    borderRadius: 'var(--radius-sm)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    gap: '10px',
+                    backgroundColor: selectedQuality === item.quality ? 'rgba(255, 255, 255, 0.14)' : 'transparent',
+                    color: selectedQuality === item.quality ? '#ffffff' : '#cbd5e1',
+                    fontSize: '13px',
+                    fontWeight: selectedQuality === item.quality ? 700 : 500,
+                    border: 'none',
+                    textAlign: 'left'
+                  }}
+                >
+                  <span>{item.quality}</span>
+                  {selectedQuality === item.quality && <Check size={14} />}
+                </button>
+              ))}
+            </div>
+          )}
+
+          {/* Subtitle Menu Overlay - opens upward above the toolbar */}
+          {showSubtitleMenu && (
+            <div
+              className="glass-panel-dark"
+              onClick={(e) => e.stopPropagation()}
+              style={{
+                position: 'absolute',
+                bottom: 'calc(100% + 8px)',
+                right: '84px',
+                borderRadius: 'var(--radius-md)',
+                padding: '8px',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: '4px',
+                zIndex: 50,
+                minWidth: '140px',
+                boxShadow: 'var(--shadow-lg)'
+              }}
+            >
+              <button
+                onClick={() => {
+                  setActiveSubtitle(null);
+                  setShowSubtitleMenu(false);
+                }}
+                className="interactive"
+                style={{
+                  padding: '8px 14px',
+                  borderRadius: 'var(--radius-sm)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  gap: '10px',
+                  backgroundColor: activeSubtitle === null ? 'rgba(255, 255, 255, 0.14)' : 'transparent',
+                  color: activeSubtitle === null ? '#ffffff' : '#cbd5e1',
+                  fontSize: '13px',
+                  fontWeight: activeSubtitle === null ? 700 : 500,
+                  border: 'none',
+                  textAlign: 'left'
+                }}
+              >
+                <span>Off</span>
+                {activeSubtitle === null && <Check size={14} />}
+              </button>
+              {streamSource.subtitles.map((s, i) => (
+                <button
+                  key={i}
+                  onClick={() => {
+                    setActiveSubtitle(s.label);
+                    setShowSubtitleMenu(false);
+                  }}
+                  className="interactive"
+                  style={{
+                    padding: '8px 14px',
+                    borderRadius: 'var(--radius-sm)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    gap: '10px',
+                    backgroundColor: activeSubtitle === s.label ? 'rgba(255, 255, 255, 0.14)' : 'transparent',
+                    color: activeSubtitle === s.label ? '#ffffff' : '#cbd5e1',
+                    fontSize: '13px',
+                    fontWeight: activeSubtitle === s.label ? 700 : 500,
+                    border: 'none',
+                    textAlign: 'left'
+                  }}
+                >
+                  <span>{s.label}</span>
+                  {activeSubtitle === s.label && <Check size={14} />}
+                </button>
+              ))}
+            </div>
+          )}
+          </div>
+
           {/* Progress Bar & Buffered Track */}
           <div style={{ position: 'relative', width: '100%', height: '20px', display: 'flex', alignItems: 'center' }}>
             {/* Background track */}

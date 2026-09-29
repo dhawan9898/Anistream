@@ -17,6 +17,17 @@ export interface NextEpisodeRequestedEvent {
   episode: string;
 }
 
+export interface EpisodeSelectedEvent {
+  title: string;
+  episode: string;
+  selectedNumber: string;
+}
+
+export interface PlayEpisodeOption {
+  id: string;
+  number: string;
+}
+
 export interface ExoPlayerPluginInterface {
   play(options: {
     url: string;
@@ -26,6 +37,7 @@ export interface ExoPlayerPluginInterface {
     mode?: 'sub' | 'dub';
     subtitles?: SubtitleTrack[];
     qualities?: QualityOption[];
+    episodes?: PlayEpisodeOption[];
   }): Promise<{ success: boolean }>;
 
   addListener(
@@ -36,6 +48,11 @@ export interface ExoPlayerPluginInterface {
   addListener(
     eventName: 'nextEpisodeRequested',
     listenerFunc: (event: NextEpisodeRequestedEvent) => void
+  ): Promise<PluginListenerHandle>;
+
+  addListener(
+    eventName: 'episodeSelected',
+    listenerFunc: (event: EpisodeSelectedEvent) => void
   ): Promise<PluginListenerHandle>;
 }
 
