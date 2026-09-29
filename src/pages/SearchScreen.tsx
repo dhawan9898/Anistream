@@ -2,10 +2,15 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Search as SearchIcon, X, Loader2, ArrowLeft } from 'lucide-react';
 import { searchAnime, type AnimeItem } from '../core/aniCliCore';
+import { getGenres, type Genre } from '../services/catalogService';
+
+// Tile colors for the "Browse by genre" grid, cycled in order.
+const GENRE_TILE_COLORS = ['#b91c1c', '#7c3aed', '#0e7490', '#b45309', '#be185d', '#15803d', '#1d4ed8', '#9f1239'];
 
 interface SearchScreenProps {
   onBack: () => void;
   onSelectAnime: (anime: AnimeItem) => void;
+  onSelectGenre: (genre: Genre) => void;
 }
 
 const POPULAR_TAGS = [
@@ -21,8 +26,15 @@ const POPULAR_TAGS = [
 
 export const SearchScreen: React.FC<SearchScreenProps> = ({
   onBack,
-  onSelectAnime
+  onSelectAnime,
+  onSelectGenre
 }) => {
+  const [genres, setGenres] = useState<Genre[]>([]);
+
+  useEffect(() => {
+    getGenres().then(setGenres);
+  }, []);
+
   const [query, setQuery] = useState<string>('');
   const [results, setResults] = useState<AnimeItem[]>([]);
   const [loading, setLoading] = useState<boolean>(false);
@@ -159,10 +171,32 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({
           <span style={{ fontSize: '14px' }}>Searching ani-cli database...</span>
         </div>
       ) : !query ? (
-        <div style={{ textAlign: 'center', padding: '60px 20px', color: 'var(--text-secondary)' }}>
-          <SearchIcon size={40} color="var(--accent-primary)" style={{ margin: '0 auto 12px auto', opacity: 0.8 }} />
-          <p style={{ fontSize: '16px', fontWeight: 600, marginBottom: '6px', color: 'var(--text-primary)' }}>Search for anime or movies</p>
-          <p style={{ fontSize: '13px' }}>Type a title above, or tap a quick suggestion to get started.</p>
+        <div style={{ padding: '4px 20px 0 20px' }}>
+          <h2 style={{ fontSize: '16px', fontWeight: 800, color: 'var(--text-primary)', marginBottom: '12px' }}>Browse by Genre</h2>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '10px' }}>
+            {genres.map((genre, i) => (
+              <button
+                key={genre.slug}
+                onClick={() => onSelectGenre(genre)}
+                className="interactive"
+                style={{
+                  height: '64px',
+                  borderRadius: 'var(--radius-md)',
+                  border: 'none',
+                  padding: '0 14px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  background: `linear-gradient(135deg, ${GENRE_TILE_COLORS[i % GENRE_TILE_COLORS.length]} 0%, rgba(0,0,0,0.55) 140%)`,
+                  color: '#fff',
+                  fontSize: '15px',
+                  fontWeight: 800,
+                  textAlign: 'left'
+                }}
+              >
+                {genre.name}
+              </button>
+            ))}
+          </div>
         </div>
       ) : results.length === 0 ? (
         <div style={{ textAlign: 'center', padding: '60px 20px', color: 'var(--text-secondary)' }}>

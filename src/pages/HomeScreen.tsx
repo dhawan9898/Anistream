@@ -1,19 +1,81 @@
 import React, { useState, useEffect } from 'react';
-import { Play, Flame, Clock, ChevronRight, Bookmark } from 'lucide-react';
+import { Play, Flame, Clock, ChevronRight, ChevronDown, Bookmark, Search as SearchIcon } from 'lucide-react';
 import { getTrendingAnime, type AnimeItem } from '../core/aniCliCore';
 import { getWatchHistory, type WatchHistoryItem } from '../services/historyService';
+import { getAnimeByGenre, getGenres, type Genre } from '../services/catalogService';
+import { PosterCard } from '../components/PosterCard';
+import { GenrePicker } from '../components/GenrePicker';
+
+// Genres that get their own rail on the home screen, Netflix-style.
+const HOME_ROW_GENRES = ['action', 'romance', 'comedy', 'fantasy', 'isekai'];
+
+// One horizontally scrolling genre rail with a "See all" link into the
+// full genre page.
+const GenreRow: React.FC<{
+  genre: Genre;
+  onSelectAnime: (anime: AnimeItem) => void;
+  onSeeAll: () => void;
+}> = ({ genre, onSelectAnime, onSeeAll }) => {
+  const [items, setItems] = useState<AnimeItem[] | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    getAnimeByGenre(genre, 1).then(page => {
+      if (!cancelled) setItems(page.items.slice(0, 15));
+    });
+    return () => { cancelled = true; };
+  }, [genre]);
+
+  if (items && items.length === 0) return null;
+
+  return (
+    <div style={{ padding: '18px 0 4px 0' }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 20px', marginBottom: '10px' }}>
+        <h2 style={{ fontSize: '17px', fontWeight: 800, color: 'var(--text-primary)' }}>{genre.name} Anime</h2>
+        <button
+          onClick={onSeeAll}
+          className="interactive"
+          style={{ background: 'none', border: 'none', color: 'var(--accent-primary)', fontSize: '13px', fontWeight: 600, display: 'flex', alignItems: 'center' }}
+        >
+          <span>See all</span>
+          <ChevronRight size={16} />
+        </button>
+      </div>
+      <div style={{ display: 'flex', gap: '10px', overflowX: 'auto', padding: '0 20px 6px 20px', scrollbarWidth: 'none' }}>
+        {items
+          ? items.map(anime => (
+              <PosterCard key={anime.id} anime={anime} width={112} onClick={() => onSelectAnime(anime)} />
+            ))
+          : Array.from({ length: 5 }).map((_, i) => (
+              <div key={i} className="skeleton" style={{ flex: '0 0 112px', height: '162px', borderRadius: '6px' }} />
+            ))}
+      </div>
+    </div>
+  );
+};
 
 interface HomeScreenProps {
   onSelectAnime: (anime: AnimeItem) => void;
   onResumeEpisode: (history: WatchHistoryItem) => void;
   onOpenSearch: () => void;
+  onSelectGenre: (genre: Genre) => void;
 }
 
 export const HomeScreen: React.FC<HomeScreenProps> = ({
   onSelectAnime,
   onResumeEpisode,
-  onOpenSearch
+  onOpenSearch,
+  onSelectGenre
 }) => {
+  const [pickerOpen, setPickerOpen] = useState<boolean>(false);
+  const [rowGenres, setRowGenres] = useState<Genre[]>([]);
+
+  useEffect(() => {
+    getGenres().then(all => {
+      setRowGenres(HOME_ROW_GENRES.map(slug => all.find(g => g.slug === slug)).filter(Boolean) as Genre[]);
+    });
+  }, []);
+
   const [featuredIndex, setFeaturedIndex] = useState<number>(0);
   const [history, setHistory] = useState<WatchHistoryItem[]>([]);
   const [trending, setTrending] = useState<AnimeItem[]>([]);
@@ -78,23 +140,43 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
 
         {/* Sits on the hero banner image, so it keeps the dark-glass look
             regardless of app theme (same reasoning as the hero text below). */}
-        <button
-          onClick={onOpenSearch}
-          className="interactive glass-pill-dark"
-          style={{
-            padding: '7px 14px',
-            borderRadius: 'var(--radius-full)',
-            border: 'none',
-            display: 'flex',
-            alignItems: 'center',
-            gap: '6px',
-            color: '#cbd5e1',
-            fontSize: '13px',
-            fontWeight: 500
-          }}
-        >
-          <span>Search anime...</span>
-        </button>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <button
+            onClick={() => setPickerOpen(true)}
+            className="interactive glass-pill-dark"
+            style={{
+              padding: '7px 12px',
+              borderRadius: 'var(--radius-full)',
+              border: 'none',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '4px',
+              color: '#fff',
+              fontSize: '13px',
+              fontWeight: 600
+            }}
+          >
+            <span>Categories</span>
+            <ChevronDown size={16} />
+          </button>
+          <button
+            onClick={onOpenSearch}
+            className="interactive glass-pill-dark"
+            aria-label="Search"
+            style={{
+              width: '36px',
+              height: '36px',
+              borderRadius: '50%',
+              border: 'none',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              color: '#fff'
+            }}
+          >
+            <SearchIcon size={18} />
+          </button>
+        </div>
       </div>
 
       {/* Cinematic Hero Carousel Banner */}
@@ -309,6 +391,16 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
         </div>
       )}
 
+      {/* Genre rails */}
+      {rowGenres.map(genre => (
+        <GenreRow
+          key={genre.slug}
+          genre={genre}
+          onSelectAnime={onSelectAnime}
+          onSeeAll={() => onSelectGenre(genre)}
+        />
+      ))}
+
       {/* Trending Anime Grid */}
       <div style={{ padding: '20px 20px 10px 20px' }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '16px' }}>
@@ -430,6 +522,15 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
           ))}
         </div>
       </div>
+
+      <GenrePicker
+        open={pickerOpen}
+        onClose={() => setPickerOpen(false)}
+        onSelect={(genre) => {
+          setPickerOpen(false);
+          onSelectGenre(genre);
+        }}
+      />
     </div>
   );
 };

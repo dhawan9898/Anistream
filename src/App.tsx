@@ -7,6 +7,8 @@ import { HomeScreen } from './pages/HomeScreen';
 import { SearchScreen } from './pages/SearchScreen';
 import { AnimeDetailScreen } from './pages/AnimeDetailScreen';
 import { HistoryScreen } from './pages/HistoryScreen';
+import { GenreScreen } from './pages/GenreScreen';
+import type { Genre } from './services/catalogService';
 import { SettingsScreen } from './pages/SettingsScreen';
 import { VideoPlayer } from './components/VideoPlayer';
 import { ConfirmModal } from './components/ConfirmModal';
@@ -32,7 +34,23 @@ const TABS: { id: Tab; label: string; icon: React.ComponentType<{ size?: number 
 
 export const App: React.FC = () => {
   const [currentTab, setCurrentTab] = useState<Tab>('home');
-  const [selectedAnime, setSelectedAnime] = useState<AnimeItem | null>(null);
+  // Title pages stack up (opening a suggestion from a title page and backing
+  // out returns to the previous title, like Netflix); a genre page sits
+  // underneath them.
+  const [animeStack, setAnimeStack] = useState<AnimeItem[]>([]);
+  const [selectedGenre, setSelectedGenre] = useState<Genre | null>(null);
+  const selectedAnime = animeStack.length > 0 ? animeStack[animeStack.length - 1] : null;
+  const pushAnime = (anime: AnimeItem) => setAnimeStack(stack => [...stack, anime]);
+  const popAnime = () => setAnimeStack(stack => stack.slice(0, -1));
+  const openGenre = (genre: Genre) => {
+    setAnimeStack([]);
+    setSelectedGenre(genre);
+  };
+  const switchTab = (tab: Tab) => {
+    setAnimeStack([]);
+    setSelectedGenre(null);
+    setCurrentTab(tab);
+  };
   const [theme, setThemeState] = useState<ThemeMode>(getStoredThemeSync());
 
   // Apply the theme to <html> (index.html already set an initial value
@@ -273,31 +291,47 @@ export const App: React.FC = () => {
           hard-cut: pushing into detail glides in from the right (like iOS
           navigation), switching tabs fades/pops in place. */}
       <div
-        key={selectedAnime ? `detail-${selectedAnime.id}` : currentTab}
-        className={selectedAnime ? 'animate-slide-in' : 'animate-fade-in'}
+        key={selectedAnime ? `detail-${animeStack.length}-${selectedAnime.id}` : selectedGenre ? `genre-${selectedGenre.slug}` : currentTab}
+        className={selectedAnime || selectedGenre ? 'animate-slide-in' : 'animate-fade-in'}
         style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}
       >
         {selectedAnime ? (
           <AnimeDetailScreen
             anime={selectedAnime}
-            onBack={() => setSelectedAnime(null)}
-            onPlayEpisode={(ep, mode) => handlePlayEpisode(selectedAnime, ep, mode)}
+            onBack={popAnime}
+            onPlayEpisode={(anime, ep, mode) => handlePlayEpisode(anime, ep, mode)}
+            onResume={(anime, item) => handlePlayEpisode(
+              anime,
+              { id: item.episodeId, number: item.episodeNumber, title: `Episode ${item.episodeNumber}` },
+              item.mode,
+              item.currentTime
+            )}
+            onSelectAnime={pushAnime}
+          />
+        ) : selectedGenre ? (
+          <GenreScreen
+            genre={selectedGenre}
+            onBack={() => setSelectedGenre(null)}
+            onSelectGenre={openGenre}
+            onSelectAnime={pushAnime}
           />
         ) : currentTab === 'home' ? (
           <HomeScreen
-            onSelectAnime={(anime) => setSelectedAnime(anime)}
+            onSelectAnime={pushAnime}
             onResumeEpisode={handleResumeEpisode}
-            onOpenSearch={() => setCurrentTab('search')}
+            onOpenSearch={() => switchTab('search')}
+            onSelectGenre={openGenre}
           />
         ) : currentTab === 'search' ? (
           <SearchScreen
-            onBack={() => setCurrentTab('home')}
-            onSelectAnime={(anime) => setSelectedAnime(anime)}
+            onBack={() => switchTab('home')}
+            onSelectAnime={pushAnime}
+            onSelectGenre={openGenre}
           />
         ) : currentTab === 'library' ? (
           <HistoryScreen
             onResumeEpisode={handleResumeEpisode}
-            onSelectAnime={(anime) => setSelectedAnime(anime)}
+            onSelectAnime={pushAnime}
           />
         ) : (
           <SettingsScreen theme={theme} onChangeTheme={handleSetTheme} />
@@ -421,7 +455,7 @@ export const App: React.FC = () => {
               return (
                 <button
                   key={tab.id}
-                  onClick={() => setCurrentTab(tab.id)}
+                  onClick={() => switchTab(tab.id)}
                   className={`interactive dock-item ${active ? 'active' : ''}`}
                   style={{
                     position: 'relative',

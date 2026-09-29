@@ -26,7 +26,7 @@ async function fetchWithTimeout(url: string): Promise<Response> {
   }
 }
 
-async function resolveMalId(title: string): Promise<number | null> {
+export async function resolveMalId(title: string): Promise<number | null> {
   const cacheKey = title.trim().toLowerCase();
   if (malIdCache.has(cacheKey)) return malIdCache.get(cacheKey)!;
 

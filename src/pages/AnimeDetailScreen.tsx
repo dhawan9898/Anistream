@@ -1,64 +1,139 @@
-// AnimeDetailScreen.tsx - Anime synopsis, episode grid, and sub/dub mode selector
+// AnimeDetailScreen.tsx - Netflix-style title page: backdrop, Play/Resume,
+// sub/dub selector, synopsis, then Episodes / Collection / More Like This tabs.
 import React, { useState, useEffect } from 'react';
-import { ArrowLeft, Play, Bookmark, Loader2 } from 'lucide-react';
+import { ArrowLeft, Play, Plus, Check, Loader2 } from 'lucide-react';
 import { getEpisodes, type AnimeItem, type EpisodeItem } from '../core/aniCliCore';
-import { toggleBookmark, getBookmarks, getUserPreferences } from '../services/historyService';
+import {
+  toggleBookmark,
+  getBookmarks,
+  getUserPreferences,
+  getWatchHistory,
+  type WatchHistoryItem
+} from '../services/historyService';
+import { getAnimeDetails, resolveAnime, type AnimeDetails } from '../services/catalogService';
+import { PosterCard } from '../components/PosterCard';
 
 interface AnimeDetailScreenProps {
   anime: AnimeItem;
   onBack: () => void;
-  onPlayEpisode: (episode: EpisodeItem, mode: 'sub' | 'dub') => void;
+  // `anime` is the resolved streaming-site entry, which can differ from the
+  // prop when this page was opened from a MyAnimeList-backed suggestion.
+  onPlayEpisode: (anime: AnimeItem, episode: EpisodeItem, mode: 'sub' | 'dub') => void;
+  onResume: (anime: AnimeItem, history: WatchHistoryItem) => void;
+  onSelectAnime: (anime: AnimeItem) => void;
 }
+
+type DetailTab = 'episodes' | 'collection' | 'similar';
 
 export const AnimeDetailScreen: React.FC<AnimeDetailScreenProps> = ({
   anime,
   onBack,
-  onPlayEpisode
+  onPlayEpisode,
+  onResume,
+  onSelectAnime
 }) => {
+  const [resolved, setResolved] = useState<AnimeItem | null>(anime.id.startsWith('mal-') ? null : anime);
+  const [resolveError, setResolveError] = useState<string | null>(null);
   const [mode, setMode] = useState<'sub' | 'dub'>('sub');
   const [episodes, setEpisodes] = useState<EpisodeItem[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [isBookmarked, setIsBookmarked] = useState<boolean>(false);
-  const [activeTab, setActiveTab] = useState<number>(0);
+  const [activeRange, setActiveRange] = useState<number>(0);
+  const [details, setDetails] = useState<AnimeDetails | null>(null);
+  const [tab, setTab] = useState<DetailTab>('episodes');
+  const [history, setHistory] = useState<WatchHistoryItem | null>(null);
+  const [expanded, setExpanded] = useState<boolean>(false);
+
+  // Respect the user's "Default Audio" preference instead of always
+  // starting on SUB.
+  useEffect(() => {
+    getUserPreferences().then(p => setMode(p.defaultMode));
+  }, []);
+
+  // MyAnimeList-backed entries (opened from a suggestion) first need their
+  // real streaming-site entry. (App keys this screen by anime id, so this
+  // runs once per title.)
+  useEffect(() => {
+    if (resolved) return;
+    resolveAnime(anime)
+      .then(setResolved)
+      .catch(err => {
+        console.warn('[AnimeDetailScreen] resolve failed:', err);
+        setResolveError(`"${anime.title}" isn't available to stream right now.`);
+        setLoading(false);
+      });
+  }, [anime, resolved]);
 
   useEffect(() => {
-    // Check bookmark
+    if (!resolved) return;
+    let cancelled = false;
+
     getBookmarks().then(bookmarks => {
-      setIsBookmarked(bookmarks.some(b => b.id === anime.id));
+      if (!cancelled) setIsBookmarked(bookmarks.some(b => b.id === resolved.id));
+    });
+    getWatchHistory().then(list => {
+      if (!cancelled) setHistory(list.find(h => h.animeId === resolved.id) || null);
     });
 
-    // Respect the user's "Default Audio" preference instead of always
-    // starting on SUB.
-    getUserPreferences().then(p => setMode(p.defaultMode));
-
-    // Fetch episodes - sort ascending by number so episodes[0] is genuinely
-    // episode 1 rather than however the scraper happened to order the page.
-    // (loading starts true and this effect only ever runs once per mount,
-    // since App.tsx keys AnimeDetailScreen by anime id.)
-    getEpisodes(anime.id).then((eps) => {
-      const sorted = [...eps].sort((a, b) => parseFloat(a.number) - parseFloat(b.number));
-      setEpisodes(sorted);
+    // Sort ascending by number so episodes[0] is genuinely episode 1 rather
+    // than however the scraper happened to order the page.
+    getEpisodes(resolved.id).then((eps) => {
+      if (cancelled) return;
+      setEpisodes([...eps].sort((a, b) => parseFloat(a.number) - parseFloat(b.number)));
       setLoading(false);
     });
-  }, [anime.id]);
+
+    getAnimeDetails(resolved).then(d => {
+      if (!cancelled) setDetails(d);
+    });
+    return () => { cancelled = true; };
+  }, [resolved]);
+
+  const shown = resolved || anime;
 
   const handleBookmarkToggle = async () => {
-    const newState = await toggleBookmark(anime);
-    setIsBookmarked(newState);
+    if (!resolved) return;
+    setIsBookmarked(await toggleBookmark(resolved));
   };
 
-  // Pagination for large episode lists (e.g., 50 per tab)
+  const handlePlay = () => {
+    if (!resolved) return;
+    if (history) {
+      onResume(resolved, history);
+    } else if (episodes.length > 0) {
+      onPlayEpisode(resolved, episodes[0], mode);
+    }
+  };
+
+  // Pagination for large episode lists (50 per range)
   const chunkSize = 50;
-  const tabCount = Math.max(1, Math.ceil(episodes.length / chunkSize));
-  const currentChunk = episodes.slice(activeTab * chunkSize, (activeTab + 1) * chunkSize);
+  const rangeCount = Math.max(1, Math.ceil(episodes.length / chunkSize));
+  const currentChunk = episodes.slice(activeRange * chunkSize, (activeRange + 1) * chunkSize);
+
+  const description = shown.description || details?.description;
+  const genres = (details?.genres.length ? details.genres : shown.genres) || [];
+  const collection = details?.collection || [];
+  const suggestions = details?.suggestions || [];
+
+  const tabs: { id: DetailTab; label: string }[] = [
+    { id: 'episodes', label: 'Episodes' },
+    ...(collection.length > 0 ? [{ id: 'collection' as DetailTab, label: 'Collection' }] : []),
+    { id: 'similar', label: 'More Like This' }
+  ];
+
+  const metaParts = [
+    shown.type || 'TV',
+    episodes.length > 0 ? `${episodes.length} Episode${episodes.length === 1 ? '' : 's'}` : null,
+    shown.dubCount ? 'Sub | Dub' : 'Sub'
+  ].filter(Boolean);
 
   return (
     <div style={{ flex: 1, overflowY: 'auto', paddingBottom: '90px', position: 'relative' }}>
-      {/* Top Banner Backdrop */}
+      {/* Backdrop */}
       <div style={{ position: 'relative', width: '100%', height: '280px' }}>
         <img
-          src={anime.banner || anime.poster}
-          alt={anime.title}
+          src={shown.banner || shown.poster}
+          alt={shown.title}
           style={{ width: '100%', height: '100%', objectFit: 'cover', filter: 'brightness(0.6)' }}
         />
         <div style={{
@@ -66,24 +141,18 @@ export const AnimeDetailScreen: React.FC<AnimeDetailScreenProps> = ({
           inset: 0,
           background: 'linear-gradient(180deg, rgba(8,9,14,0.4) 0%, rgba(8,9,14,0.8) 70%, var(--bg-main) 100%)'
         }} />
-
-        {/* Floating Top Nav - sits on the banner image, so (like the video
-            player's popovers) it keeps the dark-glass look regardless of
-            app theme rather than following the light/dark toggle. */}
         <div style={{
           position: 'absolute',
           top: 0,
           left: 0,
           right: 0,
           padding: 'calc(var(--safe-top) + 12px) 20px 0 20px',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
           zIndex: 20
         }}>
           <button
             onClick={onBack}
             className="interactive glass-pill-dark"
+            aria-label="Back"
             style={{
               width: '40px',
               height: '40px',
@@ -95,181 +164,273 @@ export const AnimeDetailScreen: React.FC<AnimeDetailScreenProps> = ({
           >
             <ArrowLeft size={20} />
           </button>
-
-          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-            <button
-              onClick={handleBookmarkToggle}
-              className="interactive glass-pill-dark"
-              style={{
-                width: '40px',
-                height: '40px',
-                borderRadius: '50%',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                color: isBookmarked ? 'var(--accent-danger)' : '#fff'
-              }}
-            >
-              <Bookmark size={20} fill={isBookmarked ? 'var(--accent-danger)' : 'none'} />
-            </button>
-          </div>
         </div>
       </div>
 
-      {/* Anime Info Section */}
-      <div style={{ padding: '0 20px', marginTop: '-60px', position: 'relative', zIndex: 10 }}>
-        <div style={{ display: 'flex', gap: '16px', alignItems: 'flex-end', marginBottom: '16px' }}>
+      <div style={{ padding: '0 20px', marginTop: '-70px', position: 'relative', zIndex: 10 }}>
+        {/* Poster + title */}
+        <div style={{ display: 'flex', gap: '16px', alignItems: 'flex-end', marginBottom: '14px' }}>
           <img
-            src={anime.poster}
-            alt={anime.title}
+            src={shown.poster}
+            alt={shown.title}
             style={{
-              width: '110px',
-              height: '160px',
+              width: '104px',
+              height: '150px',
               objectFit: 'cover',
-              borderRadius: 'var(--radius-md)',
+              borderRadius: '6px',
               boxShadow: '0 8px 24px rgba(0,0,0,0.7)',
-              border: '1px solid rgba(255,255,255,0.1)'
+              flexShrink: 0
             }}
           />
-          <div style={{ flex: 1, paddingBottom: '6px' }}>
-            <div style={{ display: 'flex', gap: '6px', marginBottom: '6px' }}>
-              <span className="glass-pill" style={{ fontSize: '11px', fontWeight: 700, padding: '2px 8px', borderRadius: '4px', color: 'var(--accent-primary)' }}>
-                {anime.type || 'TV'}
-              </span>
-              <span className="glass-pill" style={{ fontSize: '11px', fontWeight: 700, padding: '2px 8px', borderRadius: '4px', color: 'var(--accent-cyan)' }}>
-                HD 1080p
-              </span>
-            </div>
-            <h1 style={{ fontSize: '20px', fontWeight: 800, color: 'var(--text-primary)', lineHeight: '1.25' }}>
-              {anime.title}
+          <div style={{ flex: 1, paddingBottom: '4px', minWidth: 0 }}>
+            <h1 style={{ fontSize: '21px', fontWeight: 800, color: 'var(--text-primary)', lineHeight: '1.25' }}>
+              {shown.title}
             </h1>
+            <div style={{ fontSize: '12px', color: 'var(--text-secondary)', marginTop: '6px', fontWeight: 600 }}>
+              {metaParts.join('  •  ')}
+            </div>
           </div>
         </div>
 
-        {/* Sub / Dub Mode Switcher */}
-        <div className="seg-track" style={{ marginBottom: '16px' }}>
-          <button
-            onClick={() => setMode('sub')}
-            className={`interactive seg-pill ${mode === 'sub' ? 'active' : ''}`}
-          >
-            Subtitled (SUB)
-          </button>
-          <button
-            onClick={() => setMode('dub')}
-            className={`interactive seg-pill ${mode === 'dub' ? 'active' : ''}`}
-          >
-            Dubbed (DUB)
-          </button>
-        </div>
+        {resolveError ? (
+          <div className="glass-panel" style={{ padding: '16px', borderRadius: 'var(--radius-md)', color: 'var(--text-secondary)', fontSize: '13px', marginBottom: '18px' }}>
+            {resolveError}
+          </div>
+        ) : (
+          <>
+            {/* Play / Resume - white Netflix button */}
+            <button
+              onClick={handlePlay}
+              disabled={!resolved || (episodes.length === 0 && !history)}
+              className="interactive"
+              style={{
+                width: '100%',
+                padding: '12px',
+                borderRadius: '6px',
+                background: '#fff',
+                border: 'none',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: '8px',
+                color: '#000',
+                fontSize: '15px',
+                fontWeight: 800,
+                marginBottom: '10px',
+                opacity: !resolved || (episodes.length === 0 && !history) ? 0.6 : 1
+              }}
+            >
+              {loading && !history ? <Loader2 size={20} className="animate-spin" /> : <Play size={20} fill="#000" />}
+              <span>{history ? `Resume E${history.episodeNumber}` : 'Play'}</span>
+            </button>
 
-        {/* Description */}
-        <p style={{
-          fontSize: '13px',
-          color: 'var(--text-secondary)',
-          lineHeight: '1.5',
-          marginBottom: '20px'
-        }}>
-          {anime.description || "Follow the extraordinary adventures in high quality, completely ad-free and powered directly by ani-cli streaming mechanics."}
-        </p>
+            {history && history.duration > 0 && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '12px' }}>
+                <div style={{ flex: 1, height: '3px', backgroundColor: 'rgba(127,127,127,0.35)', borderRadius: '2px' }}>
+                  <div style={{
+                    width: `${Math.min(100, (history.currentTime / history.duration) * 100)}%`,
+                    height: '100%',
+                    backgroundColor: '#e50914',
+                    borderRadius: '2px'
+                  }} />
+                </div>
+                <span style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>
+                  {Math.max(0, Math.round((history.duration - history.currentTime) / 60))}m remaining
+                </span>
+              </div>
+            )}
 
-        {/* Quick Play Episode 1 Button */}
-        {episodes.length > 0 && (
-          <button
-            onClick={() => onPlayEpisode(episodes[0], mode)}
-            className="interactive"
-            style={{
-              width: '100%',
-              padding: '14px',
-              borderRadius: 'var(--radius-md)',
-              background: 'var(--accent-gradient)',
-              border: 'none',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              gap: '10px',
-              color: '#fff',
-              fontSize: '15px',
-              fontWeight: 700,
-              boxShadow: 'var(--shadow-glow)',
-              marginBottom: '24px'
-            }}
-          >
-            <Play size={20} fill="#fff" />
-            <span>Start Watching Episode 1 ({mode.toUpperCase()})</span>
-          </button>
+            {/* Sub / Dub */}
+            <div className="seg-track" style={{ marginBottom: '14px' }}>
+              <button onClick={() => setMode('sub')} className={`interactive seg-pill ${mode === 'sub' ? 'active' : ''}`}>
+                Subtitled (SUB)
+              </button>
+              <button onClick={() => setMode('dub')} className={`interactive seg-pill ${mode === 'dub' ? 'active' : ''}`}>
+                Dubbed (DUB)
+              </button>
+            </div>
+          </>
         )}
 
-        {/* Episode List Header & Range Tabs */}
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '14px' }}>
-          <h2 style={{ fontSize: '18px', fontWeight: 800, color: 'var(--text-primary)' }}>Episodes</h2>
-          <span style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>
-            {episodes.length} episodes available
-          </span>
+        {/* Synopsis */}
+        {description && (
+          <p
+            onClick={() => setExpanded(e => !e)}
+            style={{
+              fontSize: '13px',
+              color: 'var(--text-primary)',
+              opacity: 0.85,
+              lineHeight: '1.5',
+              marginBottom: '8px',
+              display: expanded ? 'block' : '-webkit-box',
+              WebkitLineClamp: expanded ? undefined : 3,
+              WebkitBoxOrient: 'vertical',
+              overflow: 'hidden'
+            }}
+          >
+            {description}
+          </p>
+        )}
+        {genres.length > 0 && (
+          <p style={{ fontSize: '12px', color: 'var(--text-secondary)', marginBottom: '14px' }}>
+            <span style={{ fontWeight: 700 }}>Genres: </span>{genres.join(', ')}
+          </p>
+        )}
+
+        {/* My List */}
+        {resolved && (
+          <div style={{ display: 'flex', gap: '28px', marginBottom: '18px' }}>
+            <button
+              onClick={handleBookmarkToggle}
+              className="interactive"
+              style={{
+                background: 'none',
+                border: 'none',
+                display: 'flex',
+                flexDirection: 'column',
+                alignItems: 'center',
+                gap: '4px',
+                color: 'var(--text-primary)',
+                fontSize: '11px',
+                fontWeight: 600
+              }}
+            >
+              {isBookmarked ? <Check size={22} /> : <Plus size={22} />}
+              <span style={{ color: 'var(--text-secondary)' }}>My List</span>
+            </button>
+          </div>
+        )}
+
+        {/* Tabs - red bar over the active one, Netflix-style */}
+        <div style={{ display: 'flex', gap: '22px', borderTop: '1px solid var(--border-subtle)', marginBottom: '16px', overflowX: 'auto', scrollbarWidth: 'none' }}>
+          {tabs.map(t => {
+            const active = tab === t.id;
+            return (
+              <button
+                key={t.id}
+                onClick={() => setTab(t.id)}
+                style={{
+                  background: 'none',
+                  border: 'none',
+                  borderTop: `4px solid ${active ? '#e50914' : 'transparent'}`,
+                  padding: '10px 0 0 0',
+                  marginTop: '-1px',
+                  color: active ? 'var(--text-primary)' : 'var(--text-secondary)',
+                  fontSize: '13px',
+                  fontWeight: 800,
+                  textTransform: 'uppercase',
+                  letterSpacing: '0.3px',
+                  whiteSpace: 'nowrap',
+                  cursor: 'pointer'
+                }}
+              >
+                {t.label}
+              </button>
+            );
+          })}
         </div>
 
-        {/* Pagination tabs if more than 50 episodes */}
-        {tabCount > 1 && (
-          <div style={{ display: 'flex', gap: '8px', overflowX: 'auto', paddingBottom: '12px', marginBottom: '10px' }}>
-            {Array.from({ length: tabCount }).map((_, i) => {
-              const start = i * chunkSize + 1;
-              const end = Math.min(episodes.length, (i + 1) * chunkSize);
+        {tab === 'episodes' && (
+          <>
+            {rangeCount > 1 && (
+              <div style={{ display: 'flex', gap: '8px', overflowX: 'auto', paddingBottom: '12px', marginBottom: '6px' }}>
+                {Array.from({ length: rangeCount }).map((_, i) => {
+                  const start = i * chunkSize + 1;
+                  const end = Math.min(episodes.length, (i + 1) * chunkSize);
+                  return (
+                    <button
+                      key={i}
+                      onClick={() => setActiveRange(i)}
+                      className={`interactive glass-pill chip ${activeRange === i ? 'active' : ''}`}
+                      style={{
+                        padding: '6px 14px',
+                        borderRadius: 'var(--radius-full)',
+                        color: activeRange === i ? undefined : 'var(--text-secondary)',
+                        fontSize: '12px',
+                        fontWeight: 700,
+                        whiteSpace: 'nowrap'
+                      }}
+                    >
+                      {start} - {end}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+
+            {loading ? (
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '40px 0', gap: '10px', color: 'var(--text-secondary)' }}>
+                <Loader2 size={24} className="animate-spin" />
+                <span style={{ fontSize: '14px' }}>Fetching episodes...</span>
+              </div>
+            ) : (
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '10px' }}>
+                {currentChunk.map((ep) => {
+                  const isLastWatched = history?.episodeId === ep.id;
+                  return (
+                    <button
+                      key={ep.id}
+                      onClick={() => resolved && onPlayEpisode(resolved, ep, mode)}
+                      className="interactive glass-panel"
+                      style={{
+                        padding: '14px 8px',
+                        borderRadius: 'var(--radius-sm)',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        gap: '4px',
+                        boxShadow: isLastWatched ? 'inset 0 -3px 0 #e50914' : undefined
+                      }}
+                    >
+                      <span style={{ fontSize: '15px', fontWeight: 800, color: 'var(--text-primary)' }}>{ep.number}</span>
+                      <span style={{ fontSize: '10px', color: 'var(--accent-primary)', textTransform: 'uppercase', fontWeight: 600 }}>
+                        {isLastWatched ? 'Resume' : 'Play'}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </>
+        )}
+
+        {tab === 'collection' && (
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '14px 10px' }}>
+            {collection.map(item => {
+              const isCurrent = item.id === shown.id;
               return (
-                <button
-                  key={i}
-                  onClick={() => setActiveTab(i)}
-                  className={`interactive glass-pill chip ${activeTab === i ? 'active' : ''}`}
-                  style={{
-                    padding: '6px 14px',
-                    borderRadius: 'var(--radius-full)',
-                    color: activeTab === i ? undefined : 'var(--text-secondary)',
-                    fontSize: '12px',
-                    fontWeight: 700,
-                    whiteSpace: 'nowrap'
-                  }}
-                >
-                  {start} - {end}
-                </button>
+                <PosterCard
+                  key={item.id}
+                  anime={item}
+                  caption={item.seasonLabel || item.title}
+                  highlighted={isCurrent}
+                  badge={isCurrent ? 'Now Viewing' : undefined}
+                  onClick={() => { if (!isCurrent) onSelectAnime(item); }}
+                />
               );
             })}
           </div>
         )}
 
-        {/* Episodes Grid */}
-        {loading ? (
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '40px 0', gap: '10px', color: 'var(--text-secondary)' }}>
-            <Loader2 size={24} className="animate-spin" />
-            <span style={{ fontSize: '14px' }}>Fetching episodes from ani-cli...</span>
-          </div>
-        ) : (
-          <div style={{
-            display: 'grid',
-            gridTemplateColumns: 'repeat(4, 1fr)',
-            gap: '10px'
-          }}>
-            {currentChunk.map((ep) => (
-              <button
-                key={ep.id}
-                onClick={() => onPlayEpisode(ep, mode)}
-                className="interactive glass-panel"
-                style={{
-                  padding: '14px 8px',
-                  borderRadius: 'var(--radius-sm)',
-                  display: 'flex',
-                  flexDirection: 'column',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  gap: '4px'
-                }}
-              >
-                <span style={{ fontSize: '15px', fontWeight: 800, color: 'var(--text-primary)' }}>
-                  {ep.number}
-                </span>
-                <span style={{ fontSize: '10px', color: 'var(--accent-primary)', textTransform: 'uppercase', fontWeight: 600 }}>
-                  Play
-                </span>
-              </button>
-            ))}
-          </div>
+        {tab === 'similar' && (
+          details === null ? (
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '14px 10px' }}>
+              {Array.from({ length: 6 }).map((_, i) => (
+                <div key={i} className="skeleton" style={{ borderRadius: '6px', paddingTop: '145%' }} />
+              ))}
+            </div>
+          ) : suggestions.length === 0 ? (
+            <p style={{ textAlign: 'center', padding: '30px 0', color: 'var(--text-secondary)', fontSize: '13px' }}>
+              No suggestions found for this title.
+            </p>
+          ) : (
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '14px 10px' }}>
+              {suggestions.map(item => (
+                <PosterCard key={item.id} anime={item} onClick={() => onSelectAnime(item)} />
+              ))}
+            </div>
+          )
         )}
       </div>
     </div>

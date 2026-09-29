@@ -11,6 +11,16 @@ export interface AnimeItem {
   dubCount?: number;
   description?: string;
   banner?: string;
+  // Site path of the anime's own page (e.g. "/mushoku-tensei-123"), when
+  // known - used to fetch its collection/suggestions.
+  path?: string;
+  genres?: string[];
+  // Set on entries that came from MyAnimeList (Jikan) rather than the
+  // streaming site: they must be matched to a real site entry by title
+  // (see resolveAnime in catalogService) before episodes can be loaded.
+  malId?: number;
+  // Label shown on collection entries, e.g. "Season 2".
+  seasonLabel?: string;
 }
 
 export interface EpisodeItem {
@@ -98,25 +108,34 @@ const UPSTREAM_HEADERS: Record<string, string> = {
   'Referer': `${REMOTE_HOST}/`
 };
 
+// Fetches a page of the streaming site as HTML. `path` may be a site path
+// ("/genre/action") or an absolute URL on the site.
+export async function fetchSiteHtml(path: string): Promise<string> {
+  const sitePath = path.startsWith('http') ? new URL(path).pathname + new URL(path).search : path;
+  const res = await fetch(`${getApiBase()}${sitePath}`, {
+    headers: {
+      'Accept': 'text/html,application/xhtml+xml',
+      ...UPSTREAM_HEADERS
+    }
+  });
+  if (!res.ok) {
+    throw new Error(`GET ${sitePath} failed with HTTP ${res.status}`);
+  }
+  return res.text();
+}
+
+// Live search only - no curated/mock fallback. Throws on network failure.
+export async function searchAnimeLive(query: string): Promise<AnimeItem[]> {
+  const html = await fetchSiteHtml(`/search?keyword=${encodeURIComponent(query)}`);
+  return parseSearchResults(html);
+}
+
 // Search anime
 export async function searchAnime(query: string): Promise<AnimeItem[]> {
   if (!query.trim()) return FEATURED_ANIME;
 
   try {
-    const endpoint = `${getApiBase()}/search?keyword=${encodeURIComponent(query)}`;
-    const res = await fetch(endpoint, {
-      headers: {
-        'Accept': 'text/html,application/xhtml+xml',
-        ...UPSTREAM_HEADERS
-      }
-    });
-
-    if (!res.ok) {
-      throw new Error(`Search request failed with HTTP ${res.status}`);
-    }
-
-    const html = await res.text();
-    return parseSearchResults(html);
+    return await searchAnimeLive(query);
   } catch (err) {
     console.warn("Live search failed, returning curated results:", err);
     return filterMockAnime(query);
@@ -171,6 +190,7 @@ export function parseSearchResults(html: string): AnimeItem[] {
 
     const href = titleEl.getAttribute("href") || "";
     const slug = href.split("/").filter(Boolean).pop() || "";
+    const path = sitePathOf(href);
     const title = titleEl.getAttribute("title") || titleEl.textContent?.trim() || "";
     const poster = posterEl?.getAttribute("data-src") || posterEl?.getAttribute("src") || "";
 
@@ -190,13 +210,39 @@ export function parseSearchResults(html: string): AnimeItem[] {
       id: slug,
       title,
       poster,
-      type: "TV",
+      path,
+      type: parseTypeBadge(el),
       subCount: subBadge ? parseInt(subBadge, 10) : (epBadge ? parseInt(epBadge, 10) : undefined),
       dubCount: dubBadge ? parseInt(dubBadge, 10) : undefined
     });
   });
 
   return results;
+}
+
+const KNOWN_TYPES = ["TV", "Movie", "OVA", "ONA", "Special", "Music"];
+
+function parseTypeBadge(el: Element): string {
+  for (const item of Array.from(el.querySelectorAll(".fdi-item"))) {
+    const text = item.textContent?.trim() || "";
+    const match = KNOWN_TYPES.find(t => t.toLowerCase() === text.toLowerCase());
+    if (match) return match;
+  }
+  return "TV";
+}
+
+// Site-relative path of a link on the streaming site ("" when not a link
+// to the site itself).
+export function sitePathOf(href: string): string {
+  if (!href) return "";
+  try {
+    const url = new URL(href, REMOTE_HOST);
+    const host = url.hostname.replace(/^www\./, '');
+    if (host !== new URL(REMOTE_HOST).hostname && !url.pathname.startsWith('/api-hianime')) return "";
+    return url.pathname.replace(/^\/api-hianime/, '');
+  } catch {
+    return "";
+  }
 }
 
 // Fetch episodes list
