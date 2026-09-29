@@ -114,10 +114,13 @@ function jikanToAnime(entry: any): AnimeItem | null {
     || entry.images?.webp?.image_url || entry.images?.jpg?.image_url || '';
   const title = entry.title_english || entry.title || '';
   if (!title || !poster) return null;
+  const altTitles = [entry.title, entry.title_english, ...(entry.title_synonyms || [])]
+    .filter((t: unknown): t is string => typeof t === 'string' && !!t && t !== title);
   return {
     id: `mal-${entry.mal_id}`,
     malId: entry.mal_id,
     title,
+    altTitles,
     poster,
     type: entry.type || undefined,
     subCount: typeof entry.episodes === 'number' ? entry.episodes : undefined,
@@ -233,22 +236,37 @@ function franchiseKey(title: string): string {
 }
 
 // Entries from MyAnimeList (malId set, "mal-" id) have no streaming-site id
-// yet - look the title up on the site and adopt the best match so episodes
-// can load. Site entries are returned unchanged. Throws if nothing matches.
+// yet - search the site under each of the entry's known titles and adopt a
+// result whose title actually matches. Never falls back to an unrelated
+// first result: throws if nothing matches. Site entries are returned as-is.
 export async function resolveAnime(anime: AnimeItem): Promise<AnimeItem> {
   if (!anime.id.startsWith('mal-')) return anime;
-  const results = await searchAnimeLive(anime.title);
-  if (results.length === 0) throw new Error(`"${anime.title}" was not found on the streaming site`);
-  const wanted = normalizeTitle(anime.title);
-  const best = results.find(r => normalizeTitle(r.title) === wanted)
-    || results.find(r => normalizeTitle(r.title).startsWith(wanted) || wanted.startsWith(normalizeTitle(r.title)))
-    || results[0];
-  return {
-    ...best,
-    description: best.description || anime.description,
-    genres: best.genres || anime.genres,
-    malId: anime.malId
-  };
+  const titles = Array.from(new Set([anime.title, ...(anime.altTitles || [])]));
+  for (const title of titles) {
+    const wanted = normalizeTitle(title);
+    if (!wanted) continue;
+    let results: AnimeItem[] = [];
+    try {
+      results = await searchAnimeLive(title);
+    } catch (err) {
+      console.warn('[catalogService] resolve search failed:', err);
+      continue;
+    }
+    const best = results.find(r => normalizeTitle(r.title) === wanted)
+      || results.find(r => {
+        const got = normalizeTitle(r.title);
+        return got.length >= 3 && (got.startsWith(wanted) || wanted.startsWith(got));
+      });
+    if (best) {
+      return {
+        ...best,
+        description: best.description || anime.description,
+        genres: best.genres || anime.genres,
+        malId: anime.malId
+      };
+    }
+  }
+  throw new Error(`"${anime.title}" was not found on the streaming site`);
 }
 
 // ------------------------------------------------------------ detail page

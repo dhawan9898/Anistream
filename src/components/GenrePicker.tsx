@@ -1,6 +1,7 @@
 // GenrePicker.tsx - Netflix "Categories" overlay: a dimmed full-screen list
 // of genre names, centered, with a round close button pinned at the bottom.
 import React, { useEffect, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { X } from 'lucide-react';
 import { getGenres, type Genre } from '../services/catalogService';
 
@@ -20,13 +21,16 @@ export const GenrePicker: React.FC<GenrePickerProps> = ({ open, selectedSlug, on
 
   if (!open) return null;
 
-  return (
+  // Portaled to <body>: the screens are wrapped in an animated container
+  // (its own stacking context), which would otherwise keep this overlay
+  // underneath the bottom dock.
+  return createPortal(
     <div
       className="animate-fade-in"
       style={{
         position: 'fixed',
         inset: 0,
-        zIndex: 5000,
+        zIndex: 9500,
         backgroundColor: 'rgba(0, 0, 0, 0.88)',
         backdropFilter: 'blur(6px)',
         display: 'flex',
@@ -91,6 +95,7 @@ export const GenrePicker: React.FC<GenrePickerProps> = ({ open, selectedSlug, on
           <X size={26} />
         </button>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 };

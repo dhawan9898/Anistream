@@ -19,6 +19,8 @@ export interface AnimeItem {
   // streaming site: they must be matched to a real site entry by title
   // (see resolveAnime in catalogService) before episodes can be loaded.
   malId?: number;
+  // Other known titles (romaji, synonyms) for matching MAL entries to the site.
+  altTitles?: string[];
   // Label shown on collection entries, e.g. "Season 2".
   seasonLabel?: string;
 }

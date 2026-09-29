@@ -663,7 +663,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   return (
     <div
       ref={containerRef}
-      className="nf-player"
+      className={`nf-player ${controlsVisible ? 'nf-controls-on' : ''}`}
       style={{
         position: 'fixed',
         inset: 0,
