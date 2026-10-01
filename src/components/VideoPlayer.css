@@ -208,13 +208,13 @@
 .nf-skip {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 10px 18px;
+  gap: 6px;
+  padding: 8px 14px;
   border-radius: 4px;
   border: 1px solid rgba(255, 255, 255, 0.85);
   background: rgba(20, 20, 20, 0.65);
   color: #fff;
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 700;
   cursor: pointer;
 }
@@ -224,13 +224,13 @@
   overflow: hidden;
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 11px 20px;
+  gap: 6px;
+  padding: 9px 14px;
   border-radius: 4px;
   border: none;
   background: rgba(255, 255, 255, 0.75);
   color: #000;
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 800;
   cursor: pointer;
 }

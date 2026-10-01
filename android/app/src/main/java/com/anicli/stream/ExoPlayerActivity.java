@@ -223,6 +223,17 @@ public class ExoPlayerActivity extends AppCompatActivity {
     private int autoRetryCount = 0;
     private long lastKnownPositionMs = 0;
     private final Runnable autoRetryRunnable = this::retryPlayback;
+    // Loading watchdog: if no stream arrives this long after the player went
+    // into its loading state (next episode, episode pick, audio switch), show
+    // a Retry instead of spinning forever.
+    private static final long LOADING_WATCHDOG_MS = 40_000;
+    private final Runnable loadingWatchdog = this::showLoadingStalled;
+
+    // HTTP failures (e.g. a 404 that a fresh lookup doesn't hit) get one
+    // automatic re-resolve of the same episode per episode/audio, the same
+    // thing closing and reopening the episode does. Key = "episode|mode".
+    private String reloadAttemptedKey;
+
     // A retry that fires while the app is in the background must not start
     // playing audio there (onStop paused the player on purpose).
     private boolean activityStopped = false;
@@ -251,6 +262,21 @@ public class ExoPlayerActivity extends AppCompatActivity {
         setupControlListeners();
 
         currentActivity = new java.lang.ref.WeakReference<>(this);
+
+        // Back gesture/button closes the player like the top-left arrow,
+        // except while the screen is locked: then it only reveals the unlock
+        // button (an accidental swipe must not end the episode).
+        getOnBackPressedDispatcher().addCallback(this, new androidx.activity.OnBackPressedCallback(true) {
+            @Override
+            public void handleOnBackPressed() {
+                if (screenLocked) {
+                    flashUnlockButton();
+                } else {
+                    finish();
+                }
+            }
+        });
+
         loadFromIntent(getIntent());
     }
 
@@ -311,6 +337,7 @@ public class ExoPlayerActivity extends AppCompatActivity {
             showLoadingState();
             return;
         }
+        handler.removeCallbacks(loadingWatchdog);
 
         // Fresh episode: reset everything that belonged to the previous one.
         errorOverlay.setVisibility(View.GONE);
@@ -341,6 +368,21 @@ public class ExoPlayerActivity extends AppCompatActivity {
         initializePlayer(videoUrl, referer, subtitlesJson, Math.max(0L, startPositionMs), true);
     }
 
+    // The screen must not time out while an episode is playing (or briefly
+    // buffering with play intended); once paused, ended or failed the
+    // normal screen timeout applies again.
+    private void updateKeepScreenOn() {
+        boolean keepOn = player != null
+                && player.getPlayWhenReady()
+                && player.getPlaybackState() != Player.STATE_ENDED
+                && player.getPlaybackState() != Player.STATE_IDLE;
+        if (keepOn) {
+            getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+        } else {
+            getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+        }
+    }
+
     private void releasePlayer() {
         handler.removeCallbacks(progressTicker);
         handler.removeCallbacks(autoRetryRunnable);
@@ -348,6 +390,7 @@ public class ExoPlayerActivity extends AppCompatActivity {
             player.release();
             player = null;
         }
+        updateKeepScreenOn();
     }
 
     // Black screen + spinner + title while JS resolves a stream - replaces
@@ -366,11 +409,31 @@ public class ExoPlayerActivity extends AppCompatActivity {
         bufferingSpinner.setVisibility(View.VISIBLE);
         setControlsVisible(true);
         handler.removeCallbacks(hideControlsRunnable);
+        handler.removeCallbacks(loadingWatchdog);
+        handler.postDelayed(loadingWatchdog, LOADING_WATCHDOG_MS);
+    }
+
+    // The app never answered the loading state with a stream. Retry asks it
+    // for this same episode again (as if it had been picked from the list).
+    private void showLoadingStalled() {
+        if (player != null) return; // a stream did arrive
+        final String episode = episodeNumber;
+        bufferingSpinner.setVisibility(View.GONE);
+        textErrorMessage.setText("This episode is taking too long to load.");
+        btnRetry.setText("Retry");
+        btnRetry.setOnClickListener(v -> {
+            errorOverlay.setVisibility(View.GONE);
+            ExoPlayerPlugin.notifyEpisodeSelected(animeTitle, episode, episode);
+            showLoadingState();
+        });
+        errorOverlay.setVisibility(View.VISIBLE);
+        setControlsVisible(true);
     }
 
     // Next episode / audio switch / episode pick: JS re-resolves the stream
     // and hands it back via onNewIntent - stay open, show the spinner.
     private void enterLoading(String newEpisodeNumber, String newMode) {
+        reloadAttemptedKey = null;
         reportProgressNow();
         if (newEpisodeNumber != null) episodeNumber = newEpisodeNumber;
         if (newMode != null) currentMode = newMode;
@@ -382,6 +445,7 @@ public class ExoPlayerActivity extends AppCompatActivity {
 
     // JS couldn't resolve a stream for the requested episode.
     void showLoadFailure(String message) {
+        handler.removeCallbacks(loadingWatchdog);
         releasePlayer();
         bufferingSpinner.setVisibility(View.GONE);
         textErrorMessage.setText(message);
@@ -450,6 +514,17 @@ public class ExoPlayerActivity extends AppCompatActivity {
         nextEpisodeFill.setBackground(fillBg);
         nextEpisodeFill.setPivotX(0f);
         nextEpisodeFill.setScaleX(0f);
+
+        // Small black play icon in front of "Next Episode" (Netflix style).
+        TextView nextLabel = findViewById(R.id.next_episode_label);
+        android.graphics.drawable.Drawable playIcon = getDrawable(R.drawable.ic_play);
+        if (nextLabel != null && playIcon != null) {
+            playIcon = playIcon.mutate();
+            playIcon.setTint(Color.BLACK);
+            int size = Math.round(16 * density);
+            playIcon.setBounds(0, 0, size, size);
+            nextLabel.setCompoundDrawablesRelative(playIcon, null, null, null);
+        }
 
         GradientDrawable unlockBg = new GradientDrawable();
         unlockBg.setShape(GradientDrawable.OVAL);
@@ -1198,6 +1273,43 @@ public class ExoPlayerActivity extends AppCompatActivity {
         }
     }
 
+    // URI of the HTTP request that failed, when the error was an HTTP status.
+    private static String failedRequestUri(androidx.media3.common.PlaybackException error) {
+        Throwable cause = error.getCause();
+        while (cause != null) {
+            if (cause instanceof HttpDataSource.InvalidResponseCodeException) {
+                HttpDataSource.InvalidResponseCodeException httpEx = (HttpDataSource.InvalidResponseCodeException) cause;
+                return httpEx.dataSpec != null && httpEx.dataSpec.uri != null ? httpEx.dataSpec.uri.toString() : null;
+            }
+            cause = cause.getCause();
+        }
+        return null;
+    }
+
+    // Removes the subtitle whose file is `uri` from the current stream's
+    // list. False when `uri` isn't one of its subtitles.
+    private boolean dropSubtitle(String uri) {
+        if (pendingSubtitlesJson == null || pendingSubtitlesJson.isEmpty()) return false;
+        try {
+            JSONArray arr = new JSONArray(pendingSubtitlesJson);
+            JSONArray kept = new JSONArray();
+            boolean removed = false;
+            for (int i = 0; i < arr.length(); i++) {
+                JSONObject obj = arr.getJSONObject(i);
+                if (uri.equals(obj.optString("src", ""))) {
+                    removed = true;
+                } else {
+                    kept.put(obj);
+                }
+            }
+            if (!removed) return false;
+            pendingSubtitlesJson = kept.toString();
+            return true;
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
     // Worth retrying automatically: connectivity/timeouts, and server-side
     // HTTP failures (429/5xx). A 403/404 or a parsing/decoder error will
     // fail the same way again, so those go straight to the error overlay.
@@ -1311,6 +1423,7 @@ public class ExoPlayerActivity extends AppCompatActivity {
         player.addListener(new Player.Listener() {
             @Override
             public void onIsPlayingChanged(boolean isPlaying) {
+                updateKeepScreenOn();
                 btnPlayPause.setImageResource(isPlaying ? R.drawable.ic_pause : R.drawable.ic_play);
                 if (isPlaying) scheduleAutoHide(); else handler.removeCallbacks(hideControlsRunnable);
             }
@@ -1322,6 +1435,7 @@ public class ExoPlayerActivity extends AppCompatActivity {
                 // state (and nothing else) means a stall always reads as
                 // "still loading", never a frozen/broken player.
                 bufferingSpinner.setVisibility(state == Player.STATE_BUFFERING ? View.VISIBLE : View.GONE);
+                updateKeepScreenOn();
                 if (state == Player.STATE_READY) {
                     // Recovered - a later hiccup gets the full retry budget.
                     autoRetryCount = 0;
@@ -1343,6 +1457,15 @@ public class ExoPlayerActivity extends AppCompatActivity {
                     long position = player.getCurrentPosition();
                     if (position > 0) lastKnownPositionMs = position;
                 }
+                // A side-loaded subtitle file that fails (e.g. 404) is fatal
+                // to ExoPlayer, while a browser just ignores it - drop that
+                // track and keep playing.
+                String failedUri = failedRequestUri(error);
+                if (failedUri != null && dropSubtitle(failedUri)) {
+                    Log.w(TAG, "Subtitle failed to load, continuing without it: " + failedUri);
+                    retryPlayback();
+                    return;
+                }
                 if (isTransientError(error) && autoRetryCount < MAX_AUTO_RETRIES) {
                     long delayMs = 1000L << autoRetryCount;
                     autoRetryCount++;
@@ -1350,6 +1473,21 @@ public class ExoPlayerActivity extends AppCompatActivity {
                     bufferingSpinner.setVisibility(View.VISIBLE);
                     handler.removeCallbacks(autoRetryRunnable);
                     handler.postDelayed(autoRetryRunnable, delayMs);
+                    return;
+                }
+                // An HTTP error such as 404 is usually gone after a fresh
+                // lookup of the episode (that's why closing and reopening it
+                // works) - do that once automatically, resuming here.
+                String key = episodeNumber + "|" + currentMode;
+                if (failedUri != null && !key.equals(reloadAttemptedKey)
+                        && ExoPlayerPlugin.notifyReloadRequested(animeTitle, episodeNumber, currentMode, lastKnownPositionMs)) {
+                    reloadAttemptedKey = key;
+                    Log.w(TAG, "HTTP error, re-resolving episode " + key + " once: " + failedUri);
+                    long resumeAt = lastKnownPositionMs;
+                    releasePlayer();
+                    errorOverlay.setVisibility(View.GONE);
+                    showLoadingState();
+                    lastKnownPositionMs = resumeAt;
                     return;
                 }
                 showPlaybackError(describePlaybackError(error));

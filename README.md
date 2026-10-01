@@ -1,6 +1,6 @@
 # AniStream — Android Anime Streaming App (powered by `ani-cli`)
 
-[![Version](https://img.shields.io/badge/Version-v6.2-indigo?style=for-the-badge&logo=android)](https://github.com/dhawan9898/Anistream/releases)
+[![Version](https://img.shields.io/badge/Version-v6.3-indigo?style=for-the-badge&logo=android)](https://github.com/dhawan9898/Anistream/releases)
 [![Android](https://img.shields.io/badge/Android-8.0%2B-green?style=for-the-badge&logo=android)](https://github.com/dhawan9898/Anistream/releases)
 [![License](https://img.shields.io/badge/License-GPLv3-blue?style=for-the-badge)](https://www.gnu.org/licenses/gpl-3.0)
 
@@ -23,15 +23,15 @@ steps as [`ani-cli`](https://github.com/pystardust/ani-cli).
 7. [CI builds & releases](#7-ci-builds--releases)
 8. [Architecture](#8-architecture)
 9. [Troubleshooting](#9-troubleshooting)
-10. [What's new in v6.2 / v6.0](#10-whats-new-in-v62--v60)
+10. [What's new](#10-whats-new)
 11. [License](#11-license)
 
 ---
 
 ## 1. Install the APK
 
-1. Open the **[Releases page](https://github.com/dhawan9898/Anistream/releases)** and pick the latest release (**v6.2**).
-2. Under **Assets**, download **`AniStream-v6.2.apk`**.
+1. Open the **[Releases page](https://github.com/dhawan9898/Anistream/releases)** and pick the latest release (**v6.3**).
+2. Under **Assets**, download **`AniStream-v6.3.apk`**.
 3. Open the file on your phone. If Android asks, enable **Install unknown apps** for your browser or file manager.
 4. Tap **Install**. If you already have AniStream, the new version installs over it and keeps your history and My List, because every release is signed with the same key.
 
@@ -159,9 +159,9 @@ Use the browser's device toolbar (Ctrl+Shift+M in Chrome) to preview phone and t
 
 | Trigger | Result |
 |---------|--------|
-| Push to `main` / `master` | APK uploaded as a workflow artifact (`AniStream-v6.2-APK`, kept 30 days), plus the R8 mapping (`AniStream-v6.2-mapping`) |
-| Push a tag `v*` (e.g. `git tag v6.2 && git push origin v6.2`) | Artifact plus a GitHub Release under that tag with the APK attached |
-| **Actions ▸ Build AniStream v6.2 APK ▸ Run workflow** | Builds any branch. Fill in `release_tag` (e.g. `v6.2`) to also publish a release. If that release already exists, it and its tag are replaced so the tag points at the built commit. Leave it empty to only build. |
+| Push to `main` / `master` | APK uploaded as a workflow artifact (`AniStream-v6.3-APK`, kept 30 days), plus the R8 mapping (`AniStream-v6.3-mapping`) |
+| Push a tag `v*` (e.g. `git tag v6.3 && git push origin v6.3`) | Artifact plus a GitHub Release under that tag with the APK attached |
+| **Actions ▸ Build AniStream v6.3 APK ▸ Run workflow** | Builds any branch. Fill in `release_tag` (e.g. `v6.3`) to also publish a release. If that release already exists, it and its tag are replaced so the tag points at the built commit. Leave it empty to only build. |
 
 ---
 
@@ -207,6 +207,8 @@ Network requests to the site go through a small in-memory cache (5 min for pages
 
 | Symptom | What to try |
 |---------|-------------|
+| "Couldn't play this stream … HTTP 404" | The app already looked the episode up again once on its own. Tap **Retry**, or go back and open the episode again later. |
+| "This episode is taking too long to load" | Tap **Retry** (asks for the same episode again), or go back and pick it from the list. |
 | "DEMO - SOURCE UNAVAILABLE" | Every server for that episode failed. Try the other audio (SUB/DUB) from **Audio & Subtitles**, or try again later. |
 | "Couldn't reach the server" in Search | No connection, or the site is down or blocked on your network. Tap **Retry**. |
 | Audio but no picture | The server sent an unsupported codec. Pick another episode or audio type. |
@@ -215,7 +217,18 @@ Network requests to the site go through a small in-memory cache (5 min for pages
 
 ---
 
-## 10. What's new in v6.2 / v6.0
+## 10. What's new
+
+### v6.3
+
+- **Back gesture**: Android back steps back one screen (title page, genre page, other tabs, web player), like the on-screen arrows. On Home it sends the app to the background instead of closing it. In the native player, back closes the player, except while the screen is locked.
+- **Screen stays on** while an episode plays; the normal screen timeout applies again when paused.
+- **Next episode never hangs**: every request from the player gets an answer (the episode, or a message), and if nothing arrives within 40 s the player offers **Retry**.
+- **HTTP errors (e.g. 404) recover automatically**: the episode is looked up again once and resumes at the same position, which is what closing and reopening it used to fix. A subtitle file that fails to load is dropped instead of stopping playback.
+- **UI**: Next Episode / Skip buttons resized to Netflix proportions; **Popular Anime** is a side-scrolling row at the top of Home, like the other rows.
+
+### v6.2
+
 
 **v6.2** rolls back v6.1, which broke playback (every episode opened the same video). It is the v6.0 code below, re-released with a higher version number so it installs over v6.1 without uninstalling.
 

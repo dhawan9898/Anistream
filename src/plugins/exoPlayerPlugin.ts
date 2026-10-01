@@ -31,6 +31,15 @@ export interface ProgressUpdateEvent {
   durationMs: number;
 }
 
+// The stream failed with an HTTP error; JS resolves the same episode again
+// and play()s it at positionMs (once per episode - see ExoPlayerActivity).
+export interface ReloadRequestedEvent {
+  title: string;
+  episode: string;
+  mode: 'sub' | 'dub';
+  positionMs: number;
+}
+
 export interface PlayEpisodeOption {
   id: string;
   number: string;
@@ -80,6 +89,11 @@ export interface ExoPlayerPluginInterface {
   addListener(
     eventName: 'episodeSelected',
     listenerFunc: (event: EpisodeSelectedEvent) => void
+  ): Promise<PluginListenerHandle>;
+
+  addListener(
+    eventName: 'reloadRequested',
+    listenerFunc: (event: ReloadRequestedEvent) => void
   ): Promise<PluginListenerHandle>;
 
   addListener(

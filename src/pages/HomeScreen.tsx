@@ -414,6 +414,36 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
         </div>
       )}
 
+      {/* Popular Anime - first rail, same horizontal row style as the
+          genre rails below it */}
+      {(loadingTrending || trending.length > 0) && (
+        <div style={{ padding: '18px 0 4px 0' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 20px', marginBottom: '10px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+              <Flame size={18} color="#f43f5e" />
+              <h2 style={{ fontSize: '17px', fontWeight: 800, color: 'var(--text-primary)' }}>Popular Anime</h2>
+            </div>
+            <button
+              onClick={onOpenSearch}
+              className="interactive"
+              style={{ background: 'none', border: 'none', color: 'var(--accent-primary)', fontSize: '13px', fontWeight: 600, display: 'flex', alignItems: 'center' }}
+            >
+              <span>See all</span>
+              <ChevronRight size={16} />
+            </button>
+          </div>
+          <div style={{ display: 'flex', gap: '10px', overflowX: 'auto', padding: '0 20px 6px 20px', scrollbarWidth: 'none' }}>
+            {loadingTrending
+              ? Array.from({ length: 5 }).map((_, i) => (
+                  <div key={i} className="skeleton" style={{ flex: '0 0 112px', height: '162px', borderRadius: '6px' }} />
+                ))
+              : trending.map(anime => (
+                  <PosterCard key={anime.id} anime={anime} width={112} onClick={() => onSelectAnime(anime)} />
+                ))}
+          </div>
+        </div>
+      )}
+
       {/* Genre rails */}
       {rowGenres.map(genre => (
         <GenreRow
@@ -423,124 +453,6 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
           onSeeAll={() => onSelectGenre(genre)}
         />
       ))}
-
-      {/* Trending Anime Grid */}
-      <div style={{ padding: '20px 20px 10px 20px' }}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '16px' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <Flame size={20} color="#f43f5e" />
-            <h2 style={{ fontSize: '18px', fontWeight: 800, color: 'var(--text-primary)' }}>Popular Anime</h2>
-          </div>
-          <button 
-            onClick={onOpenSearch}
-            className="interactive"
-            style={{ background: 'none', border: 'none', color: '#6366f1', fontSize: '13px', fontWeight: 600, display: 'flex', alignItems: 'center' }}
-          >
-            <span>Explore all</span>
-            <ChevronRight size={16} />
-          </button>
-        </div>
-
-        <div className="grid-posters">
-          {loadingTrending ? (
-            Array.from({ length: 6 }).map((_, i) => (
-              <div key={i} className="skeleton" style={{ borderRadius: 'var(--radius-md)', paddingTop: '155%' }} />
-            ))
-          ) : trending.map((anime) => (
-            <div
-              key={anime.id}
-              onClick={() => onSelectAnime(anime)}
-              className="interactive glass-panel"
-              style={{
-                borderRadius: 'var(--radius-md)',
-                overflow: 'hidden',
-                display: 'flex',
-                flexDirection: 'column'
-              }}
-            >
-              <div style={{ position: 'relative', width: '100%', paddingTop: '140%', overflow: 'hidden' }}>
-                <img
-                  src={anime.poster}
-                  alt={anime.title}
-                  style={{
-                    position: 'absolute',
-                    top: 0,
-                    left: 0,
-                    width: '100%',
-                    height: '100%',
-                    objectFit: 'cover'
-                  }}
-                />
-                <div style={{
-                  position: 'absolute',
-                  top: '8px',
-                  right: '8px',
-                  backgroundColor: 'rgba(0,0,0,0.7)',
-                  backdropFilter: 'blur(8px)',
-                  padding: '2px 7px',
-                  borderRadius: '4px',
-                  fontSize: '11px',
-                  fontWeight: 700,
-                  color: '#e2e8f0'
-                }}>
-                  {anime.type || 'TV'}
-                </div>
-
-                <div style={{
-                  position: 'absolute',
-                  bottom: 0,
-                  left: 0,
-                  right: 0,
-                  height: '40px',
-                  background: 'linear-gradient(180deg, transparent 0%, rgba(8,9,14,0.95) 100%)'
-                }} />
-              </div>
-
-              <div style={{ padding: '10px 10px 12px 10px', flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
-                <h3 style={{
-                  fontSize: '14px',
-                  fontWeight: 700,
-                  color: 'var(--text-primary)',
-                  lineHeight: '1.3',
-                  display: '-webkit-box',
-                  WebkitLineClamp: 2,
-                  WebkitBoxOrient: 'vertical',
-                  overflow: 'hidden',
-                  marginBottom: '6px'
-                }}>
-                  {anime.title}
-                </h3>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                  {!!anime.subCount && (
-                    <span style={{
-                      fontSize: '10px',
-                      fontWeight: 700,
-                      backgroundColor: 'rgba(99, 102, 241, 0.2)',
-                      color: 'var(--accent-primary)',
-                      padding: '2px 6px',
-                      borderRadius: '4px'
-                    }}>
-                      SUB {anime.subCount}
-                    </span>
-                  )}
-                  {!!anime.dubCount && (
-                    <span style={{
-                      fontSize: '10px',
-                      fontWeight: 700,
-                      backgroundColor: 'rgba(168, 85, 247, 0.2)',
-                      color: '#c084fc',
-                      padding: '2px 6px',
-                      borderRadius: '4px'
-                    }}>
-                      DUB {anime.dubCount}
-                    </span>
-                  )}
-                </div>
-              </div>
-            </div>
-          ))}
-        </div>
-      </div>
 
       <GenrePicker
         open={pickerOpen}

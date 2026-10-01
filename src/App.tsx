@@ -158,27 +158,55 @@ export const App: React.FC = () => {
   // (null) values.
   useEffect(() => {
     if (!Capacitor.isNativePlatform()) return;
+    // Every request from the native player must end in play() or fail():
+    // a silent return here used to leave the player spinning on its
+    // loading screen until it was closed.
+    const failInPlayer = (message: string) => {
+      console.warn('[App] native request could not be served:', message);
+      ExoPlayerPlugin.fail({ message }).catch(() => undefined);
+    };
     const modeHandle = ExoPlayerPlugin.addListener('modeSwitchRequested', ({ mode }) => {
       const anime = playingAnimeRef.current;
       const episode = playingEpisodeRef.current;
-      if (anime && episode) {
-        handlePlayEpisode(anime, episode, mode, 0);
+      if (!anime || !episode) {
+        failInPlayer("Couldn't switch audio for this episode. Go back and pick it again.");
+        return;
       }
+      handlePlayEpisode(anime, episode, mode, 0);
     });
-    const nextEpHandle = ExoPlayerPlugin.addListener('nextEpisodeRequested', () => {
+    const nextEpHandle = ExoPlayerPlugin.addListener('nextEpisodeRequested', ({ episode: currentNumber }) => {
       const anime = playingAnimeRef.current;
-      const episode = playingEpisodeRef.current;
-      if (!anime || !episode) return;
-      const next = findNextEpisode(episode, episodeListRef.current);
-      if (!next) return; // no real next episode - never guess one
+      const list = episodeListRef.current;
+      // By id first, then by the number the player was showing (covers an
+      // episode object whose id doesn't match the loaded list).
+      const byNumber = list.findIndex(e => e.number === currentNumber);
+      const next = findNextEpisode(playingEpisodeRef.current, list)
+        ?? (byNumber >= 0 ? list[byNumber + 1] : undefined);
+      if (!anime || !next) {
+        failInPlayer("Couldn't find the next episode. Go back and pick it from the list.");
+        return;
+      }
       handlePlayEpisode(anime, next, playingModeRef.current, 0);
     });
     const episodeSelectedHandle = ExoPlayerPlugin.addListener('episodeSelected', ({ selectedNumber }) => {
       const anime = playingAnimeRef.current;
-      if (!anime) return;
       const selected = episodeListRef.current.find(e => e.number === selectedNumber);
-      if (!selected) return; // not a real episode from the list - never guess one
+      if (!anime || !selected) {
+        failInPlayer(`Couldn't load episode ${selectedNumber}. Go back and pick it from the list.`);
+        return;
+      }
       handlePlayEpisode(anime, selected, playingModeRef.current, 0);
+    });
+    // The stream hit an HTTP error (e.g. 404): look the same episode up
+    // again - exactly what closing and reopening it does - and resume.
+    const reloadHandle = ExoPlayerPlugin.addListener('reloadRequested', ({ episode, mode, positionMs }) => {
+      const session = nowPlayingRef.current;
+      if (!session || episode !== session.episode.number || (mode && mode !== session.mode)) {
+        failInPlayer("Couldn't reload this episode. Go back and pick it again.");
+        return;
+      }
+      console.warn(`[App] reloading ${session.anime.title} E${episode} after a stream error`);
+      handlePlayEpisode(session.anime, session.episode, session.mode, Math.max(0, positionMs / 1000));
     });
     // The native player is the only place playback position lives - unlike
     // the web <VideoPlayer>, which reports progress via its own
@@ -202,6 +230,7 @@ export const App: React.FC = () => {
       modeHandle.then(h => h.remove());
       nextEpHandle.then(h => h.remove());
       episodeSelectedHandle.then(h => h.remove());
+      reloadHandle.then(h => h.remove());
       progressHandle.then(h => h.remove());
       closedHandle.then(h => h.remove());
     };
@@ -357,6 +386,56 @@ export const App: React.FC = () => {
   };
 
   const hasNextEpisode = findNextEpisode(playingEpisode, episodeList) !== undefined;
+
+  // ---- Android back gesture / button ----
+  // Screens are in-memory state, not URLs, so the native back action had
+  // nothing to step back through and closed the whole app. While anything
+  // is open on top of the Home tab, one "guard" history entry is kept;
+  // MainActivity turns back into history.back(), which lands here as a
+  // popstate and closes the top-most thing, exactly like the on-screen
+  // back arrows. Back on plain Home has no entry left, so Android sends the
+  // app to the background.
+  const atRoot = !isPlaying && streamErrorMessage === null && animeStack.length === 0
+    && !selectedGenre && currentTab === 'home';
+  const backGuardRef = useRef(false);
+  const ignoredPopsRef = useRef(0);
+  const backStepRef = useRef<() => void>(() => undefined);
+  backStepRef.current = () => {
+    if (streamErrorMessage !== null) setStreamErrorMessage(null);
+    else if (isPlaying) closeWebPlayer();
+    else if (animeStack.length > 0) popAnime();
+    else if (selectedGenre) setSelectedGenre(null);
+    else if (currentTab !== 'home') switchTab('home');
+  };
+
+  // Runs after every render: keep exactly one guard entry while not at root.
+  useEffect(() => {
+    if (!atRoot && !backGuardRef.current) {
+      window.history.pushState({ anistreamBackGuard: true }, '');
+      backGuardRef.current = true;
+    } else if (atRoot && backGuardRef.current) {
+      // Got back to root through the on-screen arrows - drop the guard so
+      // the next back press leaves the app instead of doing nothing.
+      backGuardRef.current = false;
+      ignoredPopsRef.current++;
+      window.history.back();
+    }
+  });
+
+  useEffect(() => {
+    const onPopState = () => {
+      if (ignoredPopsRef.current > 0) {
+        ignoredPopsRef.current--;
+        return;
+      }
+      // The guard was consumed by this back press; the render after this
+      // step re-adds it if something is still open.
+      backGuardRef.current = false;
+      backStepRef.current();
+    };
+    window.addEventListener('popstate', onPopState);
+    return () => window.removeEventListener('popstate', onPopState);
+  }, []);
 
   return (
     <div style={{

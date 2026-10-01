@@ -109,6 +109,20 @@ public class ExoPlayerPlugin extends Plugin {
         activeInstance.notifyListeners("playerClosed", new JSObject());
     }
 
+    // The stream failed with an HTTP error (e.g. 404). JS resolves the same
+    // episode again - what closing and reopening it does - and play()s it
+    // at positionMs.
+    static boolean notifyReloadRequested(String title, String episode, String mode, long positionMs) {
+        if (activeInstance == null) return false;
+        JSObject data = new JSObject();
+        data.put("title", title);
+        data.put("episode", episode);
+        data.put("mode", mode);
+        data.put("positionMs", positionMs);
+        activeInstance.notifyListeners("reloadRequested", data);
+        return true;
+    }
+
     static void notifyModeSwitchRequested(String title, String episode, String newMode) {
         if (activeInstance == null) return;
         JSObject data = new JSObject();

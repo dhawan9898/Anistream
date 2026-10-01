@@ -184,6 +184,35 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     };
   }, []);
 
+  // Keep the screen awake while playing (Screen Wake Lock API, where the
+  // browser/WebView has it). The lock is dropped automatically when the
+  // page is hidden, so it's re-requested when the page becomes visible.
+  useEffect(() => {
+    type WakeLockSentinelLike = { release: () => Promise<void> };
+    const wakeLock = (navigator as Navigator & {
+      wakeLock?: { request: (type: 'screen') => Promise<WakeLockSentinelLike> };
+    }).wakeLock;
+    if (!isPlaying || !wakeLock) return;
+    let sentinel: WakeLockSentinelLike | null = null;
+    let active = true;
+    const acquire = () => {
+      if (document.visibilityState !== 'visible') return;
+      wakeLock.request('screen')
+        .then(lock => {
+          if (active) sentinel = lock;
+          else lock.release().catch(() => undefined);
+        })
+        .catch(() => undefined);
+    };
+    acquire();
+    document.addEventListener('visibilitychange', acquire);
+    return () => {
+      active = false;
+      document.removeEventListener('visibilitychange', acquire);
+      sentinel?.release().catch(() => undefined);
+    };
+  }, [isPlaying]);
+
   // The fullscreen state must follow the browser: the system back gesture
   // or Esc leaves fullscreen without going through our toggle.
   useEffect(() => {
@@ -1054,13 +1083,13 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
           )}
           {showSkipIntro && (
             <button onClick={skipIntro} className="interactive nf-skip">
-              <SkipForward size={18} fill="#fff" />
+              <SkipForward size={16} fill="#fff" />
               <span>Skip Intro</span>
             </button>
           )}
           {showSkipOutro && (
             <button onClick={skipOutro} className="interactive nf-skip">
-              <SkipForward size={18} fill="#fff" />
+              <SkipForward size={16} fill="#fff" />
               <span>Skip Outro</span>
             </button>
           )}
@@ -1075,7 +1104,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
                 className="nf-next-fill"
                 style={{ width: `${autoPlayNext ? postPlayProgress * 100 : 0}%` }}
               />
-              <Play size={18} fill="#000" strokeWidth={0} />
+              <Play size={16} fill="#000" strokeWidth={0} />
               <span>Next Episode</span>
             </button>
           )}
