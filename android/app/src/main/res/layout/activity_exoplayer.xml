@@ -337,10 +337,13 @@
             android:layout_marginStart="8dp"
             android:visibility="gone">
 
+            <!-- Countdown: a thin red bar along the bottom edge that grows
+                 left to right until the next episode starts. -->
             <View
                 android:id="@+id/next_episode_fill"
                 android:layout_width="match_parent"
-                android:layout_height="match_parent" />
+                android:layout_height="3dp"
+                android:layout_gravity="bottom" />
 
             <!-- Play icon is set in code (ExoPlayerActivity.styleGlassChrome):
                  a "▶" text glyph renders as a large color emoji on many

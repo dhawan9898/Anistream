@@ -10,6 +10,16 @@ export interface ModeSwitchRequestedEvent {
   title: string;
   episode: string;
   mode: 'sub' | 'dub';
+  // Where the old audio was, so the new one continues from there.
+  positionMs?: number;
+}
+
+// The player started the prefetched next episode on its own.
+export interface NextEpisodeStartedEvent {
+  title: string;
+  episode: string;
+  mode: 'sub' | 'dub';
+  url: string;
 }
 
 export interface NextEpisodeRequestedEvent {
@@ -45,6 +55,8 @@ export interface PlayEpisodeOption {
   number: string;
 }
 
+export type PlayOptions = Parameters<ExoPlayerPluginInterface['play']>[0];
+
 export interface ExoPlayerPluginInterface {
   play(options: {
     url: string;
@@ -62,6 +74,10 @@ export interface ExoPlayerPluginInterface {
     // Where to start playing (resume), in ms.
     startPositionMs?: number;
   }): Promise<{ success: boolean }>;
+
+  // Same options as play(), for the episode after `afterEpisode`: the
+  // player keeps it and starts it itself on Next Episode / countdown end.
+  setNextEpisode(options: PlayOptions & { afterEpisode: string }): Promise<void>;
 
   // Opens the player immediately in its loading state (title + spinner)
   // while the stream is being resolved; play() then hands it the stream.
@@ -94,6 +110,11 @@ export interface ExoPlayerPluginInterface {
   addListener(
     eventName: 'reloadRequested',
     listenerFunc: (event: ReloadRequestedEvent) => void
+  ): Promise<PluginListenerHandle>;
+
+  addListener(
+    eventName: 'nextEpisodeStarted',
+    listenerFunc: (event: NextEpisodeStartedEvent) => void
   ): Promise<PluginListenerHandle>;
 
   addListener(

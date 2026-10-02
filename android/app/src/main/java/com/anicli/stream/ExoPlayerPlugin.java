@@ -19,7 +19,48 @@ public class ExoPlayerPlugin extends Plugin {
 
     @PluginMethod
     public void play(PluginCall call) {
+        Intent intent = buildPlayIntent(call);
+        if (intent == null) {
+            call.reject("Must provide a video URL");
+            return;
+        }
+        activeInstance = this;
+
+        // ExoPlayerActivity is singleTask: if it's already open (showing its
+        // loading spinner) this is delivered to it via onNewIntent instead
+        // of stacking a second player.
+        getActivity().startActivity(intent);
+
+        JSObject ret = new JSObject();
+        ret.put("success", true);
+        call.resolve(ret);
+    }
+
+    // The stream for the episode after `afterEpisode`, resolved ahead of
+    // time while the app's WebView is still active. The player starts it by
+    // itself when Next Episode is pressed (or the countdown ends), so going
+    // to the next episode never waits on JavaScript - which may be throttled
+    // or not running at all after the WebView has been hidden behind the
+    // player for a whole episode.
+    @PluginMethod
+    public void setNextEpisode(PluginCall call) {
+        String afterEpisode = call.getString("afterEpisode");
+        String mode = call.getString("mode", "sub");
+        Intent intent = buildPlayIntent(call);
+        ExoPlayerActivity activity = ExoPlayerActivity.current();
+        if (intent == null || afterEpisode == null || activity == null) {
+            call.resolve();
+            return;
+        }
+        activeInstance = this;
+        activity.runOnUiThread(() -> activity.setPrefetchedNext(afterEpisode, mode, intent));
+        call.resolve();
+    }
+
+    // Same extras for play() and setNextEpisode(); null when there's no URL.
+    private Intent buildPlayIntent(PluginCall call) {
         String url = call.getString("url");
+        if (url == null || url.isEmpty()) return null;
         String title = call.getString("title", "AniStream");
         String episode = call.getString("episode", "1");
         String referer = call.getString("referer", "https://zokoanime.video/");
@@ -31,13 +72,6 @@ public class ExoPlayerPlugin extends Plugin {
         JSObject intro = call.getObject("intro");
         JSObject outro = call.getObject("outro");
         Double startPositionMs = call.getDouble("startPositionMs");
-
-        if (url == null || url.isEmpty()) {
-            call.reject("Must provide a video URL");
-            return;
-        }
-
-        activeInstance = this;
 
         Intent intent = new Intent(getContext(), ExoPlayerActivity.class);
         intent.putExtra("url", url);
@@ -54,15 +88,7 @@ public class ExoPlayerPlugin extends Plugin {
         if (startPositionMs != null && startPositionMs > 0) {
             intent.putExtra("startPositionMs", Math.round(startPositionMs));
         }
-
-        // ExoPlayerActivity is singleTask: if it's already open (showing its
-        // loading spinner) this is delivered to it via onNewIntent instead
-        // of stacking a second player.
-        getActivity().startActivity(intent);
-
-        JSObject ret = new JSObject();
-        ret.put("success", true);
-        call.resolve(ret);
+        return intent;
     }
 
     // Chapter markers from the stream's sources payload, in seconds - passed
@@ -123,9 +149,23 @@ public class ExoPlayerPlugin extends Plugin {
         return true;
     }
 
-    static void notifyModeSwitchRequested(String title, String episode, String newMode) {
+    // The player started the prefetched next episode on its own; JS records
+    // it as the playing episode (for watch history) and prefetches the one
+    // after it.
+    static void notifyNextEpisodeStarted(String title, String episode, String mode, String url) {
         if (activeInstance == null) return;
         JSObject data = new JSObject();
+        data.put("title", title);
+        data.put("episode", episode);
+        data.put("mode", mode);
+        data.put("url", url);
+        activeInstance.notifyListeners("nextEpisodeStarted", data);
+    }
+
+    static void notifyModeSwitchRequested(String title, String episode, String newMode, long positionMs) {
+        if (activeInstance == null) return;
+        JSObject data = new JSObject();
+        data.put("positionMs", positionMs);
         data.put("title", title);
         data.put("episode", episode);
         data.put("mode", newMode);

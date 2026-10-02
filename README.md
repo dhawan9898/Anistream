@@ -1,6 +1,6 @@
 # AniStream — Android Anime Streaming App (powered by `ani-cli`)
 
-[![Version](https://img.shields.io/badge/Version-v6.3-indigo?style=for-the-badge&logo=android)](https://github.com/dhawan9898/Anistream/releases)
+[![Version](https://img.shields.io/badge/Version-v6.4-indigo?style=for-the-badge&logo=android)](https://github.com/dhawan9898/Anistream/releases)
 [![Android](https://img.shields.io/badge/Android-8.0%2B-green?style=for-the-badge&logo=android)](https://github.com/dhawan9898/Anistream/releases)
 [![License](https://img.shields.io/badge/License-GPLv3-blue?style=for-the-badge)](https://www.gnu.org/licenses/gpl-3.0)
 
@@ -30,8 +30,8 @@ steps as [`ani-cli`](https://github.com/pystardust/ani-cli).
 
 ## 1. Install the APK
 
-1. Open the **[Releases page](https://github.com/dhawan9898/Anistream/releases)** and pick the latest release (**v6.3**).
-2. Under **Assets**, download **`AniStream-v6.3.apk`**.
+1. Open the **[Releases page](https://github.com/dhawan9898/Anistream/releases)** and pick the latest release (**v6.4**).
+2. Under **Assets**, download **`AniStream-v6.4.apk`**.
 3. Open the file on your phone. If Android asks, enable **Install unknown apps** for your browser or file manager.
 4. Tap **Install**. If you already have AniStream, the new version installs over it and keeps your history and My List, because every release is signed with the same key.
 
@@ -47,7 +47,7 @@ The floating dock at the bottom switches between the four main tabs.
 |-----|--------------|
 | **Home** | Trending hero carousel, **Continue Watching** (with progress bars), genre rows (Action, Romance, Comedy, Fantasy, Isekai) and a **Categories** picker for every genre. |
 | **Search** | Type a title (results appear as you type) or tap a quick tag. With an empty search box you can browse all genres. If the server can't be reached you get a **Retry** button, not fake results. |
-| **Library** | **History** holds one entry per anime with your last episode and progress. Tap an entry to resume, or ✕ to remove it. **Saved** is your *My List*. |
+| **Library** | **History** holds one entry per anime with your last episode and progress. Tap an entry to open its title page (then **Resume**), or ✕ to remove it. **Saved** is your *My List*. |
 | **Settings** | Theme, playback preferences, and data (clear history, bookmarks). |
 
 ### Title page
@@ -159,9 +159,9 @@ Use the browser's device toolbar (Ctrl+Shift+M in Chrome) to preview phone and t
 
 | Trigger | Result |
 |---------|--------|
-| Push to `main` / `master` | APK uploaded as a workflow artifact (`AniStream-v6.3-APK`, kept 30 days), plus the R8 mapping (`AniStream-v6.3-mapping`) |
-| Push a tag `v*` (e.g. `git tag v6.3 && git push origin v6.3`) | Artifact plus a GitHub Release under that tag with the APK attached |
-| **Actions ▸ Build AniStream v6.3 APK ▸ Run workflow** | Builds any branch. Fill in `release_tag` (e.g. `v6.3`) to also publish a release. If that release already exists, it and its tag are replaced so the tag points at the built commit. Leave it empty to only build. |
+| Push to `main` / `master` | APK uploaded as a workflow artifact (`AniStream-v6.4-APK`, kept 30 days), plus the R8 mapping (`AniStream-v6.4-mapping`) |
+| Push a tag `v*` (e.g. `git tag v6.4 && git push origin v6.4`) | Artifact plus a GitHub Release under that tag with the APK attached |
+| **Actions ▸ Build AniStream v6.4 APK ▸ Run workflow** | Builds any branch. Fill in `release_tag` (e.g. `v6.4`) to also publish a release. If that release already exists, it and its tag are replaced so the tag points at the built commit. Leave it empty to only build. |
 
 ---
 
@@ -218,6 +218,14 @@ Network requests to the site go through a small in-memory cache (5 min for pages
 ---
 
 ## 10. What's new
+
+### v6.4
+
+- **Next Episode is prepared ahead**: while an episode plays, the app looks up the next one and hands it to the native player, which starts it by itself when you press **Next Episode** or the countdown ends. It no longer waits on the app's web layer, which may not respond promptly after being hidden behind the player for a whole episode.
+- **SUB/DUB switch continues from the same position** instead of restarting the episode.
+- **Dub starts with subtitles off**: dub servers ship the subbed release's captions, timed to the Japanese dialogue, so they never matched the English audio. Turn them on from **Audio & Subtitles** if you want them.
+- **Next Episode button**: solid white with a thin red countdown bar along its bottom edge.
+- **Continue Watching and Library entries open the title page** (with its Resume button) instead of starting playback directly.
 
 ### v6.3
 

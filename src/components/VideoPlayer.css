@@ -228,7 +228,7 @@
   padding: 9px 14px;
   border-radius: 4px;
   border: none;
-  background: rgba(255, 255, 255, 0.75);
+  background: #fff;
   color: #000;
   font-size: 13px;
   font-weight: 800;
@@ -241,10 +241,11 @@
 
 .nf-next-fill {
   position: absolute;
+  /* Countdown: thin red bar along the bottom edge */
   left: 0;
-  top: 0;
   bottom: 0;
-  background: #fff;
+  height: 3px;
+  background: #e50914;
   transition: width 0.5s linear;
 }
 

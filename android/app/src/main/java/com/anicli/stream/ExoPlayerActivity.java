@@ -234,6 +234,12 @@ public class ExoPlayerActivity extends AppCompatActivity {
     // thing closing and reopening the episode does. Key = "episode|mode".
     private String reloadAttemptedKey;
 
+    // Next episode's stream, resolved ahead of time by JS (setNextEpisode).
+    // Valid only while the episode/audio it was resolved after is playing.
+    private Intent prefetchedNextIntent;
+    private String prefetchedAfterEpisode;
+    private String prefetchedMode;
+
     // A retry that fires while the app is in the background must not start
     // playing audio there (onStop paused the player on purpose).
     private boolean activityStopped = false;
@@ -503,15 +509,15 @@ public class ExoPlayerActivity extends AppCompatActivity {
             skip.setBackground(bg);
         }
 
+        // Solid white button (readable over any scene); the countdown is a
+        // thin red bar along its bottom edge.
         GradientDrawable nextBg = new GradientDrawable();
         nextBg.setCornerRadius(4f * density);
-        nextBg.setColor(Color.argb(190, 255, 255, 255));
+        nextBg.setColor(Color.WHITE);
         btnNextEpisode.setBackground(nextBg);
         btnNextEpisode.setClipToOutline(true);
-        GradientDrawable fillBg = new GradientDrawable();
-        fillBg.setCornerRadius(4f * density);
-        fillBg.setColor(Color.WHITE);
-        nextEpisodeFill.setBackground(fillBg);
+        btnNextEpisode.setElevation(2f * density);
+        nextEpisodeFill.setBackgroundColor(NETFLIX_RED);
         nextEpisodeFill.setPivotX(0f);
         nextEpisodeFill.setScaleX(0f);
 
@@ -904,9 +910,12 @@ public class ExoPlayerActivity extends AppCompatActivity {
         handler.postDelayed(hideUnlockRunnable, UNLOCK_HINT_MS);
     }
 
+    // Switching audio continues from the current position (sub and dub of
+    // an episode are the same cut) instead of restarting the episode.
     private void requestModeSwitch() {
         String newMode = "sub".equals(currentMode) ? "dub" : "sub";
-        ExoPlayerPlugin.notifyModeSwitchRequested(animeTitle, episodeNumber, newMode);
+        long position = player != null ? Math.max(player.getCurrentPosition(), 0) : lastKnownPositionMs;
+        ExoPlayerPlugin.notifyModeSwitchRequested(animeTitle, episodeNumber, newMode, position);
         enterLoading(null, newMode);
     }
 
@@ -1211,10 +1220,38 @@ public class ExoPlayerActivity extends AppCompatActivity {
         initializePlayer(option.url, pendingReferer, pendingSubtitlesJson, resumePosition, wasPlaying);
     }
 
+    void setPrefetchedNext(String afterEpisode, String mode, Intent intent) {
+        prefetchedAfterEpisode = afterEpisode;
+        prefetchedMode = mode;
+        prefetchedNextIntent = intent;
+        Log.i(TAG, "Next episode stream ready (after E" + afterEpisode + ", " + mode + ")");
+    }
+
     private void triggerNextEpisode() {
         if (nextEpisodeTriggered) return;
         nextEpisodeTriggered = true;
         String next = nextEpisodeNumber();
+
+        // Prefetched stream for exactly this transition: start it right here,
+        // without a round trip through JavaScript (see setNextEpisode).
+        Intent prefetched = prefetchedNextIntent;
+        if (prefetched != null && next != null
+                && episodeNumber != null && episodeNumber.equals(prefetchedAfterEpisode)
+                && currentMode != null && currentMode.equals(prefetchedMode)
+                && next.equals(prefetched.getStringExtra("episode"))) {
+            prefetchedNextIntent = null;
+            reportProgressNow(); // final position of the episode that's ending
+            reloadAttemptedKey = null;
+            Intent intent = new Intent(prefetched);
+            intent.removeExtra("startPositionMs");
+            intent.removeExtra("episodes"); // keep the list already loaded
+            Log.i(TAG, "Starting prefetched E" + next);
+            ExoPlayerPlugin.notifyNextEpisodeStarted(animeTitle, next, currentMode, intent.getStringExtra("url"));
+            setIntent(intent);
+            loadFromIntent(intent);
+            return;
+        }
+
         ExoPlayerPlugin.notifyNextEpisodeRequested(animeTitle, episodeNumber);
         enterLoading(next, null);
     }
@@ -1389,7 +1426,11 @@ public class ExoPlayerActivity extends AppCompatActivity {
 
         java.util.List<MediaItem.SubtitleConfiguration> subtitleConfigs = parseSubtitles(subtitlesJson);
         if (!subtitleSelectionInitialized) {
-            currentSubtitleLabel = defaultSubtitleLabel;
+            // Dub: subtitles start off. The tracks a dub server lists are
+            // usually the subbed release's captions, timed to the Japanese
+            // dialogue, so they never line up with the English audio. They
+            // can still be turned on from Audio & Subtitles.
+            currentSubtitleLabel = "dub".equals(currentMode) ? null : defaultSubtitleLabel;
             subtitleSelectionInitialized = true;
         }
 
@@ -1611,8 +1652,10 @@ public class ExoPlayerActivity extends AppCompatActivity {
             btnSkipOutro.setVisibility(View.GONE);
         }
 
-        updatePostPlay(duration, position, shouldShowOutro);
+        // Report before updatePostPlay(): it may switch to the next episode,
+        // after which this position would be reported under the new one.
         maybeReportProgress(position, duration);
+        updatePostPlay(duration, position, shouldShowOutro);
     }
 
     // Watch history lives in JS (Preferences storage) - the native player has

@@ -45,6 +45,14 @@ function createHls(referer: string): Hls {
   });
 }
 
+// Subtitles start on for sub and off for dub: a dub server's caption files
+// are usually the subbed release's, timed to the Japanese dialogue, so they
+// never line up with the English audio (they can still be turned on).
+function defaultSubtitleLabel(subtitles: StreamSource['subtitles'], mode: 'sub' | 'dub'): string | null {
+  if (mode === 'dub') return null;
+  return subtitles.find(s => s.default)?.label ?? subtitles[0]?.label ?? null;
+}
+
 // Fatal hls.js network errors are retried this many times with exponential
 // backoff (1s, 2s, 4s) before the stream is declared dead.
 const MAX_NETWORK_RETRIES = 3;
@@ -69,7 +77,8 @@ interface VideoPlayerProps {
   episodeList?: EpisodeItem[];
   onSelectEpisode?: (ep: EpisodeItem) => void;
   // Re-resolves the same episode in the other audio language (sub <-> dub).
-  onSwitchMode?: (mode: 'sub' | 'dub') => void;
+  // positionSec: where the current audio is, so the other one continues there.
+  onSwitchMode?: (mode: 'sub' | 'dub', positionSec: number) => void;
 }
 
 const PLAYBACK_SPEEDS = [0.5, 0.75, 1, 1.25, 1.5];
@@ -129,7 +138,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   const suppressNextTapRef = useRef<boolean>(false);
   const volumeIndicatorTimerRef = useRef<number | null>(null);
   const [activeSubtitle, setActiveSubtitle] = useState<string | null>(
-    () => streamSource.subtitles.find(s => s.default)?.label ?? streamSource.subtitles[0]?.label ?? null
+    () => defaultSubtitleLabel(streamSource.subtitles, mode)
   );
   const [showSkipIntro, setShowSkipIntro] = useState<boolean>(false);
   const [skippedIntroToast, setSkippedIntroToast] = useState<boolean>(false);
@@ -263,8 +272,8 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     setIntroInterval(streamSource.intro ?? null);
     setOutroInterval(streamSource.outro ?? null);
     setSelectedQuality(streamSource.quality || '1080p');
-    setActiveSubtitle(streamSource.subtitles.find(s => s.default)?.label ?? streamSource.subtitles[0]?.label ?? null);
-  }, [streamSource.streamUrl, streamSource.quality, streamSource.subtitles, streamSource.intro, streamSource.outro]);
+    setActiveSubtitle(defaultSubtitleLabel(streamSource.subtitles, mode));
+  }, [streamSource.streamUrl, streamSource.quality, streamSource.subtitles, streamSource.intro, streamSource.outro, mode]);
 
   // Keep the browser's native text tracks in sync with the chosen caption
   // label - selecting a caption in the menu only updates state, so without
@@ -1176,7 +1185,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
                     onClick={() => {
                       if (active || !onSwitchMode) return;
                       setShowAudioPanel(false);
-                      onSwitchMode(m);
+                      onSwitchMode(m, videoRef.current?.currentTime || 0);
                     }}
                     className={`nf-option ${active ? 'active' : ''}`}
                   >

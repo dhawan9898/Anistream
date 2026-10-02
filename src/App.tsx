@@ -19,7 +19,7 @@ import {
   type StreamSource,
   FEATURED_ANIME
 } from './core/aniCliCore';
-import { saveWatchProgress, getUserPreferences, isEpisodeFinished, type WatchHistoryItem } from './services/historyService';
+import { saveWatchProgress, getUserPreferences, type WatchHistoryItem } from './services/historyService';
 import { getTheme, getStoredThemeSync, setTheme as persistTheme, type ThemeMode } from './services/themeService';
 
 // The web player (and hls.js, the largest dependency) is only needed once
@@ -165,14 +165,38 @@ export const App: React.FC = () => {
       console.warn('[App] native request could not be served:', message);
       ExoPlayerPlugin.fail({ message }).catch(() => undefined);
     };
-    const modeHandle = ExoPlayerPlugin.addListener('modeSwitchRequested', ({ mode }) => {
+    const modeHandle = ExoPlayerPlugin.addListener('modeSwitchRequested', ({ mode, positionMs }) => {
       const anime = playingAnimeRef.current;
       const episode = playingEpisodeRef.current;
       if (!anime || !episode) {
         failInPlayer("Couldn't switch audio for this episode. Go back and pick it again.");
         return;
       }
-      handlePlayEpisode(anime, episode, mode, 0);
+      // Continue from the same point in the other audio track.
+      handlePlayEpisode(anime, episode, mode, Math.max(0, (positionMs || 0) / 1000));
+    });
+    // The player started the prefetched next episode itself. Record it as
+    // the playing episode (progress reports for it are matched against
+    // nowPlaying) and prefetch the one after it.
+    const nextStartedHandle = ExoPlayerPlugin.addListener('nextEpisodeStarted', ({ episode: number, mode }) => {
+      const anime = playingAnimeRef.current;
+      const list = episodeListRef.current;
+      const episode = list.find(e => e.number === number);
+      if (!anime || !episode) return; // already playing natively; nothing to sync
+      const requestId = ++playRequestRef.current; // supersede anything in flight
+      const prefetched = prefetchedNextRef.current;
+      prefetchedNextRef.current = null;
+      setStreamLoading(false);
+      setPlayingEpisode(episode);
+      setPlayingMode(mode);
+      playingEpisodeRef.current = episode;
+      playingModeRef.current = mode;
+      if (prefetched && prefetched.animeId === anime.id && prefetched.episode.id === episode.id && prefetched.mode === mode) {
+        const session = { anime, episode, mode, source: prefetched.source, startTime: 0 };
+        nowPlayingRef.current = session;
+        setNowPlaying(session);
+      }
+      prefetchNext(anime, episode, mode, list, requestId);
     });
     const nextEpHandle = ExoPlayerPlugin.addListener('nextEpisodeRequested', ({ episode: currentNumber }) => {
       const anime = playingAnimeRef.current;
@@ -228,6 +252,7 @@ export const App: React.FC = () => {
     });
     return () => {
       modeHandle.then(h => h.remove());
+      nextStartedHandle.then(h => h.remove());
       nextEpHandle.then(h => h.remove());
       episodeSelectedHandle.then(h => h.remove());
       reloadHandle.then(h => h.remove());
@@ -236,6 +261,60 @@ export const App: React.FC = () => {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  const nativePlayOptions = (
+    anime: AnimeItem,
+    episode: EpisodeItem,
+    mode: 'sub' | 'dub',
+    source: StreamSource,
+    episodes: EpisodeItem[],
+    startTime: number
+  ) => ({
+    url: source.streamUrl,
+    title: anime.title,
+    episode: episode.number,
+    referer: source.referer,
+    mode,
+    subtitles: source.subtitles,
+    qualities: source.qualities,
+    episodes: episodes.map(e => ({ id: e.id, number: e.number })),
+    isFallback: source.isFallback,
+    intro: source.intro,
+    outro: source.outro,
+    startPositionMs: Math.max(0, Math.round(startTime * 1000))
+  });
+
+  // The next episode's stream, resolved ahead of time and handed to the
+  // native player, which starts it by itself when Next Episode is pressed
+  // (or the countdown ends). Waiting for JavaScript at that moment is what
+  // left the player stuck on its loading screen: by then this WebView has
+  // been hidden behind the player for a whole episode and may not run
+  // promptly. Best effort - without a prefetched stream the player falls
+  // back to asking JS (nextEpisodeRequested).
+  const prefetchedNextRef = useRef<{ animeId: string; episode: EpisodeItem; mode: 'sub' | 'dub'; source: StreamSource } | null>(null);
+  const prefetchNext = async (
+    anime: AnimeItem,
+    current: EpisodeItem,
+    mode: 'sub' | 'dub',
+    episodes: EpisodeItem[],
+    requestId: number
+  ) => {
+    const next = findNextEpisode(current, episodes);
+    if (!next) return;
+    try {
+      const source = await getEpisodeStream(anime.id || anime.title, next.id || next.number, mode, anime.id);
+      // Moved on meanwhile, or nothing real to hand over.
+      if (requestId !== playRequestRef.current || source.isFallback) return;
+      prefetchedNextRef.current = { animeId: anime.id, episode: next, mode, source };
+      await ExoPlayerPlugin.setNextEpisode({
+        ...nativePlayOptions(anime, next, mode, source, episodes, 0),
+        afterEpisode: current.number
+      });
+      console.log(`[App] prefetched E${next.number} (${mode}) for the player`);
+    } catch (err) {
+      console.warn('[App] next-episode prefetch failed (player will ask when needed):', err);
+    }
+  };
 
   // Play an episode
   const handlePlayEpisode = async (
@@ -300,20 +379,10 @@ export const App: React.FC = () => {
       if (isNative) {
         try {
           console.log("[App] Launching Android Native ExoPlayer...");
-          await ExoPlayerPlugin.play({
-            url: source.streamUrl,
-            title: anime.title,
-            episode: episode.number,
-            referer: source.referer,
-            mode,
-            subtitles: source.subtitles,
-            qualities: source.qualities,
-            episodes: resolvedEpisodeList.map(e => ({ id: e.id, number: e.number })),
-            isFallback: source.isFallback,
-            intro: source.intro,
-            outro: source.outro,
-            startPositionMs: Math.max(0, Math.round(startTime * 1000))
-          });
+          await ExoPlayerPlugin.play(nativePlayOptions(anime, episode, mode, source, resolvedEpisodeList, startTime));
+          // Resolve the following episode now, while this WebView is
+          // certainly active, and hand it to the player (see prefetchNext).
+          if (!source.isFallback) prefetchNext(anime, episode, mode, resolvedEpisodeList, requestId);
         } catch (e) {
           console.warn("[App] ExoPlayer plugin call failed, falling back to Web player:", e);
           setIsPlaying(true);
@@ -335,25 +404,16 @@ export const App: React.FC = () => {
     }
   };
 
-  // Resume from continue watching
-  const handleResumeEpisode = (historyItem: WatchHistoryItem) => {
-    const matchedAnime = FEATURED_ANIME.find(a => a.id === historyItem.animeId) || {
+  // Continue Watching / Library history: open the title page (with its
+  // Resume button, episode list, etc.) rather than starting playback.
+  const handleOpenFromHistory = (historyItem: WatchHistoryItem) => {
+    const anime = FEATURED_ANIME.find(a => a.id === historyItem.animeId) || {
       id: historyItem.animeId,
       title: historyItem.animeTitle,
       poster: historyItem.poster,
       type: 'TV'
     };
-
-    const resumeEpisode: EpisodeItem = {
-      id: historyItem.episodeId,
-      number: historyItem.episodeNumber,
-      title: `Episode ${historyItem.episodeNumber}`
-    };
-
-    // Resuming a finished episode used to drop the viewer straight into its
-    // end credits (and the next-episode countdown) - start it over instead.
-    const startAt = isEpisodeFinished(historyItem) ? 0 : historyItem.currentTime;
-    handlePlayEpisode(matchedAnime, resumeEpisode, historyItem.mode, startAt);
+    pushAnime(anime);
   };
 
   // Progress handler bound to one committed session: the player captures it
@@ -478,7 +538,7 @@ export const App: React.FC = () => {
         ) : currentTab === 'home' ? (
           <HomeScreen
             onSelectAnime={pushAnime}
-            onResumeEpisode={handleResumeEpisode}
+            onResumeEpisode={handleOpenFromHistory}
             onOpenSearch={() => switchTab('search')}
             onSelectGenre={openGenre}
             paused={isPlaying}
@@ -491,7 +551,7 @@ export const App: React.FC = () => {
           />
         ) : currentTab === 'library' ? (
           <HistoryScreen
-            onResumeEpisode={handleResumeEpisode}
+            onResumeEpisode={handleOpenFromHistory}
             onSelectAnime={pushAnime}
           />
         ) : (
@@ -528,7 +588,7 @@ export const App: React.FC = () => {
           hasNextEpisode={hasNextEpisode}
           episodeList={episodeList}
           onSelectEpisode={(ep) => handlePlayEpisode(nowPlaying.anime, ep, playingMode, 0)}
-          onSwitchMode={(newMode) => handlePlayEpisode(nowPlaying.anime, nowPlaying.episode, newMode, 0)}
+          onSwitchMode={(newMode, positionSec) => handlePlayEpisode(nowPlaying.anime, nowPlaying.episode, newMode, positionSec)}
           onProgressUpdate={handleProgressUpdate}
         />
         </Suspense>
