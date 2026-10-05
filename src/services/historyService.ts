@@ -65,17 +65,28 @@ function notifyLibraryChanged(): void {
   });
 }
 
-function parseList<T>(value: string | null): T[] {
+function parseList<T>(value: string | null, isValid: (item: any) => boolean): T[] {
   if (!value) return [];
   try {
     const parsed = JSON.parse(value);
-    return Array.isArray(parsed) ? parsed : [];
+    // Entries that don't have the expected shape are dropped one by one
+    // rather than crashing whichever screen renders them.
+    return Array.isArray(parsed) ? parsed.filter(isValid) : [];
   } catch {
     // Corrupt entry (e.g. an interrupted write) - start over rather than
     // throwing on every read and bricking the Library screen.
     return [];
   }
 }
+
+// Real episode ids are numeric. Older builds saved "<slug>-ep-N" ids for
+// made-up placeholder episodes (they only ever played a demo clip), which
+// can't be resumed - those entries are dropped.
+const isHistoryItem = (h: any): boolean =>
+  !!h && typeof h.animeId === 'string' && typeof h.episodeId === 'string' &&
+  /^\d+$/.test(h.episodeId) && typeof h.currentTime === 'number' && isFinite(h.currentTime);
+
+const isAnimeItem = (a: any): boolean => !!a && typeof a.id === 'string' && typeof a.title === 'string';
 
 // Progress ticks are coalesced: while a write is in flight only the newest
 // pending tick is kept, instead of queueing one full rewrite per second.
@@ -108,7 +119,7 @@ export function saveWatchProgress(item: WatchHistoryItem): Promise<void> {
 export async function getWatchHistory(): Promise<WatchHistoryItem[]> {
   try {
     const { value } = await Preferences.get({ key: HISTORY_KEY });
-    return parseList<WatchHistoryItem>(value);
+    return parseList<WatchHistoryItem>(value, isHistoryItem);
   } catch (err) {
     console.error("Failed to load history:", err);
   }
@@ -158,7 +169,7 @@ export function toggleBookmark(anime: AnimeItem): Promise<boolean> {
 export async function getBookmarks(): Promise<AnimeItem[]> {
   try {
     const { value } = await Preferences.get({ key: BOOKMARKS_KEY });
-    return parseList<AnimeItem>(value);
+    return parseList<AnimeItem>(value, isAnimeItem);
   } catch {
     return [];
   }

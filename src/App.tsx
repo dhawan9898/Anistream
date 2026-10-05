@@ -14,10 +14,10 @@ import { ConfirmModal } from './components/ConfirmModal';
 import {
   getEpisodeStream,
   getEpisodes,
+  SourceUnavailableError,
   type AnimeItem,
   type EpisodeItem,
-  type StreamSource,
-  FEATURED_ANIME
+  type StreamSource
 } from './core/aniCliCore';
 import { saveWatchProgress, getUserPreferences, type WatchHistoryItem } from './services/historyService';
 import { getTheme, getStoredThemeSync, setTheme as persistTheme, type ThemeMode } from './services/themeService';
@@ -347,7 +347,12 @@ export const App: React.FC = () => {
     // native "Episodes" button.
     const needsEpisodeList = loadedEpisodeListAnimeId.current !== anime.id;
     const episodeListPromise = needsEpisodeList
-      ? getEpisodes(anime.id || anime.title).then(eps => [...eps].sort((a, b) => parseFloat(a.number) - parseFloat(b.number)))
+      // The list only powers next/episode picker - if it fails, still play
+      // the episode that was asked for (and retry the list next time).
+      ? getEpisodes(anime.id || anime.title).catch(err => {
+          console.warn('[App] episode list unavailable, playing without it:', err);
+          return null;
+        })
       : Promise.resolve(episodeListRef.current);
 
     try {
@@ -359,9 +364,10 @@ export const App: React.FC = () => {
       // The user picked something else meanwhile, or closed the player.
       if (requestId !== playRequestRef.current) return;
 
+      const episodesForPlayer = resolvedEpisodeList ?? [];
       if (needsEpisodeList) {
-        setEpisodeList(resolvedEpisodeList);
-        loadedEpisodeListAnimeId.current = anime.id;
+        setEpisodeList(episodesForPlayer);
+        loadedEpisodeListAnimeId.current = resolvedEpisodeList ? anime.id : null;
       }
 
       // Apply the "Default Quality" preference when the stream actually
@@ -379,10 +385,10 @@ export const App: React.FC = () => {
       if (isNative) {
         try {
           console.log("[App] Launching Android Native ExoPlayer...");
-          await ExoPlayerPlugin.play(nativePlayOptions(anime, episode, mode, source, resolvedEpisodeList, startTime));
+          await ExoPlayerPlugin.play(nativePlayOptions(anime, episode, mode, source, episodesForPlayer, startTime));
           // Resolve the following episode now, while this WebView is
           // certainly active, and hand it to the player (see prefetchNext).
-          if (!source.isFallback) prefetchNext(anime, episode, mode, resolvedEpisodeList, requestId);
+          if (!source.isFallback) prefetchNext(anime, episode, mode, episodesForPlayer, requestId);
         } catch (e) {
           console.warn("[App] ExoPlayer plugin call failed, falling back to Web player:", e);
           setIsPlaying(true);
@@ -393,7 +399,9 @@ export const App: React.FC = () => {
     } catch (err) {
       console.error("Failed to load stream:", err);
       if (requestId !== playRequestRef.current) return;
-      const message = "Could not load this episode. Please try another episode or server.";
+      const message = err instanceof SourceUnavailableError
+        ? "This episode isn't available from any server right now. Try again in a bit, or switch Sub/Dub."
+        : "Couldn't load this episode - check your connection and try again.";
       if (isNative) {
         ExoPlayerPlugin.fail({ message }).catch(() => setStreamErrorMessage(message));
       } else {
@@ -407,7 +415,7 @@ export const App: React.FC = () => {
   // Continue Watching / Library history: open the title page (with its
   // Resume button, episode list, etc.) rather than starting playback.
   const handleOpenFromHistory = (historyItem: WatchHistoryItem) => {
-    const anime = FEATURED_ANIME.find(a => a.id === historyItem.animeId) || {
+    const anime: AnimeItem = {
       id: historyItem.animeId,
       title: historyItem.animeTitle,
       poster: historyItem.poster,

@@ -25,6 +25,7 @@ import android.widget.SeekBar;
 import android.widget.TextView;
 
 import androidx.appcompat.app.AppCompatActivity;
+import androidx.media3.common.AudioAttributes;
 import androidx.media3.common.C;
 import androidx.media3.common.Format;
 import androidx.media3.common.MediaItem;
@@ -38,6 +39,7 @@ import androidx.media3.datasource.HttpDataSource;
 import androidx.media3.exoplayer.DefaultLoadControl;
 import androidx.media3.exoplayer.ExoPlayer;
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory;
+import androidx.media3.exoplayer.upstream.DefaultLoadErrorHandlingPolicy;
 import androidx.media3.ui.PlayerView;
 
 import org.json.JSONArray;
@@ -69,6 +71,13 @@ public class ExoPlayerActivity extends AppCompatActivity {
     private static final int MAX_BUFFER_MS = 60_000;
     private static final int BUFFER_FOR_PLAYBACK_MS = 2_500;
     private static final int BUFFER_FOR_PLAYBACK_AFTER_REBUFFER_MS = 5_000;
+    // A stalled CDN connection is abandoned after this long and the load
+    // retried (was 45 s - the player sat "buffering" that whole time).
+    private static final int CONNECT_TIMEOUT_MS = 8_000;
+    private static final int READ_TIMEOUT_MS = 12_000;
+    // Retries per playlist/segment load before it becomes a player error
+    // (ExoPlayer's default is 3) - these CDNs drop requests now and then.
+    private static final int LOAD_RETRY_COUNT = 6;
 
     private PlayerView playerView;
     private ExoPlayer player;
@@ -1411,8 +1420,8 @@ public class ExoPlayerActivity extends AppCompatActivity {
         DefaultHttpDataSource.Factory dataSourceFactory = new DefaultHttpDataSource.Factory()
                 .setDefaultRequestProperties(headers)
                 .setAllowCrossProtocolRedirects(true)
-                .setConnectTimeoutMs(15000)
-                .setReadTimeoutMs(45000);
+                .setConnectTimeoutMs(CONNECT_TIMEOUT_MS)
+                .setReadTimeoutMs(READ_TIMEOUT_MS);
 
         Uri uri = Uri.parse(videoUrl);
         MediaItem.Builder mediaItemBuilder = new MediaItem.Builder().setUri(uri);
@@ -1439,7 +1448,8 @@ public class ExoPlayerActivity extends AppCompatActivity {
         }
 
         MediaItem mediaItem = mediaItemBuilder.build();
-        DefaultMediaSourceFactory mediaSourceFactory = new DefaultMediaSourceFactory(dataSourceFactory);
+        DefaultMediaSourceFactory mediaSourceFactory = new DefaultMediaSourceFactory(dataSourceFactory)
+                .setLoadErrorHandlingPolicy(new DefaultLoadErrorHandlingPolicy(LOAD_RETRY_COUNT));
 
         // Bigger read-ahead buffer than ExoPlayer's defaults - fewer visible
         // stalls on the flaky/proxied CDNs this app streams from, at the
@@ -1448,17 +1458,25 @@ public class ExoPlayerActivity extends AppCompatActivity {
                 .setBufferDurationsMs(MIN_BUFFER_MS, MAX_BUFFER_MS, BUFFER_FOR_PLAYBACK_MS, BUFFER_FOR_PLAYBACK_AFTER_REBUFFER_MS)
                 .build();
 
+        // Media audio focus (pause for calls, duck for notifications) and
+        // pause when headphones are unplugged instead of playing out loud.
+        AudioAttributes audioAttributes = new AudioAttributes.Builder()
+                .setUsage(C.USAGE_MEDIA)
+                .setContentType(C.AUDIO_CONTENT_TYPE_MOVIE)
+                .build();
+
         player = new ExoPlayer.Builder(this)
                 .setMediaSourceFactory(mediaSourceFactory)
                 .setLoadControl(loadControl)
+                .setAudioAttributes(audioAttributes, true)
+                .setHandleAudioBecomingNoisy(true)
                 .build();
         playerView.setPlayer(player);
         player.setPlaybackSpeed(playbackSpeed);
-        player.setMediaItem(mediaItem);
+        // Start position goes in with the item: prepare() then seekTo()
+        // downloaded the opening segments first and threw them away.
+        player.setMediaItem(mediaItem, Math.max(0L, startPositionMs));
         player.prepare();
-        if (startPositionMs > 0) {
-            player.seekTo(startPositionMs);
-        }
         player.setPlayWhenReady(playWhenReady);
 
         player.addListener(new Player.Listener() {

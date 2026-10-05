@@ -204,30 +204,22 @@ export async function searchAnimeLive(query: string): Promise<AnimeItem[]> {
   return parseSearchResults(html);
 }
 
-// Search anime
+// Search anime. Throws on network failure - callers show an error with a
+// retry instead of placeholder results.
 export async function searchAnime(query: string): Promise<AnimeItem[]> {
-  if (!query.trim()) return FEATURED_ANIME;
-
-  try {
-    return await searchAnimeLive(query);
-  } catch (err) {
-    console.warn("Live search failed, returning curated results:", err);
-    return filterMockAnime(query);
-  }
+  if (!query.trim()) return [];
+  return searchAnimeLive(query);
 }
 
 // Trending/homepage anime (same card markup as search results).
 // The root "/" is just a landing page - /home is the actual suggestions feed.
+// Throws when the feed can't be loaded so Home can offer a retry - never
+// substitutes placeholder titles that don't exist on the site.
 export async function getTrendingAnime(): Promise<AnimeItem[]> {
-  try {
-    // Same cached request the genre menu (catalogService.getGenres) uses.
-    const html = await fetchSiteHtml('/home');
-    const results = parseSearchResults(html);
-    return results.length > 0 ? results : FEATURED_ANIME;
-  } catch (err) {
-    console.warn("Live homepage fetch failed, using curated fallback:", err);
-    return FEATURED_ANIME;
-  }
+  // Same cached request the genre menu (catalogService.getGenres) uses.
+  const results = parseSearchResults(await fetchSiteHtml('/home'));
+  if (results.length === 0) throw new SourceUnavailableError('The home feed came back empty');
+  return results;
 }
 
 // Parse HTML search results matching ani-cli regex patterns
@@ -311,62 +303,55 @@ export function sitePathOf(href: string): string {
 
 // Fetch episodes list. Cached per anime: the detail page and the player
 // both need it, and re-opening a title shouldn't refetch it.
+// Throws when the list can't be loaded (failures aren't cached, so the
+// next call retries) - it never invents episodes.
 export function getEpisodes(animeId: string): Promise<EpisodeItem[]> {
-  return cached(`episodes:${animeId}`, EPISODE_LIST_TTL_MS, () => loadEpisodes(animeId))
-    .then(list => {
-      // A generated placeholder list means the real fetch failed - don't
-      // keep serving it from cache; let the next visit try again.
-      if (list.length > 0 && list[0].id.includes('-ep-')) responseCache.delete(`episodes:${animeId}`);
-      return list;
-    });
+  return cached(`episodes:${animeId}`, EPISODE_LIST_TTL_MS, () => loadEpisodes(animeId));
 }
 
 async function loadEpisodes(animeId: string): Promise<EpisodeItem[]> {
-  try {
-    let numericId = animeId.includes("-") ? animeId.split("-").pop() : animeId;
-    let endpoint = `${getApiBase()}/api/theme/episode/list/${numericId}`;
-    let res = await fetchWithRetry(endpoint, { headers: UPSTREAM_HEADERS });
+  let numericId = animeId.includes("-") ? animeId.split("-").pop() : animeId;
+  let endpoint = `${getApiBase()}/api/theme/episode/list/${numericId}`;
+  let res = await fetchWithRetry(endpoint, { headers: UPSTREAM_HEADERS });
 
-    if (!res.ok) {
-      const cleanTitle = animeId.replace(/-[0-9]+$/, '').replace(/-/g, ' ');
-      if (cleanTitle) {
-        const found = await searchAnime(cleanTitle);
-        if (found.length > 0 && found[0].id) {
-          const newNumericId = found[0].id.split("-").pop();
-          if (newNumericId && newNumericId !== numericId) {
-            endpoint = `${getApiBase()}/api/theme/episode/list/${newNumericId}`;
-            res = await fetchTimed(endpoint, { headers: UPSTREAM_HEADERS });
-          }
-        }
+  if (!res.ok) {
+    // The site may have re-numbered the title: find it again by name, but
+    // only accept the very same slug - never a different show that
+    // happens to be the first search result.
+    const slugBase = animeId.replace(/-[0-9]+$/, '');
+    if (slugBase) {
+      const found = await searchAnimeLive(slugBase.replace(/-/g, ' '));
+      const same = found.find(r => r.id.replace(/-[0-9]+$/, '') === slugBase);
+      const newNumericId = same?.id.split("-").pop();
+      if (newNumericId && /^\d+$/.test(newNumericId) && newNumericId !== numericId) {
+        endpoint = `${getApiBase()}/api/theme/episode/list/${newNumericId}`;
+        res = await fetchTimed(endpoint, { headers: UPSTREAM_HEADERS });
       }
     }
-
-    if (!res.ok) {
-      throw new Error(`Episodes fetch failed with HTTP ${res.status}`);
-    }
-
-    const data = await res.json();
-    if (!data.html) return generateFallbackEpisodes(animeId);
-
-    const parser = new DOMParser();
-    const doc = parser.parseFromString(data.html, "text/html");
-    const epItems = doc.querySelectorAll(".ep-item");
-    const episodes: EpisodeItem[] = [];
-
-    epItems.forEach((ep) => {
-      const id = ep.getAttribute("data-id") || "";
-      const number = ep.getAttribute("data-number") || "";
-      const title = ep.getAttribute("title") || `Episode ${number}`;
-      if (id && number) {
-        episodes.push({ id, number, title });
-      }
-    });
-
-    return episodes.length > 0 ? episodes : generateFallbackEpisodes(animeId);
-  } catch (err) {
-    console.warn("Episode list fetch failed, generating fallback episodes:", err);
-    return generateFallbackEpisodes(animeId);
   }
+
+  if (!res.ok) {
+    throw new Error(`Episodes fetch failed with HTTP ${res.status}`);
+  }
+
+  const data = await res.json();
+  if (!data.html) return [];
+
+  const parser = new DOMParser();
+  const doc = parser.parseFromString(data.html, "text/html");
+  const epItems = doc.querySelectorAll(".ep-item");
+  const episodes: EpisodeItem[] = [];
+
+  epItems.forEach((ep) => {
+    const id = ep.getAttribute("data-id") || "";
+    const number = ep.getAttribute("data-number") || "";
+    const title = ep.getAttribute("title") || `Episode ${number}`;
+    if (id && number) {
+      episodes.push({ id, number, title });
+    }
+  });
+
+  return episodes.sort((a, b) => parseFloat(a.number) - parseFloat(b.number));
 }
 
 export async function decryptToken(enc: string): Promise<string> {
@@ -473,40 +458,82 @@ export async function getEpisodeStream(
       if (hashes.length === 0) {
         console.warn("[aniCliCore] Direct scrape: no server entry found in servers HTML for mode", mode);
       }
-      // Try every server of the requested audio type in the site's own
-      // order: one dead mirror (403, removed video, broken embed) used to
-      // drop straight to the demo clip even when the next server was fine.
-      for (const hash of hashes) {
-        try {
-          const source = await resolveEmbed(hash, targetEpisodeId, mode);
-          if (source) return source;
-        } catch (err) {
-          console.warn(`[aniCliCore] episodeId=${targetEpisodeId} server failed, trying next:`, err);
-        }
-      }
+      // Every server of the requested audio type, hedged: see
+      // resolveFirstServer.
+      const source = await resolveFirstServer(hashes, targetEpisodeId, mode);
+      if (source) return source;
     } else {
       console.warn("[aniCliCore] Direct scrape: servers endpoint response had no 'html' field", data);
     }
   } catch (err) {
-    console.warn("[aniCliCore] Direct scrape threw - falling back to demo stream:", err);
+    console.warn("[aniCliCore] Direct scrape threw:", err);
   }
 
-  // Every real source failed.
-  console.error(
-    `[aniCliCore] All real stream sources failed for "${animeTitleOrId}" ep ${episodeIdOrNumber} (${mode}) - ` +
-    `showing a demo stream instead of the real episode. See warnings above for which step failed.`
-  );
-  return {
-    streamUrl: "https://storage.googleapis.com/cloud-samples-data/video/animals.mp4",
-    quality: "Demo",
-    referer: "https://hianime.at/",
-    subtitles: [],
-    masterUrl: "https://storage.googleapis.com/cloud-samples-data/video/animals.mp4",
-    qualities: [
-      { quality: "Demo", url: "https://storage.googleapis.com/cloud-samples-data/video/animals.mp4" }
-    ],
-    isFallback: true
-  };
+  // Every real source failed. Never substitute other content (the old demo
+  // clip) - the caller shows an error with Retry instead.
+  console.error(`[aniCliCore] All stream sources failed for "${animeTitleOrId}" ep ${episodeIdOrNumber} (${mode})`);
+  throw new SourceUnavailableError(`No ${mode} server could play episode ${episodeIdOrNumber}`);
+}
+
+// Thrown when no server can serve an episode right now.
+export class SourceUnavailableError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'SourceUnavailableError';
+  }
+}
+
+// If the server being tried hasn't produced a stream after this long, the
+// next one is started alongside it.
+const HEDGE_DELAY_MS = 2500;
+
+// Resolves the first server (of `hashes`, in the site's preference order)
+// that yields a playable stream. Servers aren't tried strictly one after
+// another: a slow or hanging mirror would hold playback for its full
+// timeouts (2 x 15 s) before the next was even asked. Instead each server
+// gets a HEDGE_DELAY_MS head start, then the next starts in parallel; a
+// server that fails outright hands over immediately. A fast first server
+// behaves exactly like the sequential walk.
+export function resolveFirstServer(
+  hashes: string[],
+  episodeId: string,
+  mode: 'sub' | 'dub',
+  resolve: (hash: string, episodeId: string, mode: 'sub' | 'dub') => Promise<StreamSource | null> = resolveEmbed,
+  hedgeDelayMs = HEDGE_DELAY_MS
+): Promise<StreamSource | null> {
+  return new Promise(done => {
+    let next = 0;
+    let pending = 0;
+    let finished = false;
+    let hedgeTimer: ReturnType<typeof setTimeout> | undefined;
+
+    const finish = (source: StreamSource | null) => {
+      if (finished) return;
+      finished = true;
+      clearTimeout(hedgeTimer);
+      done(source);
+    };
+
+    const launch = () => {
+      if (finished || next >= hashes.length) return;
+      const hash = hashes[next++];
+      pending++;
+      clearTimeout(hedgeTimer);
+      hedgeTimer = setTimeout(launch, hedgeDelayMs);
+      resolve(hash, episodeId, mode)
+        .then(source => { if (source) finish(source); })
+        .catch(err => console.warn(`[aniCliCore] episodeId=${episodeId} server failed:`, err))
+        .finally(() => {
+          pending--;
+          if (finished) return;
+          if (next < hashes.length) launch();
+          else if (pending === 0) finish(null);
+        });
+    };
+
+    if (hashes.length === 0) finish(null);
+    else launch();
+  });
 }
 
 // Server hashes to try, best first: every server tagged with the requested
@@ -623,144 +650,4 @@ async function resolveEmbed(hash: string, episodeId: string, mode: 'sub' | 'dub'
     intro,
     outro
   };
-}
-
-// Fallback episode generator
-function generateFallbackEpisodes(animeId: string): EpisodeItem[] {
-  const count = animeId.includes("one-piece") ? 24 : 12;
-  const list: EpisodeItem[] = [];
-  for (let i = 1; i <= count; i++) {
-    list.push({
-      id: `${animeId}-ep-${i}`,
-      number: String(i),
-      title: `Episode ${i}`
-    });
-  }
-  return list;
-}
-
-// Curated featured & trending anime showcase
-export const FEATURED_ANIME: AnimeItem[] = [
-  {
-    id: "solo-leveling-season-2-arise-from-the-shadow-84",
-    title: "Solo Leveling: Arise from the Shadow",
-    poster: "https://images.unsplash.com/photo-1578632767115-351597cf2477?w=600&auto=format&fit=crop",
-    banner: "https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=1200&auto=format&fit=crop",
-    type: "TV",
-    subCount: 13,
-    dubCount: 13,
-    description: "Ten years ago, 'the Gate' appeared and connected the real world with the realm of magic and monsters. Jinwoo Sung transforms into humanity's greatest shadow monarch."
-  },
-  {
-    id: "jujutsu-kaisen-season-2-415",
-    title: "Jujutsu Kaisen: Shibuya Incident",
-    poster: "https://images.unsplash.com/photo-1534447677768-be436bb09401?w=600&auto=format&fit=crop",
-    banner: "https://images.unsplash.com/photo-1518709268805-4e9042af9f23?w=1200&auto=format&fit=crop",
-    type: "TV",
-    subCount: 23,
-    dubCount: 23,
-    description: "Halloween in Shibuya. A curtain suddenly falls over the district, trapping countless civilians as special grade curses execute their devastating plan."
-  },
-  {
-    id: "demon-slayer-kimetsu-no-yaiba-hashira-training-arc-430",
-    title: "Demon Slayer: Hashira Training Arc",
-    poster: "https://images.unsplash.com/photo-1563089145-599997674d42?w=600&auto=format&fit=crop",
-    banner: "https://images.unsplash.com/photo-1579783900882-c0d3dad7b119?w=1200&auto=format&fit=crop",
-    type: "TV",
-    subCount: 8,
-    dubCount: 8,
-    description: "Tanjiro visits the Stone Hashira, Himejima, who intends to prepare him for the battles to come. Training to become a Hashira is rigorous and demanding."
-  },
-  {
-    id: "one-piece-1",
-    title: "One Piece",
-    poster: "https://images.unsplash.com/photo-1607604276583-eef5d076aa5f?w=600&auto=format&fit=crop",
-    banner: "https://images.unsplash.com/photo-1509198397868-475647b2a1e5?w=1200&auto=format&fit=crop",
-    type: "TV",
-    subCount: 1120,
-    dubCount: 1080,
-    description: "Luffy and the Straw Hat Pirates embark on an epic voyage across the Grand Line in search of the legendary treasure known as One Piece."
-  },
-  {
-    id: "frieren-beyond-journeys-end-481",
-    title: "Frieren: Beyond Journey's End",
-    poster: "https://images.unsplash.com/photo-1518709268805-4e9042af9f23?w=600&auto=format&fit=crop",
-    banner: "https://images.unsplash.com/photo-1507525428034-b723cf961d3e?w=1200&auto=format&fit=crop",
-    type: "TV",
-    subCount: 28,
-    dubCount: 28,
-    description: "After defeating the Demon King, the elven mage Frieren embarks on a nostalgic quest across the continent to understand humanity and honor past friendships."
-  },
-  {
-    id: "cyberpunk-edgerunners-1048",
-    title: "Cyberpunk: Edgerunners",
-    poster: "https://images.unsplash.com/photo-1542751371-adc38448a05e?w=600&auto=format&fit=crop",
-    banner: "https://images.unsplash.com/photo-1508739773434-c26b3d09e071?w=1200&auto=format&fit=crop",
-    type: "ONA",
-    subCount: 10,
-    dubCount: 10,
-    description: "A street kid trying to survive in a technology and body modification-obsessed city of the future chooses to stay alive by becoming an edgerunner."
-  },
-  {
-    id: "naruto-shippuden-600",
-    title: "Naruto Shippuden",
-    poster: "https://images.unsplash.com/photo-1607604276583-eef5d076aa5f?w=600&auto=format&fit=crop",
-    banner: "https://images.unsplash.com/photo-1578632767115-351597cf2477?w=1200&auto=format&fit=crop",
-    type: "TV",
-    subCount: 500,
-    dubCount: 500,
-    description: "Naruto Uzumaki returns from rigorous training with Jiraiya, ready to face the mysterious Akatsuki organization and protect the Hidden Leaf Village."
-  },
-  {
-    id: "bleach-thousand-year-blood-war-1234",
-    title: "Bleach: Thousand-Year Blood War",
-    poster: "https://images.unsplash.com/photo-1534447677768-be436bb09401?w=600&auto=format&fit=crop",
-    banner: "https://images.unsplash.com/photo-1518709268805-4e9042af9f23?w=1200&auto=format&fit=crop",
-    type: "TV",
-    subCount: 26,
-    dubCount: 26,
-    description: "The peace is suddenly broken when a new warning resounds through Soul Society. Ichigo Kurosaki returns to the battlefield with his Zanpakuto."
-  },
-  {
-    id: "attack-on-titan-240",
-    title: "Attack on Titan",
-    poster: "https://images.unsplash.com/photo-1563089145-599997674d42?w=600&auto=format&fit=crop",
-    banner: "https://images.unsplash.com/photo-1579783900882-c0d3dad7b119?w=1200&auto=format&fit=crop",
-    type: "TV",
-    subCount: 30,
-    dubCount: 30,
-    description: "Eren Jaeger leads the Survey Corps beyond the walls to uncover the truth of the world and fight for freedom against overwhelming global threats."
-  },
-  {
-    id: "chainsaw-man-236",
-    title: "Chainsaw Man",
-    poster: "https://images.unsplash.com/photo-1542751371-adc38448a05e?w=600&auto=format&fit=crop",
-    banner: "https://images.unsplash.com/photo-1508739773434-c26b3d09e071?w=1200&auto=format&fit=crop",
-    type: "TV",
-    subCount: 12,
-    dubCount: 12,
-    description: "Denji is a teenage boy living with a Chainsaw Devil named Pochita. Due to the debt his father left behind, he lives a rock-bottom life while repaying his debt by harvesting devil corpses."
-  }
-];
-
-function filterMockAnime(query: string): AnimeItem[] {
-  const q = query.toLowerCase().trim();
-  const matched = FEATURED_ANIME.filter(a => 
-    a.title.toLowerCase().includes(q) || a.description?.toLowerCase().includes(q)
-  );
-  if (matched.length > 0) return matched;
-
-  // Dynamic fallback so any search query (e.g. Naruto, Bleach, etc.) returns a valid playable result
-  return [
-    {
-      id: `${q.replace(/[^a-z0-9]+/g, '-')}-streaming`,
-      title: query.charAt(0).toUpperCase() + query.slice(1),
-      poster: "https://images.unsplash.com/photo-1578632767115-351597cf2477?w=600&auto=format&fit=crop",
-      banner: "https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=1200&auto=format&fit=crop",
-      type: "TV",
-      subCount: 24,
-      dubCount: 24,
-      description: `High-definition streaming results for "${query}" powered by ani-cli core engine.`
-    }
-  ];
 }

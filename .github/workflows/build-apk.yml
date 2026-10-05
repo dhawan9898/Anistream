@@ -1,4 +1,4 @@
-name: Build AniStream v6.4 APK
+name: Build AniStream v7.1 APK
 
 on:
   push:
@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
     inputs:
       release_tag:
-        description: 'Tag to publish this build under (e.g. v6.4) - leave empty to just build, no release'
+        description: 'Tag to publish this build under (e.g. v7.1) - leave empty to just build, no release'
         required: false
         default: ''
 
@@ -45,8 +45,14 @@ jobs:
       - name: Install Dependencies
         run: npm ci
 
+      - name: Check Version
+        run: npm run check-version
+
       - name: Lint
         run: npm run lint
+
+      - name: Unit Tests
+        run: npm test
 
       - name: Build Web Production Bundle
         run: npm run build
@@ -66,26 +72,26 @@ jobs:
       - name: Package APK for Release
         run: |
           mkdir -p build-output
-          cp android/app/build/outputs/apk/release/app-release.apk build-output/AniStream-v6.4.apk
-          ls -lh build-output/AniStream-v6.4.apk
+          cp android/app/build/outputs/apk/release/app-release.apk build-output/AniStream-v7.1.apk
+          ls -lh build-output/AniStream-v7.1.apk
 
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: AniStream-v6.4-APK
-          path: build-output/AniStream-v6.4.apk
+          name: AniStream-v7.1-APK
+          path: build-output/AniStream-v7.1.apk
           retention-days: 30
 
       # R8 mapping - needed to de-obfuscate stack traces from this build.
       - name: Upload R8 Mapping
         uses: actions/upload-artifact@v4
         with:
-          name: AniStream-v6.4-mapping
+          name: AniStream-v7.1-mapping
           path: android/app/build/outputs/mapping/release/mapping.txt
           retention-days: 90
           if-no-files-found: warn
 
-      # A manual run republishing an existing tag (e.g. rebuilding v6.4)
+      # A manual run republishing an existing tag (e.g. rebuilding v7.1)
       # replaces that release and its tag, so the tag always points at the
       # commit this APK was built from. Tag pushes are never touched.
       - name: Replace Existing Release (manual runs only)
@@ -103,39 +109,32 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch' && inputs.release_tag != '')
         uses: softprops/action-gh-release@v2
         with:
-          files: build-output/AniStream-v6.4.apk
+          files: build-output/AniStream-v7.1.apk
           tag_name: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || inputs.release_tag }}
           # Without this a new tag is created on the default branch, not on
           # the commit that was actually built.
           target_commitish: ${{ github.sha }}
           name: AniStream ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || inputs.release_tag }} Release
           body: |
-            ## AniStream v6.4 - Android Anime Streaming App (Powered by ani-cli)
+            ## AniStream v7.1 - Android Anime Streaming App (Powered by ani-cli)
 
-            ### What's new in v6.4:
+            v7.1 brings back everything from v6.4 that v7.0 accidentally left out, fixes updating, and makes playback start faster and scrolling smoother.
 
-            - **Next Episode works reliably**: the next episode's stream is prepared while the current one plays, and the player starts it by itself. No more getting stuck on the loading screen after a full episode.
-            - **Switching SUB/DUB continues where you were** instead of restarting the episode.
-            - **Dub starts with subtitles off**: the captions a dub server provides are timed to the Japanese audio and never matched the English track (you can still turn them on).
-            - **Cleaner Next Episode button**: solid white with a thin red countdown bar.
-            - **History opens the title page** (Continue Watching and Library) instead of starting playback right away.
+            ### ⚠️ About v7.0
+            v7.0 was built without the v6.x changes and carried a lower internal version number than v6.4, so phones running v6.4 refused to install it as an update. **v7.1 installs over v6.4 and v7.0 directly - no uninstall needed, your watch history and My List are kept.**
 
-            ### v6.3:
+            ### 🚀 What's new in v7.1:
 
-            - Back gesture steps back one screen; screen stays on while playing; 404s retry once automatically; Popular Anime row at the top of Home.
-
-            ### From v6.0:
-
-            - **Server fallback**: when the first mirror for an episode is dead, the remaining servers for the same audio (SUB/DUB) are tried before anything falls back to the demo clip.
-            - **Self-healing playback**: dropped connections and CDN 5xx errors are retried automatically with backoff (native ExoPlayer and web player), and **Retry** resumes where playback stopped instead of restarting at 0:00.
-            - **Accurate Continue Watching**: progress can no longer be saved under the wrong episode while the next one loads, the demo clip never overwrites your resume point, and Home / title page / Library update live after you watch. Finished episodes offer the next episode instead of resuming into the credits.
-            - **Lighter & smoother**: the startup bundle is ~65% smaller (the web player loads on demand), progress writes are throttled, player timers/listeners are cleaned up on close, and site pages/episode lists are cached so the source isn't hammered.
-            - **Fixes**: correct Skip Intro timing after switching episodes, no stray "0" badges, a real error state (with Retry) when search can't reach the server, subtitle menu no longer lists the thumbnail track, fullscreen state stays in sync.
-            - Plus everything from v5.x: tablet/landscape layouts, request timeouts, debounced search, serialized history writes.
-
-            - **Smaller, optimized APK**: now a minified (R8) release build with unused code and resources stripped.
+            - **All v6.4 features are back**: history opens the title page, the next episode is prepared ahead and starts by itself, SUB/DUB switching keeps your position, the back gesture steps back one screen, and the Next Episode button matches Skip Outro.
+            - **Swipe through Trending**: the featured banner at the top of Home can now be swiped, with page dots, and still auto-advances (it pauses while you're touching it). Its **My List** button now actually adds the title.
+            - **Faster playback start**: if a server is slow to respond, the next one is tried in parallel after 2.5 s instead of waiting up to 30 s; a resumed episode no longer downloads its opening first; a stalled CDN connection is retried after 12 s instead of 45 s.
+            - **Better "More Like This"**: suggestions come from community recommendations for the exact title (sequels borrow the main series' recommendations), instead of falling back to generic genre lists.
+            - **Smoother scrolling**: list cards and episode tiles are flat surfaces instead of live blurred glass, which was re-rendered on every scroll frame.
+            - **Better player behaviour**: pauses for calls and when headphones are unplugged; segment downloads are retried more patiently on flaky connections.
+            - **Honest errors**: when the site can't be reached, Home and the episode list show a "Try again" button - no more placeholder titles, invented episode lists or demo video.
+            - **Safer library**: damaged or leftover placeholder entries in watch history are skipped instead of breaking a screen.
 
             ### 📦 Download:
-            Download **`AniStream-v6.4.apk`** below and install or update on any Android device running Android 8.0 or later!
+            Download **`AniStream-v7.1.apk`** below and install or update on any Android device running Android 8.0 or later - it updates v6.x and v7.0 in place.
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

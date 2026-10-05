@@ -1,10 +1,12 @@
 import React, { useState, useEffect } from 'react';
-import { Play, Flame, Clock, ChevronRight, ChevronDown, Bookmark, Search as SearchIcon } from 'lucide-react';
+import { Play, Flame, Clock, ChevronRight, ChevronDown, Search as SearchIcon } from 'lucide-react';
 import { getTrendingAnime, type AnimeItem } from '../core/aniCliCore';
 import { getWatchHistory, subscribeLibraryChanges, type WatchHistoryItem } from '../services/historyService';
 import { getAnimeByGenre, getGenres, type Genre } from '../services/catalogService';
 import { PosterCard } from '../components/PosterCard';
 import { GenrePicker } from '../components/GenrePicker';
+import { HeroCarousel } from '../components/HeroCarousel';
+import { ErrorState } from '../components/ErrorState';
 
 // Genres that get their own rail on the home screen, Netflix-style.
 const HOME_ROW_GENRES = ['action', 'romance', 'comedy', 'fantasy', 'isekai'];
@@ -79,34 +81,35 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
     });
   }, []);
 
-  const [featuredIndex, setFeaturedIndex] = useState<number>(0);
   const [history, setHistory] = useState<WatchHistoryItem[]>([]);
   const [trending, setTrending] = useState<AnimeItem[]>([]);
   const [loadingTrending, setLoadingTrending] = useState<boolean>(true);
+  const [trendingError, setTrendingError] = useState<boolean>(false);
+  const [trendingAttempt, setTrendingAttempt] = useState<number>(0);
 
   useEffect(() => {
     let cancelled = false;
-    getTrendingAnime().then(list => {
-      if (cancelled) return;
-      setTrending(list);
-      setFeaturedIndex(0);
-      setLoadingTrending(false);
-    });
+    getTrendingAnime()
+      .then(list => {
+        if (cancelled) return;
+        setTrending(list);
+        setTrendingError(false);
+      })
+      .catch(err => {
+        console.warn('[HomeScreen] trending feed failed:', err);
+        if (!cancelled) setTrendingError(true);
+      })
+      .finally(() => {
+        if (!cancelled) setLoadingTrending(false);
+      });
     return () => { cancelled = true; };
-  }, []);
+  }, [trendingAttempt]);
 
-  // Auto-cycle hero banner every 6 seconds - but not while the app is in
-  // the background or a player covers the screen (this screen stays
-  // mounted under the web player, and re-rendering the whole home feed
-  // every 6s there costs frames during playback).
-  useEffect(() => {
-    if (trending.length < 2 || paused) return;
-    const timer = setInterval(() => {
-      if (document.hidden) return;
-      setFeaturedIndex(prev => (prev + 1) % Math.min(trending.length, 8));
-    }, 6000);
-    return () => clearInterval(timer);
-  }, [trending, paused]);
+  const retryTrending = () => {
+    setTrendingError(false);
+    setLoadingTrending(true);
+    setTrendingAttempt(n => n + 1);
+  };
 
   // Continue Watching stays current: it follows library changes while this
   // screen is visible, and reloads once when the player covering it closes
@@ -124,8 +127,6 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
     };
   }, [paused]);
 
-  const heroAnime = trending[featuredIndex] || trending[0];
-
   return (
     <div style={{ flex: 1, overflowY: 'auto', paddingBottom: '90px', position: 'relative' }}>
       {/* Top Mobile Bar */}
@@ -134,8 +135,9 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
           position: 'sticky',
           top: 0,
           zIndex: 40,
+          // Gradient only, no blur: a blurred sticky bar re-renders the whole
+          // feed under it on every scroll frame.
           background: 'linear-gradient(180deg, rgba(8,9,14,0.92) 0%, rgba(8,9,14,0.7) 70%, transparent 100%)',
-          backdropFilter: 'blur(12px)',
           padding: 'calc(var(--safe-top) + 12px) 20px 12px 20px',
           display: 'flex',
           alignItems: 'center',
@@ -202,128 +204,16 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
         </div>
       </div>
 
-      {/* Cinematic Hero Carousel Banner */}
-      {!heroAnime ? (
-        <div
-          className="skeleton"
-          style={{ width: '100%', height: '420px', marginTop: '-60px' }}
-        />
-      ) : (
-      <div style={{ position: 'relative', width: '100%', minHeight: '380px', marginTop: '-60px' }}>
-        <img
-          src={heroAnime.banner || heroAnime.poster}
-          alt={heroAnime.title}
-          style={{
-            width: '100%',
-            height: '420px',
-            objectFit: 'cover',
-            filter: 'brightness(0.75)'
-          }}
-        />
-        {/* Soft Vignette Gradients */}
-        <div style={{
-          position: 'absolute',
-          inset: 0,
-          background: 'linear-gradient(180deg, rgba(8,9,14,0.3) 0%, rgba(8,9,14,0.6) 50%, var(--bg-main) 100%)',
-          display: 'flex',
-          flexDirection: 'column',
-          justifyContent: 'flex-end',
-          padding: '24px 20px'
-        }}>
-          {/* Tag Badges */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
-            <span style={{
-              background: 'var(--accent-gradient)',
-              color: '#fff',
-              fontSize: '11px',
-              fontWeight: 800,
-              padding: '3px 9px',
-              borderRadius: '6px',
-              textTransform: 'uppercase',
-              letterSpacing: '0.5px'
-            }}>
-              #1 Trending
-            </span>
-            <span className="glass-pill-dark" style={{ fontSize: '11px', fontWeight: 600, padding: '3px 8px', borderRadius: '6px', color: '#cbd5e1' }}>
-              {heroAnime.type || 'TV'}
-            </span>
-            {!!heroAnime.subCount && (
-              <span className="glass-pill-dark" style={{ fontSize: '11px', fontWeight: 600, padding: '3px 8px', borderRadius: '6px', color: '#818cf8' }}>
-                SUB: {heroAnime.subCount}
-              </span>
-            )}
-          </div>
-
-          <h1 style={{
-            fontSize: '26px',
-            fontWeight: 800,
-            lineHeight: '1.2',
-            color: '#fff',
-            marginBottom: '8px',
-            textShadow: '0 2px 10px rgba(0,0,0,0.8)'
-          }}>
-            {heroAnime.title}
-          </h1>
-
-          {heroAnime.description && (
-            <p style={{
-              fontSize: '13px',
-              color: '#cbd5e1',
-              lineHeight: '1.4',
-              display: '-webkit-box',
-              WebkitLineClamp: 2,
-              WebkitBoxOrient: 'vertical',
-              overflow: 'hidden',
-              marginBottom: '16px',
-              maxWidth: '90%'
-            }}>
-              {heroAnime.description}
-            </p>
-          )}
-
-          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-            <button
-              onClick={() => onSelectAnime(heroAnime)}
-              className="interactive"
-              style={{
-                flex: 1,
-                padding: '12px 20px',
-                borderRadius: 'var(--radius-md)',
-                background: 'var(--accent-gradient)',
-                border: 'none',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                gap: '8px',
-                color: '#fff',
-                fontSize: '15px',
-                fontWeight: 700,
-                boxShadow: 'var(--shadow-glow)'
-              }}
-            >
-              <Play size={18} fill="#fff" />
-              <span>Watch Now</span>
-            </button>
-
-            <button
-              onClick={() => onSelectAnime(heroAnime)}
-              className="interactive glass-pill-dark"
-              style={{
-                width: '46px',
-                height: '46px',
-                borderRadius: 'var(--radius-md)',
-                border: 'none',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                color: '#fff'
-              }}
-            >
-              <Bookmark size={20} />
-            </button>
-          </div>
+      {/* Featured titles - swipeable, auto-advancing (Netflix hero) */}
+      {trendingError ? (
+        <div style={{ paddingTop: 'calc(var(--safe-top) + 40px)' }}>
+          <ErrorState
+            message="Couldn't reach the streaming site. Check your connection and try again."
+            onRetry={retryTrending}
+          />
         </div>
-      </div>
+      ) : (
+        <HeroCarousel items={trending} onSelect={onSelectAnime} paused={paused} />
       )}
 
       {/* Continue Watching Section */}
@@ -334,7 +224,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
               <Clock size={18} color="var(--accent-primary)" />
               <h2 style={{ fontSize: '17px', fontWeight: 700, color: 'var(--text-primary)' }}>Continue Watching</h2>
             </div>
-            <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>{history.length} items</span>
+            <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>{history.length} {history.length === 1 ? 'title' : 'titles'}</span>
           </div>
 
           <div style={{

@@ -1,6 +1,6 @@
 # AniStream — Android Anime Streaming App (powered by `ani-cli`)
 
-[![Version](https://img.shields.io/badge/Version-v6.4-indigo?style=for-the-badge&logo=android)](https://github.com/dhawan9898/Anistream/releases)
+[![Version](https://img.shields.io/badge/Version-v7.1-indigo?style=for-the-badge&logo=android)](https://github.com/dhawan9898/Anistream/releases)
 [![Android](https://img.shields.io/badge/Android-8.0%2B-green?style=for-the-badge&logo=android)](https://github.com/dhawan9898/Anistream/releases)
 [![License](https://img.shields.io/badge/License-GPLv3-blue?style=for-the-badge)](https://www.gnu.org/licenses/gpl-3.0)
 
@@ -30,8 +30,8 @@ steps as [`ani-cli`](https://github.com/pystardust/ani-cli).
 
 ## 1. Install the APK
 
-1. Open the **[Releases page](https://github.com/dhawan9898/Anistream/releases)** and pick the latest release (**v6.4**).
-2. Under **Assets**, download **`AniStream-v6.4.apk`**.
+1. Open the **[Releases page](https://github.com/dhawan9898/Anistream/releases)** and pick the latest release (**v7.1**).
+2. Under **Assets**, download **`AniStream-v7.1.apk`**.
 3. Open the file on your phone. If Android asks, enable **Install unknown apps** for your browser or file manager.
 4. Tap **Install**. If you already have AniStream, the new version installs over it and keeps your history and My List, because every release is signed with the same key.
 
@@ -159,9 +159,9 @@ Use the browser's device toolbar (Ctrl+Shift+M in Chrome) to preview phone and t
 
 | Trigger | Result |
 |---------|--------|
-| Push to `main` / `master` | APK uploaded as a workflow artifact (`AniStream-v6.4-APK`, kept 30 days), plus the R8 mapping (`AniStream-v6.4-mapping`) |
-| Push a tag `v*` (e.g. `git tag v6.4 && git push origin v6.4`) | Artifact plus a GitHub Release under that tag with the APK attached |
-| **Actions ▸ Build AniStream v6.4 APK ▸ Run workflow** | Builds any branch. Fill in `release_tag` (e.g. `v6.4`) to also publish a release. If that release already exists, it and its tag are replaced so the tag points at the built commit. Leave it empty to only build. |
+| Push to `main` / `master` | APK uploaded as a workflow artifact (`AniStream-v7.1-APK`, kept 30 days), plus the R8 mapping (`AniStream-v7.1-mapping`) |
+| Push a tag `v*` (e.g. `git tag v7.1 && git push origin v7.1`) | Artifact plus a GitHub Release under that tag with the APK attached |
+| **Actions ▸ Build AniStream v7.1 APK ▸ Run workflow** | Builds any branch. Fill in `release_tag` (e.g. `v7.1`) to also publish a release. If that release already exists, it and its tag are replaced so the tag points at the built commit. Leave it empty to only build. |
 
 ---
 
@@ -213,11 +213,24 @@ Network requests to the site go through a small in-memory cache (5 min for pages
 | "Couldn't reach the server" in Search | No connection, or the site is down or blocked on your network. Tap **Retry**. |
 | Audio but no picture | The server sent an unsupported codec. Pick another episode or audio type. |
 | No Skip Intro button | Neither the source nor AniSkip has timestamps for that episode. |
-| APK won't install over an older version | The older build was signed with a different key. Uninstall it once, then install. |
+| APK won't install over an older version | Android only updates to a higher `versionCode`. v7.0 (code 10) was below v6.4 (code 14) and was refused; v7.1 (code 701) installs over both. Since v7.1 the code is `major * 100 + minor`, checked in CI by `npm run check-version`. A build signed with a different key still needs one uninstall. |
 
 ---
 
 ## 10. What's new
+
+### v7.1
+
+- **Restores v6.0-v6.4**, which v7.0 was built without, and **installs as an update over v6.4 and v7.0** (v7.0's versionCode was lower than v6.4's, so Android refused it).
+- **Swipeable Trending banner** with page dots; auto-advance pauses while touched; its **My List** button adds the title.
+- **Faster start**: hedged server resolution (the next server starts after 2.5 s if one is slow), resume starts at the saved position without downloading the opening, 12 s read timeout instead of 45 s.
+- **Better "More Like This"**: best-matching AniList entry from the top search results; sequels add the main series' recommendations.
+- **Smoother scrolling**: flat card surfaces instead of per-card backdrop blur.
+- Audio focus and pause on headphone unplug; patient segment retries; honest error states with "Try again" instead of placeholder titles, invented episodes or the demo clip; stored history validated.
+
+### v7.0
+
+v7.0 was released from `main`, which did not yet include v6.0-v6.4. It is superseded by v7.1.
 
 ### v6.4
 

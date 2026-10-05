@@ -2,6 +2,7 @@
 // sub/dub selector, synopsis, then Episodes / Collection / More Like This tabs.
 import React, { useState, useEffect } from 'react';
 import { ArrowLeft, Play, Plus, Check, Loader2 } from 'lucide-react';
+import { ErrorState } from '../components/ErrorState';
 import { getEpisodes, type AnimeItem, type EpisodeItem } from '../core/aniCliCore';
 import {
   toggleBookmark,
@@ -39,6 +40,8 @@ export const AnimeDetailScreen: React.FC<AnimeDetailScreenProps> = ({
   const [mode, setMode] = useState<'sub' | 'dub'>('sub');
   const [episodes, setEpisodes] = useState<EpisodeItem[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
+  const [episodesError, setEpisodesError] = useState<boolean>(false);
+  const [episodesAttempt, setEpisodesAttempt] = useState<number>(0);
   const [isBookmarked, setIsBookmarked] = useState<boolean>(false);
   // null = not picked by the user yet; see autoRange below.
   const [pickedRange, setActiveRange] = useState<number | null>(null);
@@ -89,14 +92,6 @@ export const AnimeDetailScreen: React.FC<AnimeDetailScreenProps> = ({
     loadLibrary();
     const unsubscribe = subscribeLibraryChanges(loadLibrary);
 
-    // Sort ascending by number so episodes[0] is genuinely episode 1 rather
-    // than however the scraper happened to order the page.
-    getEpisodes(resolved.id).then((eps) => {
-      if (cancelled) return;
-      setEpisodes([...eps].sort((a, b) => parseFloat(a.number) - parseFloat(b.number)));
-      setLoading(false);
-    });
-
     getAnimeDetails(resolved).then(d => {
       if (!cancelled) setDetails(d);
     });
@@ -105,6 +100,34 @@ export const AnimeDetailScreen: React.FC<AnimeDetailScreenProps> = ({
       unsubscribe();
     };
   }, [resolved]);
+
+  // Episodes load on their own so a failure can be retried by itself.
+  useEffect(() => {
+    if (!resolved) return;
+    let cancelled = false;
+    // Sort ascending by number so episodes[0] is genuinely episode 1 rather
+    // than however the scraper happened to order the page.
+    getEpisodes(resolved.id)
+      .then((eps) => {
+        if (cancelled) return;
+        setEpisodes([...eps].sort((a, b) => parseFloat(a.number) - parseFloat(b.number)));
+        setEpisodesError(false);
+      })
+      .catch(err => {
+        console.warn('[AnimeDetailScreen] episode list failed:', err);
+        if (!cancelled) setEpisodesError(true);
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, [resolved, episodesAttempt]);
+
+  const retryEpisodes = () => {
+    setEpisodesError(false);
+    setLoading(true);
+    setEpisodesAttempt(n => n + 1);
+  };
 
   const shown = resolved || anime;
 
@@ -396,7 +419,9 @@ export const AnimeDetailScreen: React.FC<AnimeDetailScreenProps> = ({
               </div>
             )}
 
-            {loading ? (
+            {episodesError && !loading ? (
+              <ErrorState compact message="Couldn't load the episode list." onRetry={retryEpisodes} />
+            ) : loading ? (
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '40px 0', gap: '10px', color: 'var(--text-secondary)' }}>
                 <Loader2 size={24} className="animate-spin" />
                 <span style={{ fontSize: '14px' }}>Fetching episodes...</span>
