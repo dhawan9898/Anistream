@@ -48,6 +48,9 @@ jobs:
       - name: Lint
         run: npm run lint
 
+      - name: Unit Tests
+        run: npm test
+
       - name: Build Web Production Bundle
         run: npm run build
 

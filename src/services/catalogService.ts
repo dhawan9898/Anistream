@@ -17,6 +17,7 @@ import {
   sitePathOf,
   type AnimeItem
 } from '../core/aniCliCore';
+import { request } from '../core/http';
 
 export interface Genre {
   slug: string;
@@ -65,24 +66,15 @@ function slugify(name: string): string {
 // ------------------------------------------------------------------ AniList
 
 const ANILIST = 'https://graphql.anilist.co';
-const TIMEOUT_MS = 10000;
-
-// Promise.race rather than an AbortSignal: the native (CapacitorHttp) fetch
-// doesn't honor signals.
-function withTimeout<T>(promise: Promise<T>, ms = TIMEOUT_MS): Promise<T> {
-  return Promise.race([
-    promise,
-    new Promise<T>((_, reject) => setTimeout(() => reject(new Error(`timed out after ${ms}ms`)), ms))
-  ]);
-}
 
 async function anilist(query: string, variables: Record<string, unknown>): Promise<any> {
-  const res = await withTimeout(fetch(ANILIST, {
+  // A GraphQL read is safe to retry; AniList answers 429 when rate limited,
+  // which request() backs off from (honoring Retry-After).
+  const res = await request(ANILIST, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
     body: JSON.stringify({ query, variables })
-  }));
-  if (!res.ok) throw new Error(`AniList HTTP ${res.status}`);
+  }, { timeoutMs: 10000, retries: 2 });
   const json = await res.json();
   if (json?.errors?.length) throw new Error(`AniList: ${json.errors[0]?.message}`);
   return json.data;

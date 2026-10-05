@@ -5,40 +5,33 @@
 // Jikan API) to get a MAL id, then asks the AniSkip API - a community
 // database built for exactly this - for that episode's opening timestamps.
 
+import { request } from '../core/http';
+
 export interface SkipInterval {
   start: number;
   end: number;
 }
 
-const FETCH_TIMEOUT_MS = 6000;
-
-// Title -> MAL id (or null if not found), so a multi-episode binge only
-// pays for the MAL lookup once.
+// Title -> MAL id (or null when MAL definitely has no match), so a
+// multi-episode binge only pays for the MAL lookup once. Network failures
+// are not cached - the next episode simply tries again.
 const malIdCache = new Map<string, number | null>();
 
-// Promise.race rather than an AbortSignal: the native (CapacitorHttp) fetch
-// doesn't honor signals.
-function fetchWithTimeout(url: string): Promise<Response> {
-  return Promise.race([
-    fetch(url),
-    new Promise<Response>((_, reject) => setTimeout(() => reject(new Error('timed out')), FETCH_TIMEOUT_MS))
-  ]);
-}
+// Skip markers are a nice-to-have: keep the timeout short and retry once.
+const POLICY = { timeoutMs: 6000, retries: 1 };
 
 export async function resolveMalId(title: string): Promise<number | null> {
   const cacheKey = title.trim().toLowerCase();
   if (malIdCache.has(cacheKey)) return malIdCache.get(cacheKey)!;
 
   try {
-    const res = await fetchWithTimeout(`https://api.jikan.moe/v4/anime?q=${encodeURIComponent(title)}&limit=1`);
-    if (!res.ok) throw new Error(`Jikan lookup failed (${res.status})`);
+    const res = await request(`https://api.jikan.moe/v4/anime?q=${encodeURIComponent(title)}&limit=1`, undefined, POLICY);
     const data = await res.json();
     const malId: number | null = typeof data?.data?.[0]?.mal_id === 'number' ? data.data[0].mal_id : null;
     malIdCache.set(cacheKey, malId);
     return malId;
   } catch (err) {
     console.warn('[aniSkipService] MAL id lookup failed:', err);
-    malIdCache.set(cacheKey, null);
     return null;
   }
 }
@@ -77,8 +70,7 @@ export async function getEpisodeSkipIntervals(
 
   try {
     const url = `https://api.aniskip.com/v2/skip-times/${malId}/${epNum}?types[]=op&types[]=ed&episodeLength=${Math.round(episodeLengthSeconds)}`;
-    const res = await fetchWithTimeout(url);
-    if (!res.ok) throw new Error(`AniSkip lookup failed (${res.status})`);
+    const res = await request(url, undefined, POLICY);
     const data = await res.json();
     return {
       opening: extractInterval(data, 'op'),

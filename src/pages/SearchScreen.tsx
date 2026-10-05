@@ -2,6 +2,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Search as SearchIcon, X, Loader2, ArrowLeft } from 'lucide-react';
 import { searchAnime, type AnimeItem } from '../core/aniCliCore';
+import { ErrorState } from '../components/ErrorState';
 import { getGenres, type Genre } from '../services/catalogService';
 
 // Tile colors for the "Browse by genre" grid, cycled in order.
@@ -38,6 +39,7 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({
   const [query, setQuery] = useState<string>('');
   const [results, setResults] = useState<AnimeItem[]>([]);
   const [loading, setLoading] = useState<boolean>(false);
+  const [searchFailed, setSearchFailed] = useState<boolean>(false);
   const inputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
@@ -57,9 +59,16 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({
   const runSearch = async (searchTerm: string) => {
     const seq = ++searchSeq.current;
     setLoading(true);
+    setSearchFailed(false);
     try {
       const list = await searchAnime(searchTerm);
       if (seq === searchSeq.current) setResults(list);
+    } catch (err) {
+      console.warn('[SearchScreen] search failed:', err);
+      if (seq === searchSeq.current) {
+        setResults([]);
+        setSearchFailed(true);
+      }
     } finally {
       if (seq === searchSeq.current) setLoading(false);
     }
@@ -72,6 +81,7 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({
       searchSeq.current++;
       setResults([]);
       setLoading(false);
+      setSearchFailed(false);
       return;
     }
     if (immediate) {
@@ -190,7 +200,12 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({
       )}
 
       {/* Loading, empty prompt, no-results, or the results grid */}
-      {loading ? (
+      {searchFailed && !loading ? (
+        <ErrorState
+          message="Search couldn't reach the streaming site. Check your connection and try again."
+          onRetry={() => runSearch(query)}
+        />
+      ) : loading ? (
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '60px 0', gap: '10px', color: 'var(--text-secondary)' }}>
           <Loader2 size={24} className="animate-spin" />
           <span style={{ fontSize: '14px' }}>Searching ani-cli database...</span>

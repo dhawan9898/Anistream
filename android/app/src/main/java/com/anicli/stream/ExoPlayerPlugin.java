@@ -135,6 +135,18 @@ public class ExoPlayerPlugin extends Plugin {
         activeInstance.notifyListeners("episodeSelected", data);
     }
 
+    // The player wants a fresh stream for the current episode (expired link
+    // or the user's Retry) - JS re-resolves it and calls play() again with
+    // startPositionMs, which onNewIntent loads into the same player.
+    static void notifyRetryRequested(String title, String episode, long positionMs) {
+        if (activeInstance == null) return;
+        JSObject data = new JSObject();
+        data.put("title", title);
+        data.put("episode", episode);
+        data.put("positionMs", positionMs);
+        activeInstance.notifyListeners("retryRequested", data);
+    }
+
     // The native player is the only place playback position actually lives -
     // JS (and its watch-history storage) only finds out by being told,
     // periodically, the same way the other in-player actions are reported.

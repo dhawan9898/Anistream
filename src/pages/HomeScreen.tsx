@@ -5,6 +5,7 @@ import { getWatchHistory, type WatchHistoryItem } from '../services/historyServi
 import { getAnimeByGenre, getGenres, type Genre } from '../services/catalogService';
 import { PosterCard } from '../components/PosterCard';
 import { GenrePicker } from '../components/GenrePicker';
+import { ErrorState } from '../components/ErrorState';
 
 // Genres that get their own rail on the home screen, Netflix-style.
 const HOME_ROW_GENRES = ['action', 'romance', 'comedy', 'fantasy', 'isekai'];
@@ -80,14 +81,33 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
   const [history, setHistory] = useState<WatchHistoryItem[]>([]);
   const [trending, setTrending] = useState<AnimeItem[]>([]);
   const [loadingTrending, setLoadingTrending] = useState<boolean>(true);
+  const [trendingError, setTrendingError] = useState<boolean>(false);
+  const [trendingAttempt, setTrendingAttempt] = useState<number>(0);
 
   useEffect(() => {
-    getTrendingAnime().then(list => {
-      setTrending(list);
-      setFeaturedIndex(0);
-      setLoadingTrending(false);
-    });
-  }, []);
+    let cancelled = false;
+    getTrendingAnime()
+      .then(list => {
+        if (cancelled) return;
+        setTrending(list);
+        setFeaturedIndex(0);
+        setTrendingError(false);
+      })
+      .catch(err => {
+        console.warn('[HomeScreen] trending feed failed:', err);
+        if (!cancelled) setTrendingError(true);
+      })
+      .finally(() => {
+        if (!cancelled) setLoadingTrending(false);
+      });
+    return () => { cancelled = true; };
+  }, [trendingAttempt]);
+
+  const retryTrending = () => {
+    setTrendingError(false);
+    setLoadingTrending(true);
+    setTrendingAttempt(n => n + 1);
+  };
 
   // Auto-cycle hero banner every 6 seconds
   useEffect(() => {
@@ -180,7 +200,14 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
       </div>
 
       {/* Cinematic Hero Carousel Banner */}
-      {!heroAnime ? (
+      {trendingError ? (
+        <div style={{ paddingTop: 'calc(var(--safe-top) + 40px)' }}>
+          <ErrorState
+            message="Couldn't reach the streaming site. Check your connection and try again."
+            onRetry={retryTrending}
+          />
+        </div>
+      ) : !heroAnime ? (
         <div
           className="skeleton"
           style={{ width: '100%', height: '420px', marginTop: '-60px' }}
