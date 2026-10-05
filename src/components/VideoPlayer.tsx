@@ -40,6 +40,22 @@ const NEXT_EPISODE_COUNTDOWN_SECS = 10;
 const POST_PLAY_THRESHOLD_SECS = 20;
 const NETFLIX_RED = '#e50914';
 
+// Fatal network errors are retried this many times (1s, 2s, 4s, 8s backoff)
+// before the error overlay is shown.
+const MAX_NETWORK_RECOVERIES = 4;
+
+// These are VOD episodes, not a live broadcast - lowLatencyMode trims
+// buffers to chase the live edge, which only makes stalls more likely here.
+// A bigger forward buffer instead gives real cushion against network
+// hiccups.
+const HLS_CONFIG = {
+  enableWorker: false,
+  backBufferLength: 90,
+  maxBufferLength: 60,
+  maxMaxBufferLength: 120,
+  maxBufferSize: 120 * 1000 * 1000
+};
+
 export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   streamSource,
   animeTitle,
@@ -160,6 +176,17 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     });
   }, [duration, streamSource.streamUrl, streamSource.intro, streamSource.outro, animeTitle, episode.number]);
 
+  // Bumped by the error overlay's Retry; reloading resumes from where
+  // playback stopped (resumeFromRef) instead of the episode's start.
+  const [reloadKey, setReloadKey] = useState<number>(0);
+  const resumeFromRef = useRef<number | null>(null);
+
+  const retryStream = () => {
+    const video = videoRef.current;
+    resumeFromRef.current = video && video.currentTime > 0 ? video.currentTime : null;
+    setReloadKey(k => k + 1);
+  };
+
   // Initialize Hls / Video stream
   useEffect(() => {
     const video = videoRef.current;
@@ -173,9 +200,28 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     const rawStreamUrl = streamSource.streamUrl;
     const referer = streamSource.referer || 'https://zokoanime.video/';
     const streamUrl = resolvePlayableUrl(rawStreamUrl, referer);
+    const startAt = resumeFromRef.current ?? initialTime;
+    resumeFromRef.current = null;
     setVideoTrackWarning(null);
     setStreamError(null);
     setIsBuffering(false);
+
+    let disposed = false;
+    const timers: number[] = [];
+    const later = (fn: () => void, ms: number) => {
+      timers.push(window.setTimeout(() => { if (!disposed) fn(); }, ms));
+    };
+
+    const fail = (message: string) => {
+      setIsPlaying(false);
+      setIsBuffering(false);
+      setStreamError(message);
+    };
+
+    const startPlayback = () => {
+      if (startAt > 0) video.currentTime = startAt;
+      video.play().then(() => setIsPlaying(true)).catch(() => setIsPlaying(false));
+    };
 
     // Only surface no-video-track warning if playback has been running for a few seconds
     // with continuous 0x0 video dimensions (to avoid false alarms during initial frame decoding)
@@ -199,29 +245,44 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     video.addEventListener('playing', handleResumed);
     video.addEventListener('canplay', handleResumed);
 
+    // Progressive (MP4) or native-HLS playback: the element itself loads, so
+    // its own error event is the failure signal. One silent reload from the
+    // same position covers a dropped connection before giving up.
+    let elementRetries = 0;
+    const handleElementError = () => {
+      if (hlsRef.current) return; // hls.js reports its own errors
+      const code = video.error?.code;
+      console.warn('[VideoPlayer] media element error, code:', code);
+      if (code === MediaError.MEDIA_ERR_NETWORK && elementRetries < 1) {
+        elementRetries++;
+        const at = video.currentTime;
+        later(() => {
+          video.load();
+          video.addEventListener('loadedmetadata', () => {
+            if (disposed) return; // the stream changed meanwhile
+            video.currentTime = at;
+            video.play().catch(() => setIsPlaying(false));
+          }, { once: true });
+        }, 1500);
+        return;
+      }
+      fail(code === MediaError.MEDIA_ERR_SRC_NOT_SUPPORTED
+        ? 'This stream format is not supported on this device.'
+        : 'This stream failed to load.');
+    };
+    video.addEventListener('error', handleElementError);
+
     const isMp4 = streamUrl.toLowerCase().split('?')[0].endsWith('.mp4');
+    let usesMetadataStart = false;
 
     if (isMp4) {
       video.src = streamUrl;
       video.load();
-      video.addEventListener('loadedmetadata', () => {
-        if (initialTime > 0) {
-          video.currentTime = initialTime;
-        }
-        video.play().then(() => setIsPlaying(true)).catch(() => setIsPlaying(false));
-      });
+      usesMetadataStart = true;
     } else if (Hls.isSupported()) {
       const hls = new Hls({
-        enableWorker: false,
-        // These are VOD episodes, not a live broadcast - lowLatencyMode
-        // trims buffers to chase the live edge, which only makes stalls
-        // more likely here for no benefit. A bigger forward buffer instead
-        // gives real cushion against network hiccups.
-        backBufferLength: 90,
-        maxBufferLength: 60,
-        maxMaxBufferLength: 120,
-        maxBufferSize: 120 * 1000 * 1000,
-        xhrSetup: (xhr, _url) => {
+        ...HLS_CONFIG,
+        xhrSetup: (xhr) => {
           // CapacitorHttp intercepts this and allows setting custom headers like Referer
           xhr.setRequestHeader('Referer', referer);
         }
@@ -235,49 +296,68 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
         if (data.levels.length > 0 && data.levels.every(l => !l.videoCodec && !l.width)) {
           setVideoTrackWarning('No video track in this stream (audio only or unsupported codec).');
         }
-        if (initialTime > 0) {
-          video.currentTime = initialTime;
-        }
-        video.play().then(() => setIsPlaying(true)).catch(() => setIsPlaying(false));
+        startPlayback();
       });
 
-      let networkRetry = 0;
+      // hls.js already retries individual manifest/segment loads; a *fatal*
+      // error means those were exhausted. Recover the standard way: restart
+      // loading with backoff for network errors, recoverMediaError (then a
+      // codec swap) for decode errors, and only then show an error. A
+      // segment that loads again proves the connection is back, so the
+      // network budget resets.
+      let networkRecoveries = 0;
+      let mediaRecoveries = 0;
+      hls.on(Hls.Events.FRAG_LOADED, () => { networkRecoveries = 0; });
       hls.on(Hls.Events.ERROR, (_event, data) => {
-        console.warn('[VideoPlayer] hls.js error:', data.type, data.details, 'fatal:', data.fatal);
-        if (data.fatal) {
-          if (data.type === Hls.ErrorTypes.NETWORK_ERROR && networkRetry < 1) {
-            networkRetry++;
-            hls.startLoad();
-          } else {
-            console.warn('[VideoPlayer] HLS stream unrecoverable');
-            hls.destroy();
-            hlsRef.current = null;
-            setIsPlaying(false);
-            setStreamError('This stream failed to load.');
-          }
+        if (!data.fatal) return;
+        console.warn('[VideoPlayer] fatal hls.js error:', data.type, data.details);
+        if (data.type === Hls.ErrorTypes.NETWORK_ERROR && networkRecoveries < MAX_NETWORK_RECOVERIES) {
+          const delay = 1000 * 2 ** networkRecoveries;
+          networkRecoveries++;
+          setIsBuffering(true);
+          // No levels yet means the manifest itself never loaded -
+          // startLoad() can't fetch it, so request it again.
+          later(() => {
+            if (hls.levels.length === 0) hls.loadSource(streamUrl);
+            else hls.startLoad();
+          }, delay);
+        } else if (data.type === Hls.ErrorTypes.MEDIA_ERROR && mediaRecoveries < 2) {
+          if (mediaRecoveries === 1) hls.swapAudioCodec();
+          mediaRecoveries++;
+          hls.recoverMediaError();
+        } else {
+          hls.destroy();
+          if (hlsRef.current === hls) hlsRef.current = null;
+          fail('This stream failed to load.');
         }
       });
     } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
       // Native HLS support (Safari/iOS WebView)
       video.src = streamUrl;
-      video.addEventListener('loadedmetadata', () => {
-        if (initialTime > 0) {
-          video.currentTime = initialTime;
-        }
-        video.play().then(() => setIsPlaying(true)).catch(() => setIsPlaying(false));
-      });
+      usesMetadataStart = true;
+    } else {
+      fail('This device cannot play HLS streams.');
+    }
+
+    if (usesMetadataStart) {
+      video.addEventListener('loadedmetadata', startPlayback, { once: true });
     }
 
     return () => {
+      disposed = true;
+      timers.forEach(t => window.clearTimeout(t));
       video.removeEventListener('timeupdate', checkVideoTrack);
       video.removeEventListener('waiting', handleWaiting);
       video.removeEventListener('playing', handleResumed);
       video.removeEventListener('canplay', handleResumed);
+      video.removeEventListener('error', handleElementError);
+      video.removeEventListener('loadedmetadata', startPlayback);
       if (hlsRef.current) {
         hlsRef.current.destroy();
+        hlsRef.current = null;
       }
     };
-  }, [streamSource.streamUrl, streamSource.referer, initialTime]);
+  }, [streamSource.streamUrl, streamSource.referer, initialTime, reloadKey]);
 
   // Opening the episode window centers the grid on the playing episode, so
   // late episodes of a long series don't need a manual scroll to find.
@@ -412,11 +492,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
       hlsRef.current.once(Hls.Events.MANIFEST_PARSED, resume);
     } else if (Hls.isSupported()) {
       const hls = new Hls({
-        enableWorker: false,
-        backBufferLength: 90,
-        maxBufferLength: 60,
-        maxMaxBufferLength: 120,
-        maxBufferSize: 120 * 1000 * 1000,
+        ...HLS_CONFIG,
         xhrSetup: (xhr) => xhr.setRequestHeader('Referer', streamSource.referer)
       });
       hls.loadSource(newUrl);
@@ -737,10 +813,15 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
       {streamError && (
         <div onClick={(e) => e.stopPropagation()} className="nf-dialog">
           <span style={{ fontSize: '15px', fontWeight: 700 }}>{streamError}</span>
-          <span style={{ fontSize: '12px', color: '#b3b3b3' }}>The server may be blocking it or the format isn't supported. Try another episode or server.</span>
-          <button onClick={onBack} className="interactive nf-btn-white" style={{ marginTop: '6px' }}>
-            Go Back
-          </button>
+          <span style={{ fontSize: '12px', color: '#b3b3b3' }}>The connection dropped or the server stopped responding. Retrying resumes where you left off.</span>
+          <div style={{ display: 'flex', gap: '10px', marginTop: '6px' }}>
+            <button onClick={retryStream} className="interactive nf-btn-white">
+              Retry
+            </button>
+            <button onClick={onBack} className="interactive nf-btn-white" style={{ background: 'transparent', color: '#fff', border: '1px solid rgba(255,255,255,0.4)' }}>
+              Go Back
+            </button>
+          </div>
         </div>
       )}
 

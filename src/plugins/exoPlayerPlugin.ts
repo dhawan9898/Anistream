@@ -31,6 +31,14 @@ export interface ProgressUpdateEvent {
   durationMs: number;
 }
 
+// The player's Retry button after a failure. JS re-resolves the stream
+// (the CDN link may have expired) and resumes at positionMs.
+export interface RetryRequestedEvent {
+  title: string;
+  episode: string;
+  positionMs: number;
+}
+
 export interface PlayEpisodeOption {
   id: string;
   number: string;
@@ -80,6 +88,11 @@ export interface ExoPlayerPluginInterface {
   addListener(
     eventName: 'episodeSelected',
     listenerFunc: (event: EpisodeSelectedEvent) => void
+  ): Promise<PluginListenerHandle>;
+
+  addListener(
+    eventName: 'retryRequested',
+    listenerFunc: (event: RetryRequestedEvent) => void
   ): Promise<PluginListenerHandle>;
 
   addListener(

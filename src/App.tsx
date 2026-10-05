@@ -1,5 +1,5 @@
 // App.tsx - Main Android Application Controller for AniStream
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, lazy, Suspense } from 'react';
 import { Home as HomeIcon, Search as SearchIcon, Library, Settings as SettingsIcon } from 'lucide-react';
 import { Capacitor } from '@capacitor/core';
 import { ExoPlayerPlugin } from './plugins/exoPlayerPlugin';
@@ -10,18 +10,27 @@ import { HistoryScreen } from './pages/HistoryScreen';
 import { GenreScreen } from './pages/GenreScreen';
 import type { Genre } from './services/catalogService';
 import { SettingsScreen } from './pages/SettingsScreen';
-import { VideoPlayer } from './components/VideoPlayer';
 import { ConfirmModal } from './components/ConfirmModal';
 import {
   getEpisodeStream,
   getEpisodes,
+  prefetchEpisodeStream,
+  SourceUnavailableError,
   type AnimeItem,
   type EpisodeItem,
-  type StreamSource,
-  FEATURED_ANIME
+  type StreamSource
 } from './core/aniCliCore';
 import { saveWatchProgress, getUserPreferences, type WatchHistoryItem } from './services/historyService';
 import { getTheme, getStoredThemeSync, setTheme as persistTheme, type ThemeMode } from './services/themeService';
+
+// The web player (and hls.js, most of the bundle's weight) is only needed
+// once something plays - and never on Android, where ExoPlayer plays - so
+// it's split out of the startup bundle.
+const VideoPlayer = lazy(() => import('./components/VideoPlayer').then(m => ({ default: m.VideoPlayer })));
+
+// Start resolving the next episode once this much of the current one has
+// played, so "Next Episode" starts without a wait.
+const PREFETCH_NEXT_AT = 0.8;
 
 type Tab = 'home' | 'search' | 'library' | 'settings';
 
@@ -96,6 +105,7 @@ export const App: React.FC = () => {
   const playingAnimeRef = useRef<AnimeItem | null>(null);
   const playingEpisodeRef = useRef<EpisodeItem | null>(null);
   const playingModeRef = useRef<'sub' | 'dub'>('sub');
+  const startTimeRef = useRef<number>(0);
   const episodeListRef = useRef<EpisodeItem[]>([]);
   playingAnimeRef.current = playingAnime;
   playingEpisodeRef.current = playingEpisode;
@@ -144,6 +154,17 @@ export const App: React.FC = () => {
       if (!selected) return; // not a real episode from the list - never guess one
       handlePlayEpisode(anime, selected, playingModeRef.current, 0);
     });
+    // The player's "Retry" after a failure: the CDN link may simply have
+    // expired, so resolve the episode afresh and resume where it stopped.
+    const retryHandle = ExoPlayerPlugin.addListener('retryRequested', ({ positionMs }) => {
+      const anime = playingAnimeRef.current;
+      const episode = playingEpisodeRef.current;
+      if (!anime || !episode) return;
+      // No position yet (the stream never started) -> keep the original
+      // start point, e.g. a resume from history.
+      const resumeAt = positionMs > 0 ? positionMs / 1000 : startTimeRef.current;
+      handlePlayEpisode(anime, episode, playingModeRef.current, resumeAt, true);
+    });
     // The native player is the only place playback position lives - unlike
     // the web <VideoPlayer>, which reports progress via its own
     // onProgressUpdate prop, native has no such prop path (it isn't even
@@ -157,6 +178,7 @@ export const App: React.FC = () => {
       const anime = playingAnimeRef.current;
       const episode = playingEpisodeRef.current;
       if (!anime || !episode || durationMs <= 0) return;
+      maybePrefetchNext(positionMs / 1000, durationMs / 1000);
       saveWatchProgress({
         animeId: anime.id,
         animeTitle: anime.title,
@@ -174,17 +196,34 @@ export const App: React.FC = () => {
       nextEpHandle.then(h => h.remove());
       episodeSelectedHandle.then(h => h.remove());
       progressHandle.then(h => h.remove());
+      retryHandle.then(h => h.remove());
       closedHandle.then(h => h.remove());
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Play an episode
+  // Near the end of an episode, resolve the next one in the background (once
+  // per episode) so it's ready the moment it's needed.
+  const prefetchedRef = useRef<string | null>(null);
+  const maybePrefetchNext = (time: number, duration: number) => {
+    if (duration <= 0 || time / duration < PREFETCH_NEXT_AT) return;
+    const anime = playingAnimeRef.current;
+    const next = findNextEpisode(playingEpisodeRef.current, episodeListRef.current);
+    if (!anime || !next) return;
+    const key = `${anime.id}:${next.id}:${playingModeRef.current}`;
+    if (prefetchedRef.current === key) return;
+    prefetchedRef.current = key;
+    prefetchEpisodeStream(anime.id || anime.title, next.id || next.number, playingModeRef.current, anime.id);
+  };
+
+  // Play an episode. forceRefresh skips any cached stream resolution (used
+  // when retrying after a playback failure).
   const handlePlayEpisode = async (
     anime: AnimeItem,
     episode: EpisodeItem,
     mode: 'sub' | 'dub' = 'sub',
-    startTime = 0
+    startTime = 0,
+    forceRefresh = false
   ) => {
     const requestId = ++playRequestRef.current;
     const isNative = Capacitor.isNativePlatform();
@@ -201,6 +240,7 @@ export const App: React.FC = () => {
     setPlayingEpisode(episode);
     setPlayingMode(mode);
     setInitialSeekTime(startTime);
+    startTimeRef.current = startTime;
 
     // Real episode list for this anime, used for hasNextEpisode/next-episode
     // lookups and the native player's episode picker - only re-fetched when
@@ -210,22 +250,29 @@ export const App: React.FC = () => {
     // played for a given anime doesn't race a stale/empty list into the
     // native "Episodes" button.
     const needsEpisodeList = loadedEpisodeListAnimeId.current !== anime.id;
-    const episodeListPromise = needsEpisodeList
-      ? getEpisodes(anime.id || anime.title).then(eps => [...eps].sort((a, b) => parseFloat(a.number) - parseFloat(b.number)))
+    // The list only powers next/episode-picker - a failure there must not
+    // block playing the episode the user actually asked for.
+    const episodeListPromise: Promise<EpisodeItem[] | null> = needsEpisodeList
+      ? getEpisodes(anime.id || anime.title).catch(err => {
+          console.warn('[App] episode list unavailable, playing without it:', err);
+          return null;
+        })
       : Promise.resolve(episodeListRef.current);
 
     try {
       const [source, resolvedEpisodeList] = await Promise.all([
-        getEpisodeStream(anime.id || anime.title, episode.id || episode.number, mode, anime.id),
+        getEpisodeStream(anime.id || anime.title, episode.id || episode.number, mode, anime.id, forceRefresh),
         episodeListPromise
       ]);
 
       // The user picked something else meanwhile, or closed the player.
       if (requestId !== playRequestRef.current) return;
 
+      // On failure, keep it marked as not loaded so the next play retries.
+      const episodesForPlayer = resolvedEpisodeList ?? [];
       if (needsEpisodeList) {
-        setEpisodeList(resolvedEpisodeList);
-        loadedEpisodeListAnimeId.current = anime.id;
+        setEpisodeList(episodesForPlayer);
+        loadedEpisodeListAnimeId.current = resolvedEpisodeList ? anime.id : null;
       }
 
       // Apply the "Default Quality" preference when the stream actually
@@ -251,8 +298,7 @@ export const App: React.FC = () => {
             mode,
             subtitles: source.subtitles,
             qualities: source.qualities,
-            episodes: resolvedEpisodeList.map(e => ({ id: e.id, number: e.number })),
-            isFallback: source.isFallback,
+            episodes: episodesForPlayer.map(e => ({ id: e.id, number: e.number })),
             intro: source.intro,
             outro: source.outro,
             startPositionMs: Math.max(0, Math.round(startTime * 1000))
@@ -267,7 +313,9 @@ export const App: React.FC = () => {
     } catch (err) {
       console.error("Failed to load stream:", err);
       if (requestId !== playRequestRef.current) return;
-      const message = "Could not load this episode. Please try another episode or server.";
+      const message = err instanceof SourceUnavailableError
+        ? "This episode isn't available from any server right now. Try again in a bit, or switch Sub/Dub."
+        : "Couldn't load this episode - check your connection and try again.";
       if (isNative) {
         ExoPlayerPlugin.fail({ message }).catch(() => setStreamErrorMessage(message));
       } else {
@@ -280,7 +328,7 @@ export const App: React.FC = () => {
 
   // Resume from continue watching
   const handleResumeEpisode = (historyItem: WatchHistoryItem) => {
-    const matchedAnime = FEATURED_ANIME.find(a => a.id === historyItem.animeId) || {
+    const matchedAnime: AnimeItem = {
       id: historyItem.animeId,
       title: historyItem.animeTitle,
       poster: historyItem.poster,
@@ -385,6 +433,7 @@ export const App: React.FC = () => {
 
       {/* Fullscreen Cinema Player */}
       {isPlaying && streamSource && playingAnime && playingEpisode && (
+        <Suspense fallback={<div className="stream-loading-bar" role="progressbar" aria-label="Loading player" />}>
         <VideoPlayer
           streamSource={streamSource}
           animeTitle={playingAnime.title}
@@ -398,6 +447,7 @@ export const App: React.FC = () => {
           onSelectEpisode={(ep) => handlePlayEpisode(playingAnime, ep, playingMode, 0)}
           onSwitchMode={(newMode) => handlePlayEpisode(playingAnime, playingEpisode, newMode, 0)}
           onProgressUpdate={(time, dur) => {
+            maybePrefetchNext(time, dur);
             saveWatchProgress({
               animeId: playingAnime.id,
               animeTitle: playingAnime.title,
@@ -411,6 +461,7 @@ export const App: React.FC = () => {
             });
           }}
         />
+        </Suspense>
       )}
 
       {/* Floating Apple-TV style glass dock (hidden during player and detail view).

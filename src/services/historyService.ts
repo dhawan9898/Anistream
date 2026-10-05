@@ -70,16 +70,38 @@ export function saveWatchProgress(item: WatchHistoryItem): Promise<void> {
   });
 }
 
+// Stored data outlives app versions and can be truncated by a crash
+// mid-write - anything that doesn't parse into the expected shape is
+// dropped rather than allowed to crash the screens that render it.
+function readList<T>(value: string | null, isValid: (item: any) => boolean): T[] {
+  if (!value) return [];
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed) ? parsed.filter(isValid) : [];
+  } catch (err) {
+    console.error("Discarding unreadable stored list:", err);
+    return [];
+  }
+}
+
+// Real episode ids are numeric. Older versions saved "<slug>-ep-N" ids for
+// made-up placeholder episodes (which only ever played a demo clip); those
+// can't be resumed reliably, so they're dropped.
+const isHistoryItem = (h: any): boolean =>
+  !!h && typeof h.animeId === 'string' && typeof h.episodeId === 'string' &&
+  /^\d+$/.test(h.episodeId) &&
+  typeof h.currentTime === 'number' && isFinite(h.currentTime);
+
+const isAnimeItem = (a: any): boolean => !!a && typeof a.id === 'string' && typeof a.title === 'string';
+
 export async function getWatchHistory(): Promise<WatchHistoryItem[]> {
   try {
     const { value } = await Preferences.get({ key: HISTORY_KEY });
-    if (value) {
-      return JSON.parse(value);
-    }
+    return readList<WatchHistoryItem>(value, isHistoryItem);
   } catch (err) {
     console.error("Failed to load history:", err);
+    return [];
   }
-  return [];
 }
 
 export function clearWatchHistory(): Promise<void> {
@@ -120,7 +142,7 @@ export function toggleBookmark(anime: AnimeItem): Promise<boolean> {
 export async function getBookmarks(): Promise<AnimeItem[]> {
   try {
     const { value } = await Preferences.get({ key: BOOKMARKS_KEY });
-    return value ? JSON.parse(value) : [];
+    return readList<AnimeItem>(value, isAnimeItem);
   } catch {
     return [];
   }
@@ -129,17 +151,22 @@ export async function getBookmarks(): Promise<AnimeItem[]> {
 export async function getUserPreferences(): Promise<UserPreferences> {
   try {
     const { value } = await Preferences.get({ key: PREFERENCES_KEY });
-    return value ? { ...DEFAULT_PREFERENCES, ...JSON.parse(value) } : DEFAULT_PREFERENCES;
+    const parsed = value ? JSON.parse(value) : null;
+    return parsed && typeof parsed === 'object' ? { ...DEFAULT_PREFERENCES, ...parsed } : DEFAULT_PREFERENCES;
   } catch {
     return DEFAULT_PREFERENCES;
   }
 }
 
-export async function saveUserPreferences(prefs: Partial<UserPreferences>): Promise<void> {
-  const current = await getUserPreferences();
-  const updated = { ...current, ...prefs };
-  await Preferences.set({
-    key: PREFERENCES_KEY,
-    value: JSON.stringify(updated)
+// Serialized like every other read-modify-write, so toggling two settings
+// quickly can't lose one of them.
+export function saveUserPreferences(prefs: Partial<UserPreferences>): Promise<void> {
+  return serialized(async () => {
+    const current = await getUserPreferences();
+    const updated = { ...current, ...prefs };
+    await Preferences.set({
+      key: PREFERENCES_KEY,
+      value: JSON.stringify(updated)
+    });
   });
 }
