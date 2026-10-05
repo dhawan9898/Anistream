@@ -259,6 +259,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
         later(() => {
           video.load();
           video.addEventListener('loadedmetadata', () => {
+            if (disposed) return; // the stream changed meanwhile
             video.currentTime = at;
             video.play().catch(() => setIsPlaying(false));
           }, { once: true });
@@ -314,7 +315,12 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
           const delay = 1000 * 2 ** networkRecoveries;
           networkRecoveries++;
           setIsBuffering(true);
-          later(() => hls.startLoad(), delay);
+          // No levels yet means the manifest itself never loaded -
+          // startLoad() can't fetch it, so request it again.
+          later(() => {
+            if (hls.levels.length === 0) hls.loadSource(streamUrl);
+            else hls.startLoad();
+          }, delay);
         } else if (data.type === Hls.ErrorTypes.MEDIA_ERROR && mediaRecoveries < 2) {
           if (mediaRecoveries === 1) hls.swapAudioCodec();
           mediaRecoveries++;

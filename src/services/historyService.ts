@@ -84,8 +84,12 @@ function readList<T>(value: string | null, isValid: (item: any) => boolean): T[]
   }
 }
 
+// Real episode ids are numeric. Older versions saved "<slug>-ep-N" ids for
+// made-up placeholder episodes (which only ever played a demo clip); those
+// can't be resumed reliably, so they're dropped.
 const isHistoryItem = (h: any): boolean =>
   !!h && typeof h.animeId === 'string' && typeof h.episodeId === 'string' &&
+  /^\d+$/.test(h.episodeId) &&
   typeof h.currentTime === 'number' && isFinite(h.currentTime);
 
 const isAnimeItem = (a: any): boolean => !!a && typeof a.id === 'string' && typeof a.title === 'string';

@@ -186,7 +186,11 @@ public class ExoPlayerActivity extends AppCompatActivity {
     // Last real playback position, kept so a retry can resume even after
     // the player instance is gone.
     private long lastKnownPositionMs = 0;
+    // True while a backoff retry is scheduled - the player sits in
+    // STATE_IDLE meanwhile, which must still read as "loading".
+    private boolean autoRetryPending = false;
     private final Runnable autoRetryRunnable = () -> {
+        autoRetryPending = false;
         if (player != null) player.prepare();
     };
     private boolean userSeeking = false;
@@ -365,6 +369,7 @@ public class ExoPlayerActivity extends AppCompatActivity {
     private void releasePlayer() {
         handler.removeCallbacks(progressTicker);
         handler.removeCallbacks(autoRetryRunnable);
+        autoRetryPending = false;
         getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         if (player != null) {
             player.release();
@@ -1247,6 +1252,7 @@ public class ExoPlayerActivity extends AppCompatActivity {
             autoRetryCount++;
             lastRecoveryRealtimeMs = android.os.SystemClock.elapsedRealtime();
             Log.w(TAG, "Transient playback error, retry " + autoRetryCount + "/" + MAX_AUTO_RETRIES + " in " + delayMs + "ms");
+            autoRetryPending = true;
             bufferingSpinner.setVisibility(View.VISIBLE);
             handler.removeCallbacks(autoRetryRunnable);
             handler.postDelayed(autoRetryRunnable, delayMs);
@@ -1254,7 +1260,10 @@ public class ExoPlayerActivity extends AppCompatActivity {
         }
         if (isExpiredLink(error) && !freshStreamRequested) {
             Log.w(TAG, "Stream link rejected (HTTP " + httpStatusOf(error) + "), requesting a fresh one");
-            requestFreshStream();
+            // Posted: this runs inside the player's own error callback, and
+            // requestFreshStream() releases that player.
+            freshStreamRequested = true;
+            handler.post(this::requestFreshStream);
             return true;
         }
         return false;
@@ -1408,7 +1417,9 @@ public class ExoPlayerActivity extends AppCompatActivity {
                 // mid-playback stall - showing a spinner for exactly that
                 // state (and nothing else) means a stall always reads as
                 // "still loading", never a frozen/broken player.
-                bufferingSpinner.setVisibility(state == Player.STATE_BUFFERING ? View.VISIBLE : View.GONE);
+                boolean loading = state == Player.STATE_BUFFERING
+                        || (state == Player.STATE_IDLE && autoRetryPending);
+                bufferingSpinner.setVisibility(loading ? View.VISIBLE : View.GONE);
                 if (state == Player.STATE_READY) {
                     textRemainingTime.setText(formatTime(Math.max(player.getDuration(), 0)));
                     maybeFetchSkipTimes();
