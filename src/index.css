@@ -169,40 +169,27 @@ body {
   background: rgba(255, 255, 255, 0.25);
 }
 
-/* Liquid glass utility: blur + saturation (the frosted-glass recipe) plus a
-   soft inner top highlight to read as a curved, lit surface rather than a
-   flat tinted panel. */
+/* Card surface (Continue Watching cards, episode tiles, list rows). Flat
+   and opaque on purpose: these sit inside scrolling lists, and a
+   backdrop-filter blur on each one is re-rendered every frame while
+   scrolling - the main source of jank in Android WebViews. Netflix uses
+   flat surfaces for the same reason. Only `transform` animates. */
 .glass-panel {
   position: relative;
-  background: var(--bg-glass);
-  backdrop-filter: blur(20px) saturate(180%);
-  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  background: var(--bg-surface);
   border: 1px solid var(--border-subtle);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.09), inset 0 0 0 1px rgba(255, 255, 255, 0.02);
-  transition: transform 0.4s cubic-bezier(0.22, 1, 0.36, 1), box-shadow 0.4s ease, background-color 0.4s ease;
-  isolation: isolate;
-}
-
-/* Specular sheen: a soft diagonal highlight riding the top edge, the detail
-   that reads "curved liquid glass" instead of a flat tinted rectangle. */
-.glass-panel::before {
-  content: '';
-  position: absolute;
-  inset: 0;
-  border-radius: inherit;
-  background: linear-gradient(115deg, rgba(255,255,255,0.10) 0%, rgba(255,255,255,0.02) 22%, transparent 40%);
-  pointer-events: none;
-  z-index: 1;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  transition: transform 0.25s cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 .glass-panel:active {
-  transform: scale(0.98);
+  transform: scale(0.97);
 }
 
 .glass-nav {
   background: var(--bg-glass-heavy);
-  backdrop-filter: blur(28px) saturate(180%);
-  -webkit-backdrop-filter: blur(28px) saturate(180%);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
   border-top: 1px solid var(--border-subtle);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.07);
   transition: background-color 0.4s ease, border-color 0.4s ease;
@@ -213,8 +200,8 @@ body {
    pane hovering above the content rather than a docked bar. */
 .glass-dock {
   background: var(--bg-glass-heavy);
-  backdrop-filter: blur(30px) saturate(200%);
-  -webkit-backdrop-filter: blur(30px) saturate(200%);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-full);
   box-shadow:
@@ -227,8 +214,8 @@ body {
 .glass-pill {
   position: relative;
   background: rgba(255, 255, 255, 0.08);
-  backdrop-filter: blur(14px) saturate(180%);
-  -webkit-backdrop-filter: blur(14px) saturate(180%);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
   border: 1px solid rgba(255, 255, 255, 0.1);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.12);
   transition: transform 0.35s cubic-bezier(0.22, 1, 0.36, 1), background-color 0.25s ease, box-shadow 0.35s ease;
@@ -246,8 +233,8 @@ body {
 .glass-panel-dark {
   position: relative;
   background: rgba(16, 18, 26, 0.88);
-  backdrop-filter: blur(20px) saturate(180%);
-  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
   border: 1px solid rgba(255, 255, 255, 0.09);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.09), 0 12px 36px rgba(0, 0, 0, 0.6);
 }
@@ -257,8 +244,8 @@ body {
    under it, so these stay dark-glass regardless of the light/dark toggle. */
 .glass-pill-dark {
   background: rgba(255, 255, 255, 0.08);
-  backdrop-filter: blur(14px) saturate(180%);
-  -webkit-backdrop-filter: blur(14px) saturate(180%);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
   border: 1px solid rgba(255, 255, 255, 0.1);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.12);
   color: #fff;
@@ -357,8 +344,8 @@ body {
   bottom: 6px;
   border-radius: var(--radius-full);
   background: var(--select-bg);
-  backdrop-filter: blur(18px) saturate(180%);
-  -webkit-backdrop-filter: blur(18px) saturate(180%);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
   border: 1px solid var(--select-border);
   box-shadow: var(--select-shadow);
   transition: transform 0.5s cubic-bezier(0.22, 1, 0.36, 1), width 0.5s cubic-bezier(0.22, 1, 0.36, 1), background-color 0.4s ease, border-color 0.4s ease;
@@ -392,8 +379,8 @@ body {
 }
 .seg-pill.active {
   background: var(--select-bg);
-  backdrop-filter: blur(14px) saturate(180%);
-  -webkit-backdrop-filter: blur(14px) saturate(180%);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
   border: 1px solid var(--select-border);
   color: var(--select-text);
   box-shadow: var(--select-shadow);
@@ -474,3 +461,94 @@ input {
   from { left: -40%; }
   to { left: 100%; }
 }
+
+/* ---- Hero carousel (HeroCarousel.tsx) ----
+   Native horizontal scroll-snap: swipes track the finger 1:1 and settle on
+   a slide without any JS animation. */
+.hero-track {
+  display: flex;
+  overflow-x: auto;
+  scroll-snap-type: x mandatory;
+  overscroll-behavior-x: contain;
+  scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
+}
+.hero-track::-webkit-scrollbar { display: none; }
+.hero-slide {
+  position: relative;
+  flex: 0 0 100%;
+  scroll-snap-align: start;
+  scroll-snap-stop: always;
+  overflow: hidden;
+}
+.hero-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  padding: 24px 20px 40px 20px;
+  background: linear-gradient(180deg, rgba(8,9,14,0.25) 0%, rgba(8,9,14,0.55) 50%, var(--bg-main) 100%);
+}
+.hero-rank {
+  background: #e50914;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 800;
+  padding: 3px 8px;
+  border-radius: 4px;
+  letter-spacing: 0.3px;
+}
+.hero-title {
+  font-size: 26px;
+  font-weight: 800;
+  line-height: 1.2;
+  color: #fff;
+  margin-bottom: 8px;
+  text-shadow: 0 2px 10px rgba(0,0,0,0.8);
+}
+.hero-desc {
+  font-size: 13px;
+  color: #cbd5e1;
+  line-height: 1.4;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  margin-bottom: 16px;
+  max-width: 90%;
+}
+.hero-play, .hero-list {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  height: 44px;
+  border-radius: 6px;
+  border: none;
+  font-size: 15px;
+  font-weight: 700;
+}
+.hero-play { flex: 1; background: #fff; color: #000; }
+.hero-list { padding: 0 16px; color: #fff; }
+.hero-dots {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 14px;
+  display: flex;
+  justify-content: center;
+  gap: 6px;
+  pointer-events: none;
+}
+.hero-dot {
+  pointer-events: auto;
+  width: 6px;
+  height: 6px;
+  padding: 0;
+  border: none;
+  border-radius: 3px;
+  background: rgba(255,255,255,0.35);
+  transition: width 0.25s ease, background 0.25s ease;
+}
+.hero-dot.active { width: 18px; background: #fff; }

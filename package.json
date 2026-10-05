@@ -1,14 +1,15 @@
 {
   "name": "app",
   "private": true,
-  "version": "7.0.0",
+  "version": "7.1.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "oxlint",
+    "preview": "vite preview",
     "test": "node --experimental-strip-types --test src/**/*.test.ts",
-    "preview": "vite preview"
+    "check-version": "node scripts/check-version.mjs"
   },
   "dependencies": {
     "@capacitor/android": "^8.5.2",

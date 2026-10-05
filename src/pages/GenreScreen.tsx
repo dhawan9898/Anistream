@@ -30,16 +30,23 @@ export const GenreScreen: React.FC<GenreScreenProps> = ({ genre, onBack, onSelec
     loadingRef.current = true;
     setLoading(true);
     const next = page + 1;
-    const result = await getAnimeByGenre(genre, next, nextPathRef.current);
-    nextPathRef.current = result.nextPath;
-    setItems(prev => {
-      const seen = new Set(prev.map(i => i.id));
-      return [...prev, ...result.items.filter(i => !seen.has(i.id))];
-    });
-    setPage(next);
-    setHasMore(result.hasMore && result.items.length > 0);
-    setLoading(false);
-    loadingRef.current = false;
+    try {
+      const result = await getAnimeByGenre(genre, next, nextPathRef.current);
+      nextPathRef.current = result.nextPath;
+      setItems(prev => {
+        const seen = new Set(prev.map(i => i.id));
+        return [...prev, ...result.items.filter(i => !seen.has(i.id))];
+      });
+      setPage(next);
+      setHasMore(result.hasMore && result.items.length > 0);
+    } catch (err) {
+      // Stop paging instead of leaving the loading flag stuck forever.
+      console.warn('[GenreScreen] page load failed:', err);
+      setHasMore(false);
+    } finally {
+      setLoading(false);
+      loadingRef.current = false;
+    }
   }, [genre, page, hasMore]);
 
   // First page on mount (App keys this screen by genre, so a genre switch

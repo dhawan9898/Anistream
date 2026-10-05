@@ -10,6 +10,16 @@ export interface ModeSwitchRequestedEvent {
   title: string;
   episode: string;
   mode: 'sub' | 'dub';
+  // Where the old audio was, so the new one continues from there.
+  positionMs?: number;
+}
+
+// The player started the prefetched next episode on its own.
+export interface NextEpisodeStartedEvent {
+  title: string;
+  episode: string;
+  mode: 'sub' | 'dub';
+  url: string;
 }
 
 export interface NextEpisodeRequestedEvent {
@@ -31,11 +41,12 @@ export interface ProgressUpdateEvent {
   durationMs: number;
 }
 
-// The player's Retry button after a failure. JS re-resolves the stream
-// (the CDN link may have expired) and resumes at positionMs.
-export interface RetryRequestedEvent {
+// The stream failed with an HTTP error; JS resolves the same episode again
+// and play()s it at positionMs (once per episode - see ExoPlayerActivity).
+export interface ReloadRequestedEvent {
   title: string;
   episode: string;
+  mode: 'sub' | 'dub';
   positionMs: number;
 }
 
@@ -43,6 +54,8 @@ export interface PlayEpisodeOption {
   id: string;
   number: string;
 }
+
+export type PlayOptions = Parameters<ExoPlayerPluginInterface['play']>[0];
 
 export interface ExoPlayerPluginInterface {
   play(options: {
@@ -61,6 +74,10 @@ export interface ExoPlayerPluginInterface {
     // Where to start playing (resume), in ms.
     startPositionMs?: number;
   }): Promise<{ success: boolean }>;
+
+  // Same options as play(), for the episode after `afterEpisode`: the
+  // player keeps it and starts it itself on Next Episode / countdown end.
+  setNextEpisode(options: PlayOptions & { afterEpisode: string }): Promise<void>;
 
   // Opens the player immediately in its loading state (title + spinner)
   // while the stream is being resolved; play() then hands it the stream.
@@ -91,8 +108,13 @@ export interface ExoPlayerPluginInterface {
   ): Promise<PluginListenerHandle>;
 
   addListener(
-    eventName: 'retryRequested',
-    listenerFunc: (event: RetryRequestedEvent) => void
+    eventName: 'reloadRequested',
+    listenerFunc: (event: ReloadRequestedEvent) => void
+  ): Promise<PluginListenerHandle>;
+
+  addListener(
+    eventName: 'nextEpisodeStarted',
+    listenerFunc: (event: NextEpisodeStartedEvent) => void
   ): Promise<PluginListenerHandle>;
 
   addListener(

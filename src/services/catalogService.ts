@@ -411,38 +411,95 @@ interface AniListInfo {
 
 const RELATION_TYPES = new Set(['PREQUEL', 'SEQUEL', 'PARENT', 'SIDE_STORY', 'SPIN_OFF', 'ALTERNATIVE', 'SUMMARY']);
 
+// How well an AniList entry's titles match the site title: 3 exact, 2
+// prefix ("Title" vs "Title: Subtitle"), 1 same franchise, 0 unrelated.
+function matchScore(media: any, title: string): number {
+  const names = [media?.title?.english, media?.title?.romaji, ...(media?.synonyms || [])]
+    .filter((t: unknown): t is string => typeof t === 'string' && !!t);
+  const wanted = normalizeTitle(title);
+  if (names.some(n => normalizeTitle(n) === wanted)) return 3;
+  if (names.some(n => titlesMatch(n, title))) return 2;
+  if (names.some(n => franchiseKey(n) === franchiseKey(title))) return 1;
+  return 0;
+}
+
+const REC_FIELDS = `recommendations(sort: RATING_DESC, perPage: 25) {
+  nodes { rating mediaRecommendation { isAdult ${MEDIA_FIELDS} } }
+}`;
+
+// Community recommendations with a positive rating, best first, minus adult
+// titles - the votes are what make "More Like This" actually similar.
+function goodRecommendations(media: any): AnimeItem[] {
+  return (media?.recommendations?.nodes || [])
+    .filter((n: any) => (n?.rating ?? 0) > 0 && n?.mediaRecommendation && !n.mediaRecommendation.isAdult)
+    .map((n: any) => anilistToAnime(n.mediaRecommendation))
+    .filter(Boolean) as AnimeItem[];
+}
+
+// A sequel ("Season 3") rarely has many recommendations of its own; below
+// this many, the franchise's root entry's recommendations are added.
+const MIN_OWN_RECOMMENDATIONS = 8;
+
 async function loadAniListInfo(anime: AnimeItem): Promise<AniListInfo | null> {
   try {
-    const data = await anilist(`query ($search: String) {
-      Media(search: $search, type: ANIME) {
-        ${MEDIA_FIELDS}
-        relations { edges { relationType node { type ${MEDIA_FIELDS} } } }
-        recommendations(sort: RATING_DESC, perPage: 18) { nodes { mediaRecommendation { ${MEDIA_FIELDS} } } }
-      }
+    // 1. Find the entry: AniList's search is fuzzy, so look at the top few
+    //    results and take the best title match - never an unrelated one.
+    const found = await anilist(`query ($search: String) {
+      Page(perPage: 6) { media(search: $search, type: ANIME, sort: SEARCH_MATCH) { id synonyms title { romaji english } } }
     }`, { search: anime.title });
-    const media = data?.Media;
-    if (!media) return null;
-    // AniList's search is fuzzy - only trust it when it found this title.
-    const names = [media.title?.english, media.title?.romaji, ...(media.synonyms || [])].filter(Boolean) as string[];
-    if (!names.some(t => titlesMatch(t, anime.title) || franchiseKey(t) === franchiseKey(anime.title))) {
-      console.warn(`[catalogService] AniList matched "${names[0]}" for "${anime.title}" - ignoring`);
+    const candidates: any[] = found?.Page?.media || [];
+    let best: any = null;
+    let bestScore = 0;
+    for (const m of candidates) {
+      const score = matchScore(m, anime.title);
+      if (score > bestScore) {
+        best = m;
+        bestScore = score;
+      }
+    }
+    if (!best) {
+      console.warn(`[catalogService] No AniList entry matches "${anime.title}"`);
       return null;
     }
+
+    // 2. Full details for that exact entry.
+    const data = await anilist(`query ($id: Int) {
+      Media(id: $id, type: ANIME) {
+        ${MEDIA_FIELDS}
+        relations { edges { relationType node { id type ${MEDIA_FIELDS} } } }
+        ${REC_FIELDS}
+      }
+    }`, { id: best.id });
+    const media = data?.Media;
+    if (!media) return null;
+
     const dateKey = (m: any): number | undefined =>
       (m?.startDate?.year ? m.startDate.year * 12 + (m.startDate.month || 1) : undefined);
     const order = new Map<string, number>();
     const relations: AnimeItem[] = [];
+    let root: any = null;
     for (const edge of media.relations?.edges || []) {
       if (edge?.node?.type !== 'ANIME' || !RELATION_TYPES.has(edge.relationType)) continue;
+      if (!root && (edge.relationType === 'PARENT' || edge.relationType === 'PREQUEL')) root = edge.node;
       const item = anilistToAnime(edge.node);
       if (!item) continue;
       relations.push(item);
       const key = dateKey(edge.node);
       if (key) order.set(item.id, key);
     }
-    const recommendations = (media.recommendations?.nodes || [])
-      .map((n: any) => anilistToAnime(n?.mediaRecommendation))
-      .filter(Boolean) as AnimeItem[];
+
+    // 3. Sparse recommendations (typical for sequels): add the parent /
+    //    prequel's, which describe the same show.
+    let recommendations = goodRecommendations(media);
+    if (recommendations.length < MIN_OWN_RECOMMENDATIONS && root?.id) {
+      try {
+        const rootData = await anilist(`query ($id: Int) { Media(id: $id, type: ANIME) { id ${REC_FIELDS} } }`, { id: root.id });
+        recommendations = dedupe([...recommendations, ...goodRecommendations(rootData?.Media)]);
+      } catch (err) {
+        console.warn('[catalogService] Franchise recommendations failed:', err);
+      }
+    }
+
     return {
       description: stripHtml(media.description),
       genres: Array.isArray(media.genres) ? media.genres : [],
@@ -541,7 +598,7 @@ async function loadAnimeDetails(anime: AnimeItem): Promise<AnimeDetails> {
   const exclude = new Set(collection.map(c => c.id).concat(anime.id));
   const franchise = franchiseKey(anime.title);
   const notSameShow = (s: AnimeItem) => franchiseKey(s.title) !== franchise;
-  let suggestions = dedupe(aniList?.recommendations || [], exclude).filter(notSameShow);
+  let suggestions = dedupe(aniList?.recommendations || [], exclude).filter(notSameShow).slice(0, 18);
   if (suggestions.length < 6 && genres.length > 0) {
     const byGenre = await suggestByGenres(genres, new Set([...exclude, ...suggestions.map(s => s.id)]));
     suggestions = dedupe([...suggestions, ...byGenre.filter(notSameShow)]).slice(0, 18);

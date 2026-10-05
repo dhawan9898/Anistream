@@ -333,25 +333,32 @@
         <FrameLayout
             android:id="@+id/btn_next_episode"
             android:layout_width="wrap_content"
-            android:layout_height="44dp"
-            android:layout_marginStart="10dp"
+            android:layout_height="36dp"
+            android:layout_marginStart="8dp"
             android:visibility="gone">
 
+            <!-- Countdown: a thin red bar along the bottom edge that grows
+                 left to right until the next episode starts. -->
             <View
                 android:id="@+id/next_episode_fill"
                 android:layout_width="match_parent"
-                android:layout_height="match_parent" />
+                android:layout_height="3dp"
+                android:layout_gravity="bottom" />
 
+            <!-- Play icon is set in code (ExoPlayerActivity.styleGlassChrome):
+                 a "▶" text glyph renders as a large color emoji on many
+                 phones, which made this button look oversized. -->
             <TextView
+                android:id="@+id/next_episode_label"
                 android:layout_width="wrap_content"
                 android:layout_height="match_parent"
-                android:drawablePadding="8dp"
+                android:drawablePadding="6dp"
                 android:gravity="center"
-                android:paddingStart="18dp"
-                android:paddingEnd="20dp"
-                android:text="▶  Next Episode"
+                android:paddingStart="12dp"
+                android:paddingEnd="14dp"
+                android:text="Next Episode"
                 android:textColor="#000000"
-                android:textSize="14sp"
+                android:textSize="13sp"
                 android:textStyle="bold" />
         </FrameLayout>
     </LinearLayout>

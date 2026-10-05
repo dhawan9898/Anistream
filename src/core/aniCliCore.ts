@@ -1,6 +1,5 @@
 // aniCliCore.ts - Port of ani-cli scraping & deobfuscation logic
 import { Capacitor } from '@capacitor/core';
-import { getJson, getText, HttpError } from './http';
 
 export interface AnimeItem {
   id: string;          // e.g. "solo-leveling-season-2-arise-from-the-shadow-19413"
@@ -52,9 +51,9 @@ export interface StreamSource {
   referer: string;
   masterUrl?: string;
   qualities?: { quality: string; url: string }[];
-  // Legacy flag from when a demo clip stood in for failed sources. Stream
-  // resolution now throws instead, so this is never set; kept so the native
-  // bridge contract doesn't change.
+  // True only when every real source failed and streamUrl is the built-in
+  // demo clip - callers must make this visible, never present it as if it
+  // were the real episode.
   isFallback?: boolean;
   // Opening/ending intervals served by the embed player's own sources
   // endpoint (the same data HiAnime's "Skip Intro"/"Skip Outro" uses).
@@ -105,44 +104,108 @@ export function getApiBase(): string {
   return Capacitor.isNativePlatform() ? REMOTE_HOST : "/api-hianime";
 }
 
+// Every network step of stream resolution goes through this so one hung
+// request can't leave the player spinning forever. The timeout is enforced
+// with Promise.race because the native (CapacitorHttp) fetch ignores
+// signals; on the web the AbortController additionally cancels the
+// underlying request so a timed-out download doesn't keep eating bandwidth.
+const FETCH_TIMEOUT_MS = 15000;
+
+function fetchTimed(input: string, init?: RequestInit, ms = FETCH_TIMEOUT_MS): Promise<Response> {
+  const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+  let timer: ReturnType<typeof setTimeout>;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      controller?.abort();
+      reject(new Error(`request timed out after ${ms}ms: ${input}`));
+    }, ms);
+  });
+  return Promise.race([fetch(input, { ...init, signal: controller?.signal }), timeout])
+    .finally(() => clearTimeout(timer));
+}
+
+// Idempotent GETs against the site get one retry after a short backoff when
+// the failure looks transient (network error, 429, 5xx) - a single flaky
+// response shouldn't fall straight through to curated/demo fallbacks.
+async function fetchWithRetry(input: string, init?: RequestInit, retries = 1): Promise<Response> {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      const res = await fetchTimed(input, init);
+      if ((res.status === 429 || res.status >= 500) && attempt < retries) {
+        await sleep(600 * (attempt + 1));
+        continue;
+      }
+      return res;
+    } catch (err) {
+      if (attempt >= retries) throw err;
+      await sleep(600 * (attempt + 1));
+    }
+  }
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+// Small in-memory TTL cache with in-flight de-duplication: the home screen,
+// genre rails, detail page and player all ask for the same pages/episode
+// lists, and without this each of them hit the site separately (the fastest
+// way to get rate-limited or IP-banned). Failures are never cached.
+const responseCache = new Map<string, { expires: number; value: Promise<unknown> }>();
+const CACHE_MAX_ENTRIES = 200;
+
+function cached<T>(key: string, ttlMs: number, load: () => Promise<T>): Promise<T> {
+  const now = Date.now();
+  const hit = responseCache.get(key);
+  if (hit && hit.expires > now) return hit.value as Promise<T>;
+  const value = load();
+  responseCache.set(key, { expires: now + ttlMs, value });
+  value.catch(() => {
+    if (responseCache.get(key)?.value === value) responseCache.delete(key);
+  });
+  if (responseCache.size > CACHE_MAX_ENTRIES) {
+    // Map iterates in insertion order - drop the oldest entry.
+    const oldest = responseCache.keys().next().value;
+    if (oldest !== undefined) responseCache.delete(oldest);
+  }
+  return value;
+}
+
+const PAGE_TTL_MS = 5 * 60 * 1000;
+const EPISODE_LIST_TTL_MS = 10 * 60 * 1000;
+
 // Headers the dev proxy injects automatically; native requests need them set explicitly.
 const UPSTREAM_HEADERS: Record<string, string> = {
   'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
   'Referer': `${REMOTE_HOST}/`
 };
 
-// Listing/detail pages change slowly - reusing them for a few minutes makes
-// back-navigation and repeat visits instant and keeps load off the site.
-const PAGE_TTL_MS = 5 * 60 * 1000;
-const EPISODE_LIST_TTL_MS = 10 * 60 * 1000;
-
-// Thrown when a title/episode genuinely can't be served right now, so the UI
-// can show an honest error with a retry instead of fake content.
-export class SourceUnavailableError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = 'SourceUnavailableError';
-  }
-}
-
 // Fetches a page of the streaming site as HTML. `path` may be a site path
 // ("/genre/action") or an absolute URL on the site.
-export function fetchSiteHtml(path: string, ttlMs = PAGE_TTL_MS): Promise<string> {
+export function fetchSiteHtml(path: string): Promise<string> {
   const sitePath = path.startsWith('http') ? new URL(path).pathname + new URL(path).search : path;
-  return getText(`${getApiBase()}${sitePath}`, {
-    headers: {
-      'Accept': 'text/html,application/xhtml+xml',
-      ...UPSTREAM_HEADERS
+  return cached(`html:${sitePath}`, PAGE_TTL_MS, async () => {
+    const res = await fetchWithRetry(`${getApiBase()}${sitePath}`, {
+      headers: {
+        'Accept': 'text/html,application/xhtml+xml',
+        ...UPSTREAM_HEADERS
+      }
+    });
+    if (!res.ok) {
+      throw new Error(`GET ${sitePath} failed with HTTP ${res.status}`);
     }
-  }, { ttlMs });
+    return res.text();
+  });
 }
 
-// Live search. Throws on network failure - callers show an error + retry.
+// Live search only - no curated/mock fallback. Throws on network failure.
 export async function searchAnimeLive(query: string): Promise<AnimeItem[]> {
   const html = await fetchSiteHtml(`/search?keyword=${encodeURIComponent(query)}`);
   return parseSearchResults(html);
 }
 
+// Search anime. Throws on network failure - callers show an error with a
+// retry instead of placeholder results.
 export async function searchAnime(query: string): Promise<AnimeItem[]> {
   if (!query.trim()) return [];
   return searchAnimeLive(query);
@@ -150,12 +213,12 @@ export async function searchAnime(query: string): Promise<AnimeItem[]> {
 
 // Trending/homepage anime (same card markup as search results).
 // The root "/" is just a landing page - /home is the actual suggestions feed.
-// Throws when the feed can't be loaded so the home screen can offer a retry.
+// Throws when the feed can't be loaded so Home can offer a retry - never
+// substitutes placeholder titles that don't exist on the site.
 export async function getTrendingAnime(): Promise<AnimeItem[]> {
+  // Same cached request the genre menu (catalogService.getGenres) uses.
   const results = parseSearchResults(await fetchSiteHtml('/home'));
-  if (results.length === 0) {
-    throw new SourceUnavailableError('The home feed came back empty');
-  }
+  if (results.length === 0) throw new SourceUnavailableError('The home feed came back empty');
   return results;
 }
 
@@ -238,62 +301,57 @@ export function sitePathOf(href: string): string {
   }
 }
 
-// Trailing numeric id of a site slug: "one-piece-100" -> "100".
-function numericIdOf(slugOrId: string): string {
-  const last = slugOrId.split("-").pop() || "";
-  return /^\d+$/.test(last) ? last : "";
+// Fetch episodes list. Cached per anime: the detail page and the player
+// both need it, and re-opening a title shouldn't refetch it.
+// Throws when the list can't be loaded (failures aren't cached, so the
+// next call retries) - it never invents episodes.
+export function getEpisodes(animeId: string): Promise<EpisodeItem[]> {
+  return cached(`episodes:${animeId}`, EPISODE_LIST_TTL_MS, () => loadEpisodes(animeId));
 }
 
-// Slug without its numeric id: "one-piece-100" -> "one-piece".
-function slugBaseOf(slug: string): string {
-  return slug.replace(/-\d+$/, '');
-}
+async function loadEpisodes(animeId: string): Promise<EpisodeItem[]> {
+  let numericId = animeId.includes("-") ? animeId.split("-").pop() : animeId;
+  let endpoint = `${getApiBase()}/api/theme/episode/list/${numericId}`;
+  let res = await fetchWithRetry(endpoint, { headers: UPSTREAM_HEADERS });
 
-function episodeListUrl(numericId: string): string {
-  return `${getApiBase()}/api/theme/episode/list/${numericId}`;
-}
-
-function parseEpisodeList(html: string): EpisodeItem[] {
-  const doc = new DOMParser().parseFromString(html, "text/html");
-  const episodes: EpisodeItem[] = [];
-  doc.querySelectorAll(".ep-item").forEach((ep) => {
-    const id = ep.getAttribute("data-id") || "";
-    const number = ep.getAttribute("data-number") || "";
-    const title = ep.getAttribute("title") || `Episode ${number}`;
-    if (id && number) episodes.push({ id, number, title });
-  });
-  return episodes.sort((a, b) => parseFloat(a.number) - parseFloat(b.number));
-}
-
-async function fetchEpisodeList(numericId: string): Promise<EpisodeItem[]> {
-  const data = await getJson<{ html?: string }>(episodeListUrl(numericId), { headers: UPSTREAM_HEADERS }, {
-    ttlMs: EPISODE_LIST_TTL_MS
-  });
-  return data?.html ? parseEpisodeList(data.html) : [];
-}
-
-// Real episode list, sorted by episode number. Throws when it can't be
-// loaded - never invents episodes that would only ever play the wrong thing.
-export async function getEpisodes(animeId: string): Promise<EpisodeItem[]> {
-  const numericId = numericIdOf(animeId);
-  if (numericId) {
-    try {
-      return await fetchEpisodeList(numericId);
-    } catch (err) {
-      // A 404 usually means the site re-numbered the title; anything else
-      // (network down, timeout) is worth surfacing as-is.
-      if (!(err instanceof HttpError) || err.status !== 404) throw err;
-      console.warn(`[aniCliCore] Episode list for ${animeId} returned 404, re-resolving by slug`);
+  if (!res.ok) {
+    // The site may have re-numbered the title: find it again by name, but
+    // only accept the very same slug - never a different show that
+    // happens to be the first search result.
+    const slugBase = animeId.replace(/-[0-9]+$/, '');
+    if (slugBase) {
+      const found = await searchAnimeLive(slugBase.replace(/-/g, ' '));
+      const same = found.find(r => r.id.replace(/-[0-9]+$/, '') === slugBase);
+      const newNumericId = same?.id.split("-").pop();
+      if (newNumericId && /^\d+$/.test(newNumericId) && newNumericId !== numericId) {
+        endpoint = `${getApiBase()}/api/theme/episode/list/${newNumericId}`;
+        res = await fetchTimed(endpoint, { headers: UPSTREAM_HEADERS });
+      }
     }
   }
 
-  // Re-find the title by name and only accept the very same slug, so a
-  // stale id can never silently resolve to a different show.
-  const base = slugBaseOf(animeId);
-  const found = await searchAnimeLive(base.replace(/-/g, ' '));
-  const same = found.find(r => slugBaseOf(r.id) === base && numericIdOf(r.id) && numericIdOf(r.id) !== numericId);
-  if (!same) throw new SourceUnavailableError(`No episode list found for "${animeId}"`);
-  return fetchEpisodeList(numericIdOf(same.id));
+  if (!res.ok) {
+    throw new Error(`Episodes fetch failed with HTTP ${res.status}`);
+  }
+
+  const data = await res.json();
+  if (!data.html) return [];
+
+  const parser = new DOMParser();
+  const doc = parser.parseFromString(data.html, "text/html");
+  const epItems = doc.querySelectorAll(".ep-item");
+  const episodes: EpisodeItem[] = [];
+
+  epItems.forEach((ep) => {
+    const id = ep.getAttribute("data-id") || "";
+    const number = ep.getAttribute("data-number") || "";
+    const title = ep.getAttribute("title") || `Episode ${number}`;
+    if (id && number) {
+      episodes.push({ id, number, title });
+    }
+  });
+
+  return episodes.sort((a, b) => parseFloat(a.number) - parseFloat(b.number));
 }
 
 export async function decryptToken(enc: string): Promise<string> {
@@ -329,216 +387,267 @@ export async function decryptToken(enc: string): Promise<string> {
   }
 }
 
-// ----------------------------------------------------------- stream resolution
+// Fetch servers and resolve stream
+export async function getEpisodeStream(
+  animeTitleOrId: string, 
+  episodeIdOrNumber: string = '1',
+  mode: 'sub' | 'dub' = 'sub',
+  animeId?: string
+): Promise<StreamSource> {
+  // 1. First priority: Invoke real ani-cli bridge (when running in Vite dev mode).
+  if (!Capacitor.isNativePlatform()) {
+    try {
+      const cleanQuery = (animeId || animeTitleOrId).replace(/-[0-9]+$/, '').replace(/-/g, ' ');
+      const epNum = episodeIdOrNumber.replace(/^.*-ep-/, '').replace(/[^0-9.]/g, '') || '1';
+      const bridgeUrl = `/api/ani-cli/stream?query=${encodeURIComponent(cleanQuery)}&ep=${encodeURIComponent(epNum)}&mode=${mode}`;
+      console.log("[aniCliCore] Requesting stream from bridge:", bridgeUrl);
+      const res = await fetchTimed(bridgeUrl);
+      if (res.ok) {
+        const data = await res.json();
+        if (data.streamUrl) {
+          console.log("[aniCliCore] Received stream from bridge successfully:", data);
+          return {
+            streamUrl: data.streamUrl,
+            quality: data.qualities?.[0]?.quality || "1080p",
+            subtitles: parseSubtitleTracks(data.subtitles),
+            referer: data.referer || 'https://hianime.at/',
+            masterUrl: data.streamUrl,
+            qualities: data.qualities || [{ quality: "1080p", url: data.streamUrl }],
+            intro: parseSkipRange(data.intro),
+            outro: parseSkipRange(data.outro)
+          };
+        }
+      }
+    } catch (err) {
+      console.warn("[aniCliCore] bridge call failed, falling back to direct scraper:", err);
+    }
+  }
 
-// Resolved stream URLs carry short-lived CDN tokens, so they're only reused
-// briefly - long enough for a sub/dub flip back, a retry, or a next-episode
-// prefetch made near the end of the current one.
-const STREAM_TTL_MS = 8 * 60 * 1000;
+  // 2. Secondary fallback (and primary path on Capacitor Native App): direct scrape
+  try {
+    let targetEpisodeId = episodeIdOrNumber;
+    // If targetEpisodeId is not a numeric episode ID, resolve from anime episode list
+    if (!/^\d+$/.test(targetEpisodeId)) {
+      let numericAnimeId = (animeId || animeTitleOrId).includes("-") ? (animeId || animeTitleOrId).split("-").pop() : "";
+      if (!numericAnimeId || !/^\d+$/.test(numericAnimeId)) {
+        const found = await searchAnime(animeTitleOrId);
+        if (found.length > 0) {
+          numericAnimeId = found[0].id.split("-").pop() || "";
+        }
+      }
+      if (numericAnimeId && /^\d+$/.test(numericAnimeId)) {
+        const list = await getEpisodes(numericAnimeId);
+        const epNum = episodeIdOrNumber.replace(/^.*-ep-/, '').replace(/[^0-9.]/g, '') || '1';
+        // No match means no such episode - never silently play episode 1 instead.
+        const match = list.find(e => e.number === epNum || e.id === episodeIdOrNumber);
+        if (match && match.id) {
+          targetEpisodeId = match.id;
+        }
+      }
+    }
 
-interface CachedStream {
-  source: Promise<StreamSource>;
-  expires: number;
+    const endpoint = `${getApiBase()}/api/theme/episode/servers?episodeId=${targetEpisodeId}`;
+    const res = await fetchWithRetry(endpoint, { headers: UPSTREAM_HEADERS });
+    if (!res.ok) {
+      console.warn(`[aniCliCore] Direct scrape: servers endpoint returned HTTP ${res.status} for episodeId=${targetEpisodeId}`);
+    }
+    const data = await res.json();
+
+    if (data.html) {
+      const hashes = pickServerHashes(data.html, mode);
+      if (hashes.length === 0) {
+        console.warn("[aniCliCore] Direct scrape: no server entry found in servers HTML for mode", mode);
+      }
+      // Every server of the requested audio type, hedged: see
+      // resolveFirstServer.
+      const source = await resolveFirstServer(hashes, targetEpisodeId, mode);
+      if (source) return source;
+    } else {
+      console.warn("[aniCliCore] Direct scrape: servers endpoint response had no 'html' field", data);
+    }
+  } catch (err) {
+    console.warn("[aniCliCore] Direct scrape threw:", err);
+  }
+
+  // Every real source failed. Never substitute other content (the old demo
+  // clip) - the caller shows an error with Retry instead.
+  console.error(`[aniCliCore] All stream sources failed for "${animeTitleOrId}" ep ${episodeIdOrNumber} (${mode})`);
+  throw new SourceUnavailableError(`No ${mode} server could play episode ${episodeIdOrNumber}`);
 }
 
-const streamCache = new Map<string, CachedStream>();
-
-function streamKey(episodeKey: string, mode: string): string {
-  return `${episodeKey}|${mode}`;
+// Thrown when no server can serve an episode right now.
+export class SourceUnavailableError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'SourceUnavailableError';
+  }
 }
 
-interface ServerEntry {
-  hash: string;
-  type: string;
-  name: string;
+// If the server being tried hasn't produced a stream after this long, the
+// next one is started alongside it.
+const HEDGE_DELAY_MS = 2500;
+
+// Resolves the first server (of `hashes`, in the site's preference order)
+// that yields a playable stream. Servers aren't tried strictly one after
+// another: a slow or hanging mirror would hold playback for its full
+// timeouts (2 x 15 s) before the next was even asked. Instead each server
+// gets a HEDGE_DELAY_MS head start, then the next starts in parallel; a
+// server that fails outright hands over immediately. A fast first server
+// behaves exactly like the sequential walk.
+export function resolveFirstServer(
+  hashes: string[],
+  episodeId: string,
+  mode: 'sub' | 'dub',
+  resolve: (hash: string, episodeId: string, mode: 'sub' | 'dub') => Promise<StreamSource | null> = resolveEmbed,
+  hedgeDelayMs = HEDGE_DELAY_MS
+): Promise<StreamSource | null> {
+  return new Promise(done => {
+    let next = 0;
+    let pending = 0;
+    let finished = false;
+    let hedgeTimer: ReturnType<typeof setTimeout> | undefined;
+
+    const finish = (source: StreamSource | null) => {
+      if (finished) return;
+      finished = true;
+      clearTimeout(hedgeTimer);
+      done(source);
+    };
+
+    const launch = () => {
+      if (finished || next >= hashes.length) return;
+      const hash = hashes[next++];
+      pending++;
+      clearTimeout(hedgeTimer);
+      hedgeTimer = setTimeout(launch, hedgeDelayMs);
+      resolve(hash, episodeId, mode)
+        .then(source => { if (source) finish(source); })
+        .catch(err => console.warn(`[aniCliCore] episodeId=${episodeId} server failed:`, err))
+        .finally(() => {
+          pending--;
+          if (finished) return;
+          if (next < hashes.length) launch();
+          else if (pending === 0) finish(null);
+        });
+    };
+
+    if (hashes.length === 0) finish(null);
+    else launch();
+  });
 }
 
-function parseServers(html: string): ServerEntry[] {
-  const doc = new DOMParser().parseFromString(html, "text/html");
-  return Array.from(doc.querySelectorAll('[data-hash]')).map(el => ({
-    hash: el.getAttribute('data-hash') || '',
-    type: (el.getAttribute('data-type') || '').toLowerCase(),
-    name: (el.textContent || '').trim()
-  })).filter(s => s.hash);
+// Server hashes to try, best first: every server tagged with the requested
+// audio type, or - only when the episode has none of that type at all -
+// whatever servers exist (better than nothing; the player labels the mode).
+function pickServerHashes(serversHtml: string, mode: 'sub' | 'dub'): string[] {
+  const doc = new DOMParser().parseFromString(serversHtml, "text/html");
+  const hashesOf = (selector: string) => Array.from(doc.querySelectorAll(selector))
+    .map(el => el.getAttribute("data-hash") || "")
+    .filter(Boolean);
+  const preferred = hashesOf(`[data-type="${mode}"][data-hash]`);
+  const list = preferred.length > 0 ? preferred : hashesOf("[data-hash]");
+  return Array.from(new Set(list)).slice(0, 4);
 }
 
-// Servers to try, best first: every server of the requested audio mode in
-// the site's own order, and only when that mode has none at all, whatever
-// else exists (some titles list a single untyped/raw server).
-export function orderServers<T extends { type: string }>(servers: T[], mode: 'sub' | 'dub'): T[] {
-  const matching = servers.filter(s => s.type === mode);
-  return matching.length > 0 ? matching : servers;
+function decodeEmbedUrl(hash: string): string | null {
+  try {
+    const url = new URL(atob(hash));
+    // The hash comes from a third-party page - never follow it to anything
+    // but a plain web URL (no javascript:, file:, content:, ...).
+    return url.protocol === "https:" || url.protocol === "http:" ? url.toString() : null;
+  } catch {
+    return null;
+  }
 }
 
-// Turns a non-numeric episode reference (legacy "<slug>-ep-<n>" ids from
-// older history entries) into the site's numeric episode id.
-async function resolveEpisodeId(animeTitleOrId: string, episodeIdOrNumber: string, animeId?: string): Promise<string> {
-  if (/^\d+$/.test(episodeIdOrNumber)) return episodeIdOrNumber;
-  const list = await getEpisodes(animeId || animeTitleOrId);
-  const epNum = episodeIdOrNumber.replace(/^.*-ep-/, '').replace(/[^0-9.]/g, '') || '1';
-  const match = list.find(e => e.number === epNum || e.id === episodeIdOrNumber);
-  if (!match) throw new SourceUnavailableError(`Episode ${epNum} was not found`);
-  return match.id;
+// Subtitle tracks from a sources payload. Players also list a "thumbnails"
+// sprite VTT in the same array, which must never show up as a caption.
+function parseSubtitleTracks(tracks: any): SubtitleTrack[] {
+  if (!Array.isArray(tracks)) return [];
+  const seen = new Set<string>();
+  const out: SubtitleTrack[] = [];
+  for (const t of tracks) {
+    const src = t?.file || t?.src;
+    const kind = String(t?.kind || "captions").toLowerCase();
+    if (!src || typeof src !== "string" || (kind !== "captions" && kind !== "subtitles")) continue;
+    if (seen.has(src)) continue;
+    seen.add(src);
+    out.push({ src, label: t.label || t.lang || "English", default: t.default === true });
+  }
+  return out;
 }
 
-// One embed server -> playable stream. Throws if this server can't serve it.
-async function resolveFromServer(server: ServerEntry): Promise<StreamSource> {
-  const embedUrl = atob(server.hash);
-  const embedHtml = await getText(embedUrl, {
-    headers: { ...UPSTREAM_HEADERS, 'Referer': `${REMOTE_HOST}/` }
-  }, { retries: 1 });
+// Resolves one server entry (base64 embed URL) to a playable stream, or
+// null when that server doesn't yield one.
+async function resolveEmbed(hash: string, episodeId: string, mode: 'sub' | 'dub'): Promise<StreamSource | null> {
+  const embedUrl = decodeEmbedUrl(hash);
+  if (!embedUrl) return null;
+  console.log(`[aniCliCore] episodeId=${episodeId} mode=${mode} resolved embedUrl:`, embedUrl);
+  const embedRes = await fetchTimed(embedUrl, {
+    headers: {
+      ...UPSTREAM_HEADERS,
+      'Referer': `${REMOTE_HOST}/`
+    }
+  });
+  if (!embedRes.ok) return null;
+  const embedHtml = await embedRes.text();
   const idMatch = embedHtml.match(/data-id="(\d+)"/i);
-  if (!idMatch) throw new Error(`embed page had no data-id: ${embedUrl}`);
+  if (!idMatch) return null;
 
   const embedOrigin = new URL(embedUrl).origin;
-  const sourcesJson = await getJson(`${embedOrigin}/stream/getSourcesNew?id=${idMatch[1]}`, {
+  const sourcesUrl = `${embedOrigin}/stream/getSourcesNew?id=${idMatch[1]}`;
+  const sourcesRes = await fetchTimed(sourcesUrl, {
     headers: {
       ...UPSTREAM_HEADERS,
       'Referer': embedUrl,
       'X-Requested-With': 'XMLHttpRequest'
     }
-  }, { retries: 1 });
+  });
+  if (!sourcesRes.ok) return null;
+  const sourcesJson = await sourcesRes.json();
 
   let rawStreamUrl = "";
-  let intro = parseSkipRange(sourcesJson?.intro);
-  let outro = parseSkipRange(sourcesJson?.outro);
-  if (sourcesJson?.sources?.[0]?.file) {
+  let intro = parseSkipRange(sourcesJson.intro);
+  let outro = parseSkipRange(sourcesJson.outro);
+  let tracks = sourcesJson.tracks;
+  if (sourcesJson.sources && sourcesJson.sources[0]?.file) {
     rawStreamUrl = sourcesJson.sources[0].file;
-  } else if (sourcesJson?.enc) {
+  } else if (sourcesJson.enc) {
     const decStr = await decryptToken(sourcesJson.enc);
     if (decStr) {
-      const dec = JSON.parse(decStr);
-      rawStreamUrl = dec.file || dec.src || "";
-      intro = intro || parseSkipRange(dec.intro);
-      outro = outro || parseSkipRange(dec.outro);
+      try {
+        const dec = JSON.parse(decStr);
+        rawStreamUrl = dec.file || dec.src;
+        intro = intro || parseSkipRange(dec.intro);
+        outro = outro || parseSkipRange(dec.outro);
+        tracks = tracks || dec.tracks;
+      } catch (e) {
+        console.error("[aniCliCore] JSON parse error on decrypted token:", e);
+      }
     }
   }
-  if (!rawStreamUrl) throw new Error(`sources payload had no stream URL (${embedOrigin})`);
+  if (!rawStreamUrl || typeof rawStreamUrl !== "string") return null;
 
-  const subtitles: SubtitleTrack[] = (sourcesJson.tracks || [])
-    .filter((t: any) => (t.kind === 'captions' || t.kind === 'subtitles' || !t.kind) && (t.file || t.src))
-    .map((s: any) => ({
-      src: s.file || s.src,
-      label: s.label || s.lang || "English",
-      default: s.default === true
-    }));
+  const subtitles = parseSubtitleTracks(tracks);
+  console.log(`[aniCliCore] episodeId=${episodeId} mode=${mode} RESOLVED STREAM URL:`, rawStreamUrl);
+  console.log(`[aniCliCore] episodeId=${episodeId} skip markers: intro=`, intro, 'outro=', outro);
 
-  // One adaptive (HLS master) URL - the players expose its real renditions.
-  // Listing fake "1080p/720p/480p" entries that all point at the same URL
-  // would only make the quality menu lie.
   return {
     streamUrl: rawStreamUrl,
-    quality: "Auto",
+    quality: "1080p",
     subtitles,
     referer: embedOrigin + '/',
     masterUrl: rawStreamUrl,
-    qualities: [{ quality: "Auto", url: rawStreamUrl }],
+    // One adaptive (HLS master) URL - the players pick the rendition. The
+    // labels only exist so the "Default Quality" preference has something
+    // to match; the menus hide them because the URLs are identical.
+    qualities: [
+      { quality: "1080p", url: rawStreamUrl },
+      { quality: "720p", url: rawStreamUrl },
+      { quality: "480p", url: rawStreamUrl },
+      { quality: "Auto", url: rawStreamUrl }
+    ],
     intro,
     outro
   };
-}
-
-async function resolveViaDevBridge(animeTitleOrId: string, episodeIdOrNumber: string, mode: 'sub' | 'dub', animeId?: string): Promise<StreamSource | null> {
-  try {
-    const cleanQuery = (animeId || animeTitleOrId).replace(/-[0-9]+$/, '').replace(/-/g, ' ');
-    const epNum = episodeIdOrNumber.replace(/^.*-ep-/, '').replace(/[^0-9.]/g, '') || '1';
-    const bridgeUrl = `/api/ani-cli/stream?query=${encodeURIComponent(cleanQuery)}&ep=${encodeURIComponent(epNum)}&mode=${mode}`;
-    const data = await getJson(bridgeUrl, undefined, { retries: 0 });
-    if (!data?.streamUrl) return null;
-    return {
-      streamUrl: data.streamUrl,
-      quality: data.qualities?.[0]?.quality || "Auto",
-      subtitles: data.subtitles || [],
-      referer: data.referer || 'https://hianime.at/',
-      masterUrl: data.streamUrl,
-      qualities: data.qualities || [{ quality: "Auto", url: data.streamUrl }],
-      intro: parseSkipRange(data.intro),
-      outro: parseSkipRange(data.outro)
-    };
-  } catch (err) {
-    console.warn("[aniCliCore] dev bridge unavailable, using direct scraper:", err);
-    return null;
-  }
-}
-
-async function resolveStream(
-  animeTitleOrId: string,
-  episodeIdOrNumber: string,
-  mode: 'sub' | 'dub',
-  animeId?: string
-): Promise<StreamSource> {
-  // Dev only: the real ani-cli bridge served by the Vite plugin.
-  if (!Capacitor.isNativePlatform()) {
-    const bridged = await resolveViaDevBridge(animeTitleOrId, episodeIdOrNumber, mode, animeId);
-    if (bridged) return bridged;
-  }
-
-  const episodeId = await resolveEpisodeId(animeTitleOrId, episodeIdOrNumber, animeId);
-  const data = await getJson<{ html?: string }>(
-    `${getApiBase()}/api/theme/episode/servers?episodeId=${episodeId}`,
-    { headers: UPSTREAM_HEADERS }
-  );
-  const servers = orderServers(parseServers(data?.html || ''), mode);
-  if (servers.length === 0) {
-    throw new SourceUnavailableError(`No ${mode} servers are listed for this episode`);
-  }
-
-  // Mirrors go down independently - walk the list instead of giving up when
-  // the first one fails.
-  const failures: string[] = [];
-  for (const server of servers) {
-    try {
-      const source = await resolveFromServer(server);
-      console.log(`[aniCliCore] episodeId=${episodeId} mode=${mode} resolved via "${server.name || server.type}"`);
-      return source;
-    } catch (err) {
-      const reason = err instanceof Error ? err.message : String(err);
-      failures.push(`${server.name || server.type}: ${reason}`);
-      console.warn(`[aniCliCore] server "${server.name || server.type}" failed for episodeId=${episodeId}:`, err);
-    }
-  }
-  throw new SourceUnavailableError(`All ${servers.length} ${mode} server(s) failed - ${failures.join('; ')}`);
-}
-
-// Resolves a playable stream for an episode, trying every available server.
-// Concurrent and repeated requests for the same episode share one result for
-// a few minutes; pass forceRefresh to bypass that (e.g. the CDN link expired).
-// Throws when no server can serve it - never substitutes other content.
-export function getEpisodeStream(
-  animeTitleOrId: string,
-  episodeIdOrNumber: string = '1',
-  mode: 'sub' | 'dub' = 'sub',
-  animeId?: string,
-  forceRefresh = false
-): Promise<StreamSource> {
-  const key = streamKey(`${animeId || animeTitleOrId}:${episodeIdOrNumber}`, mode);
-  const cached = streamCache.get(key);
-  if (!forceRefresh && cached && cached.expires > Date.now()) {
-    // Hand out copies: callers adjust fields (e.g. chosen quality).
-    return cached.source.then(s => ({ ...s }));
-  }
-
-  const source = resolveStream(animeTitleOrId, episodeIdOrNumber, mode, animeId);
-  const entry = { source, expires: Date.now() + STREAM_TTL_MS };
-  streamCache.set(key, entry);
-  source.catch(() => {
-    if (streamCache.get(key) === entry) streamCache.delete(key);
-  });
-  // Bound the cache: expired entries are useless, drop them as we go.
-  for (const [k, v] of streamCache) {
-    if (v.expires <= Date.now()) streamCache.delete(k);
-  }
-  return source.then(s => ({ ...s }));
-}
-
-// Warms the stream cache for an episode the user is likely to play next, so
-// "Next Episode" starts without the resolution wait. Failures are ignored -
-// the real request will retry and report them.
-export function prefetchEpisodeStream(
-  animeTitleOrId: string,
-  episodeIdOrNumber: string,
-  mode: 'sub' | 'dub',
-  animeId?: string
-): void {
-  getEpisodeStream(animeTitleOrId, episodeIdOrNumber, mode, animeId).catch(() => undefined);
 }

@@ -1,10 +1,11 @@
 import React, { useState, useEffect } from 'react';
-import { Play, Flame, Clock, ChevronRight, ChevronDown, Bookmark, Search as SearchIcon } from 'lucide-react';
+import { Play, Flame, Clock, ChevronRight, ChevronDown, Search as SearchIcon } from 'lucide-react';
 import { getTrendingAnime, type AnimeItem } from '../core/aniCliCore';
-import { getWatchHistory, type WatchHistoryItem } from '../services/historyService';
+import { getWatchHistory, subscribeLibraryChanges, type WatchHistoryItem } from '../services/historyService';
 import { getAnimeByGenre, getGenres, type Genre } from '../services/catalogService';
 import { PosterCard } from '../components/PosterCard';
 import { GenrePicker } from '../components/GenrePicker';
+import { HeroCarousel } from '../components/HeroCarousel';
 import { ErrorState } from '../components/ErrorState';
 
 // Genres that get their own rail on the home screen, Netflix-style.
@@ -60,13 +61,16 @@ interface HomeScreenProps {
   onResumeEpisode: (history: WatchHistoryItem) => void;
   onOpenSearch: () => void;
   onSelectGenre: (genre: Genre) => void;
+  // True while a player covers this screen.
+  paused?: boolean;
 }
 
 export const HomeScreen: React.FC<HomeScreenProps> = ({
   onSelectAnime,
   onResumeEpisode,
   onOpenSearch,
-  onSelectGenre
+  onSelectGenre,
+  paused = false
 }) => {
   const [pickerOpen, setPickerOpen] = useState<boolean>(false);
   const [rowGenres, setRowGenres] = useState<Genre[]>([]);
@@ -77,7 +81,6 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
     });
   }, []);
 
-  const [featuredIndex, setFeaturedIndex] = useState<number>(0);
   const [history, setHistory] = useState<WatchHistoryItem[]>([]);
   const [trending, setTrending] = useState<AnimeItem[]>([]);
   const [loadingTrending, setLoadingTrending] = useState<boolean>(true);
@@ -90,7 +93,6 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
       .then(list => {
         if (cancelled) return;
         setTrending(list);
-        setFeaturedIndex(0);
         setTrendingError(false);
       })
       .catch(err => {
@@ -109,19 +111,21 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
     setTrendingAttempt(n => n + 1);
   };
 
-  // Auto-cycle hero banner every 6 seconds
+  // Continue Watching stays current: it follows library changes while this
+  // screen is visible, and reloads once when the player covering it closes
+  // (not on every progress save during playback, which would re-render the
+  // whole feed under the video every few seconds).
   useEffect(() => {
-    const timer = setInterval(() => {
-      setFeaturedIndex(prev => (prev + 1) % (Math.min(trending.length, 8) || 1));
-    }, 6000);
-    return () => clearInterval(timer);
-  }, [trending]);
-
-  useEffect(() => {
-    getWatchHistory().then(setHistory);
-  }, []);
-
-  const heroAnime = trending[featuredIndex] || trending[0];
+    if (paused) return;
+    let cancelled = false;
+    const load = () => getWatchHistory().then(list => { if (!cancelled) setHistory(list); });
+    load();
+    const unsubscribe = subscribeLibraryChanges(load);
+    return () => {
+      cancelled = true;
+      unsubscribe();
+    };
+  }, [paused]);
 
   return (
     <div style={{ flex: 1, overflowY: 'auto', paddingBottom: '90px', position: 'relative' }}>
@@ -131,8 +135,9 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
           position: 'sticky',
           top: 0,
           zIndex: 40,
+          // Gradient only, no blur: a blurred sticky bar re-renders the whole
+          // feed under it on every scroll frame.
           background: 'linear-gradient(180deg, rgba(8,9,14,0.92) 0%, rgba(8,9,14,0.7) 70%, transparent 100%)',
-          backdropFilter: 'blur(12px)',
           padding: 'calc(var(--safe-top) + 12px) 20px 12px 20px',
           display: 'flex',
           alignItems: 'center',
@@ -199,7 +204,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
         </div>
       </div>
 
-      {/* Cinematic Hero Carousel Banner */}
+      {/* Featured titles - swipeable, auto-advancing (Netflix hero) */}
       {trendingError ? (
         <div style={{ paddingTop: 'calc(var(--safe-top) + 40px)' }}>
           <ErrorState
@@ -207,127 +212,8 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
             onRetry={retryTrending}
           />
         </div>
-      ) : !heroAnime ? (
-        <div
-          className="skeleton"
-          style={{ width: '100%', height: '420px', marginTop: '-60px' }}
-        />
       ) : (
-      <div style={{ position: 'relative', width: '100%', minHeight: '380px', marginTop: '-60px' }}>
-        <img
-          src={heroAnime.banner || heroAnime.poster}
-          alt={heroAnime.title}
-          style={{
-            width: '100%',
-            height: '420px',
-            objectFit: 'cover',
-            filter: 'brightness(0.75)'
-          }}
-        />
-        {/* Soft Vignette Gradients */}
-        <div style={{
-          position: 'absolute',
-          inset: 0,
-          background: 'linear-gradient(180deg, rgba(8,9,14,0.3) 0%, rgba(8,9,14,0.6) 50%, var(--bg-main) 100%)',
-          display: 'flex',
-          flexDirection: 'column',
-          justifyContent: 'flex-end',
-          padding: '24px 20px'
-        }}>
-          {/* Tag Badges */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
-            <span style={{
-              background: 'var(--accent-gradient)',
-              color: '#fff',
-              fontSize: '11px',
-              fontWeight: 800,
-              padding: '3px 9px',
-              borderRadius: '6px',
-              textTransform: 'uppercase',
-              letterSpacing: '0.5px'
-            }}>
-              #1 Trending
-            </span>
-            <span className="glass-pill-dark" style={{ fontSize: '11px', fontWeight: 600, padding: '3px 8px', borderRadius: '6px', color: '#cbd5e1' }}>
-              {heroAnime.type || 'TV'}
-            </span>
-            {heroAnime.subCount && (
-              <span className="glass-pill-dark" style={{ fontSize: '11px', fontWeight: 600, padding: '3px 8px', borderRadius: '6px', color: '#818cf8' }}>
-                SUB: {heroAnime.subCount}
-              </span>
-            )}
-          </div>
-
-          <h1 style={{
-            fontSize: '26px',
-            fontWeight: 800,
-            lineHeight: '1.2',
-            color: '#fff',
-            marginBottom: '8px',
-            textShadow: '0 2px 10px rgba(0,0,0,0.8)'
-          }}>
-            {heroAnime.title}
-          </h1>
-
-          {heroAnime.description && (
-            <p style={{
-              fontSize: '13px',
-              color: '#cbd5e1',
-              lineHeight: '1.4',
-              display: '-webkit-box',
-              WebkitLineClamp: 2,
-              WebkitBoxOrient: 'vertical',
-              overflow: 'hidden',
-              marginBottom: '16px',
-              maxWidth: '90%'
-            }}>
-              {heroAnime.description}
-            </p>
-          )}
-
-          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-            <button
-              onClick={() => onSelectAnime(heroAnime)}
-              className="interactive"
-              style={{
-                flex: 1,
-                padding: '12px 20px',
-                borderRadius: 'var(--radius-md)',
-                background: 'var(--accent-gradient)',
-                border: 'none',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                gap: '8px',
-                color: '#fff',
-                fontSize: '15px',
-                fontWeight: 700,
-                boxShadow: 'var(--shadow-glow)'
-              }}
-            >
-              <Play size={18} fill="#fff" />
-              <span>Watch Now</span>
-            </button>
-
-            <button
-              onClick={() => onSelectAnime(heroAnime)}
-              className="interactive glass-pill-dark"
-              style={{
-                width: '46px',
-                height: '46px',
-                borderRadius: 'var(--radius-md)',
-                border: 'none',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                color: '#fff'
-              }}
-            >
-              <Bookmark size={20} />
-            </button>
-          </div>
-        </div>
-      </div>
+        <HeroCarousel items={trending} onSelect={onSelectAnime} paused={paused} />
       )}
 
       {/* Continue Watching Section */}
@@ -338,7 +224,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
               <Clock size={18} color="var(--accent-primary)" />
               <h2 style={{ fontSize: '17px', fontWeight: 700, color: 'var(--text-primary)' }}>Continue Watching</h2>
             </div>
-            <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>{history.length} items</span>
+            <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>{history.length} {history.length === 1 ? 'title' : 'titles'}</span>
           </div>
 
           <div style={{
@@ -418,6 +304,36 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
         </div>
       )}
 
+      {/* Popular Anime - first rail, same horizontal row style as the
+          genre rails below it */}
+      {(loadingTrending || trending.length > 0) && (
+        <div style={{ padding: '18px 0 4px 0' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 20px', marginBottom: '10px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+              <Flame size={18} color="#f43f5e" />
+              <h2 style={{ fontSize: '17px', fontWeight: 800, color: 'var(--text-primary)' }}>Popular Anime</h2>
+            </div>
+            <button
+              onClick={onOpenSearch}
+              className="interactive"
+              style={{ background: 'none', border: 'none', color: 'var(--accent-primary)', fontSize: '13px', fontWeight: 600, display: 'flex', alignItems: 'center' }}
+            >
+              <span>See all</span>
+              <ChevronRight size={16} />
+            </button>
+          </div>
+          <div style={{ display: 'flex', gap: '10px', overflowX: 'auto', padding: '0 20px 6px 20px', scrollbarWidth: 'none' }}>
+            {loadingTrending
+              ? Array.from({ length: 5 }).map((_, i) => (
+                  <div key={i} className="skeleton" style={{ flex: '0 0 112px', height: '162px', borderRadius: '6px' }} />
+                ))
+              : trending.map(anime => (
+                  <PosterCard key={anime.id} anime={anime} width={112} onClick={() => onSelectAnime(anime)} />
+                ))}
+          </div>
+        </div>
+      )}
+
       {/* Genre rails */}
       {rowGenres.map(genre => (
         <GenreRow
@@ -427,124 +343,6 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
           onSeeAll={() => onSelectGenre(genre)}
         />
       ))}
-
-      {/* Trending Anime Grid */}
-      <div style={{ padding: '20px 20px 10px 20px' }}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '16px' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <Flame size={20} color="#f43f5e" />
-            <h2 style={{ fontSize: '18px', fontWeight: 800, color: 'var(--text-primary)' }}>Popular Anime</h2>
-          </div>
-          <button 
-            onClick={onOpenSearch}
-            className="interactive"
-            style={{ background: 'none', border: 'none', color: '#6366f1', fontSize: '13px', fontWeight: 600, display: 'flex', alignItems: 'center' }}
-          >
-            <span>Explore all</span>
-            <ChevronRight size={16} />
-          </button>
-        </div>
-
-        <div className="grid-posters">
-          {loadingTrending ? (
-            Array.from({ length: 6 }).map((_, i) => (
-              <div key={i} className="skeleton" style={{ borderRadius: 'var(--radius-md)', paddingTop: '155%' }} />
-            ))
-          ) : trending.map((anime) => (
-            <div
-              key={anime.id}
-              onClick={() => onSelectAnime(anime)}
-              className="interactive glass-panel"
-              style={{
-                borderRadius: 'var(--radius-md)',
-                overflow: 'hidden',
-                display: 'flex',
-                flexDirection: 'column'
-              }}
-            >
-              <div style={{ position: 'relative', width: '100%', paddingTop: '140%', overflow: 'hidden' }}>
-                <img
-                  src={anime.poster}
-                  alt={anime.title}
-                  style={{
-                    position: 'absolute',
-                    top: 0,
-                    left: 0,
-                    width: '100%',
-                    height: '100%',
-                    objectFit: 'cover'
-                  }}
-                />
-                <div style={{
-                  position: 'absolute',
-                  top: '8px',
-                  right: '8px',
-                  backgroundColor: 'rgba(0,0,0,0.7)',
-                  backdropFilter: 'blur(8px)',
-                  padding: '2px 7px',
-                  borderRadius: '4px',
-                  fontSize: '11px',
-                  fontWeight: 700,
-                  color: '#e2e8f0'
-                }}>
-                  {anime.type || 'TV'}
-                </div>
-
-                <div style={{
-                  position: 'absolute',
-                  bottom: 0,
-                  left: 0,
-                  right: 0,
-                  height: '40px',
-                  background: 'linear-gradient(180deg, transparent 0%, rgba(8,9,14,0.95) 100%)'
-                }} />
-              </div>
-
-              <div style={{ padding: '10px 10px 12px 10px', flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
-                <h3 style={{
-                  fontSize: '14px',
-                  fontWeight: 700,
-                  color: 'var(--text-primary)',
-                  lineHeight: '1.3',
-                  display: '-webkit-box',
-                  WebkitLineClamp: 2,
-                  WebkitBoxOrient: 'vertical',
-                  overflow: 'hidden',
-                  marginBottom: '6px'
-                }}>
-                  {anime.title}
-                </h3>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                  {anime.subCount && (
-                    <span style={{
-                      fontSize: '10px',
-                      fontWeight: 700,
-                      backgroundColor: 'rgba(99, 102, 241, 0.2)',
-                      color: 'var(--accent-primary)',
-                      padding: '2px 6px',
-                      borderRadius: '4px'
-                    }}>
-                      SUB {anime.subCount}
-                    </span>
-                  )}
-                  {anime.dubCount && (
-                    <span style={{
-                      fontSize: '10px',
-                      fontWeight: 700,
-                      backgroundColor: 'rgba(168, 85, 247, 0.2)',
-                      color: '#c084fc',
-                      padding: '2px 6px',
-                      borderRadius: '4px'
-                    }}>
-                      DUB {anime.dubCount}
-                    </span>
-                  )}
-                </div>
-              </div>
-            </div>
-          ))}
-        </div>
-      </div>
 
       <GenrePicker
         open={pickerOpen}
