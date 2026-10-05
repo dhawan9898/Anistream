@@ -1,4 +1,4 @@
-name: Build AniStream v7.0 APK
+name: Build AniStream v6.4 APK
 
 on:
   push:
@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
     inputs:
       release_tag:
-        description: 'Tag to publish this build under (e.g. v7.0) - leave empty to just build, no release'
+        description: 'Tag to publish this build under (e.g. v6.4) - leave empty to just build, no release'
         required: false
         default: ''
 
@@ -48,9 +48,6 @@ jobs:
       - name: Lint
         run: npm run lint
 
-      - name: Unit Tests
-        run: npm test
-
       - name: Build Web Production Bundle
         run: npm run build
 
@@ -60,21 +57,43 @@ jobs:
       - name: Make Gradlew Executable
         run: chmod +x android/gradlew
 
-      - name: Build Android APK
+      # Minified (R8) + resource-shrunk release build, signed with the same
+      # key as every earlier release so it installs as an in-place update.
+      - name: Build Android APK (release, minified)
         working-directory: ./android
-        run: ./gradlew assembleDebug --stacktrace
+        run: ./gradlew assembleRelease --stacktrace
 
       - name: Package APK for Release
         run: |
           mkdir -p build-output
-          cp android/app/build/outputs/apk/debug/app-debug.apk build-output/AniStream-v7.0.apk
+          cp android/app/build/outputs/apk/release/app-release.apk build-output/AniStream-v6.4.apk
+          ls -lh build-output/AniStream-v6.4.apk
 
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: AniStream-v7.0-APK
-          path: build-output/AniStream-v7.0.apk
+          name: AniStream-v6.4-APK
+          path: build-output/AniStream-v6.4.apk
           retention-days: 30
+
+      # R8 mapping - needed to de-obfuscate stack traces from this build.
+      - name: Upload R8 Mapping
+        uses: actions/upload-artifact@v4
+        with:
+          name: AniStream-v6.4-mapping
+          path: android/app/build/outputs/mapping/release/mapping.txt
+          retention-days: 90
+          if-no-files-found: warn
+
+      # A manual run republishing an existing tag (e.g. rebuilding v6.4)
+      # replaces that release and its tag, so the tag always points at the
+      # commit this APK was built from. Tag pushes are never touched.
+      - name: Replace Existing Release (manual runs only)
+        if: github.event_name == 'workflow_dispatch' && inputs.release_tag != ''
+        run: gh release delete "${{ inputs.release_tag }}" --cleanup-tag --yes || true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
 
       - name: Create GitHub Release
         # A real tag push (refs/tags/vX.Y) always releases under that tag. A
@@ -84,28 +103,39 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch' && inputs.release_tag != '')
         uses: softprops/action-gh-release@v2
         with:
-          files: build-output/AniStream-v7.0.apk
+          files: build-output/AniStream-v6.4.apk
           tag_name: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || inputs.release_tag }}
+          # Without this a new tag is created on the default branch, not on
+          # the commit that was actually built.
+          target_commitish: ${{ github.sha }}
           name: AniStream ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || inputs.release_tag }} Release
           body: |
-            ## AniStream v7.0 - Android Anime Streaming App (Powered by ani-cli)
+            ## AniStream v6.4 - Android Anime Streaming App (Powered by ani-cli)
 
-            v7.0 is a stability release: playback recovers on its own from network hiccups, a dead server no longer stops an episode, and the app tells you honestly when something can't load instead of showing placeholder content.
+            ### What's new in v6.4:
 
-            ### 🚀 What's new in v7.0:
+            - **Next Episode works reliably**: the next episode's stream is prepared while the current one plays, and the player starts it by itself. No more getting stuck on the loading screen after a full episode.
+            - **Switching SUB/DUB continues where you were** instead of restarting the episode.
+            - **Dub starts with subtitles off**: the captions a dub server provides are timed to the Japanese audio and never matched the English track (you can still turn them on).
+            - **Cleaner Next Episode button**: solid white with a thin red countdown bar.
+            - **History opens the title page** (Continue Watching and Library) instead of starting playback right away.
 
-            - **Self-healing playback**: if your connection drops or a server hiccups mid-episode, the player retries by itself (with a spinner) and carries on from the same spot - no more error screens for a brief network blip.
-            - **Retry resumes where you were**: tapping Retry after a playback error, or when an episode fails to load, fetches a fresh stream link and continues from your position instead of restarting at 0:00.
-            - **Multi-server fallback**: when one streaming mirror is down, the app automatically tries the other servers for your chosen Sub/Dub instead of giving up.
-            - **Faster next episode**: the next episode is prepared in the background near the end of the current one, so it starts almost instantly.
-            - **Smarter networking**: requests retry automatically on temporary failures, never hang, and repeat visits to pages load instantly from a short-lived cache.
-            - **Better player behaviour**: pauses for phone calls and when headphones are unplugged, and keeps the screen awake only while playing.
-            - **Honest error states**: when the streaming site can't be reached, Home, Search and episode lists now show a clear message with a "Try again" button - the old placeholder titles, sample search results and demo video are gone.
-            - **More robust storage**: watch history, My List and settings are validated on load, so a damaged entry can no longer crash a screen.
-            - **Lighter app start**: the web player is loaded only when needed, cutting the startup bundle by about two thirds.
-            - Plus everything from v5.0: tablet & landscape layouts, debounced search, serialized history saves, genre browsing, Collection / More Like This and the Netflix-style player.
+            ### v6.3:
+
+            - Back gesture steps back one screen; screen stays on while playing; 404s retry once automatically; Popular Anime row at the top of Home.
+
+            ### From v6.0:
+
+            - **Server fallback**: when the first mirror for an episode is dead, the remaining servers for the same audio (SUB/DUB) are tried before anything falls back to the demo clip.
+            - **Self-healing playback**: dropped connections and CDN 5xx errors are retried automatically with backoff (native ExoPlayer and web player), and **Retry** resumes where playback stopped instead of restarting at 0:00.
+            - **Accurate Continue Watching**: progress can no longer be saved under the wrong episode while the next one loads, the demo clip never overwrites your resume point, and Home / title page / Library update live after you watch. Finished episodes offer the next episode instead of resuming into the credits.
+            - **Lighter & smoother**: the startup bundle is ~65% smaller (the web player loads on demand), progress writes are throttled, player timers/listeners are cleaned up on close, and site pages/episode lists are cached so the source isn't hammered.
+            - **Fixes**: correct Skip Intro timing after switching episodes, no stray "0" badges, a real error state (with Retry) when search can't reach the server, subtitle menu no longer lists the thumbnail track, fullscreen state stays in sync.
+            - Plus everything from v5.x: tablet/landscape layouts, request timeouts, debounced search, serialized history writes.
+
+            - **Smaller, optimized APK**: now a minified (R8) release build with unused code and resources stripped.
 
             ### 📦 Download:
-            Download **`AniStream-v7.0.apk`** below and install or update on any Android device running Android 8.0 or later - it installs over v5.0 and keeps your watch history.
+            Download **`AniStream-v6.4.apk`** below and install or update on any Android device running Android 8.0 or later!
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

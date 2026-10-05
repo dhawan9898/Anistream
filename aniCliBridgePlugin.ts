@@ -28,6 +28,18 @@ function decryptToken(enc: string): string {
   }
 }
 
+// Only plain http(s) URLs on public hosts may go through /stream-proxy.
+function isPublicHttpUrl(url: URL): boolean {
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') return false;
+  const host = url.hostname.toLowerCase().replace(/^\[|\]$/g, '');
+  if (host === 'localhost' || host.endsWith('.localhost') || host.endsWith('.local') || host.endsWith('.internal')) return false;
+  if (/^(127\.|10\.|0\.|169\.254\.|192\.168\.)/.test(host)) return false;
+  if (/^172\.(1[6-9]|2\d|3[01])\./.test(host)) return false;
+  // IPv6 literals: loopback, unspecified, unique-local (fc00::/7), link-local.
+  if (host.includes(':') && (host === '::1' || host === '::' || /^(fc|fd|fe8|fe9|fea|feb)/.test(host) || host.startsWith('::ffff:'))) return false;
+  return true;
+}
+
 async function resolveStream(query: string, ep: string, mode: string) {
   const REMOTE_HOST = 'https://hianime.at';
   const headers = {
@@ -196,6 +208,13 @@ export function aniCliBridgePlugin(): Plugin {
 
         try {
           const parsedTarget = new URL(targetUrl);
+          // The dev server listens on the LAN (host: true), so this must not
+          // become an open proxy into localhost / the private network.
+          if (!isPublicHttpUrl(parsedTarget)) {
+            res.statusCode = 403;
+            res.end('Refusing to proxy this URL');
+            return;
+          }
           const isHttps = parsedTarget.protocol === 'https:';
           const client = isHttps ? https : http;
 

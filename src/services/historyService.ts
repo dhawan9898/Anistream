@@ -43,6 +43,40 @@ function serialized<T>(task: () => Promise<T>): Promise<T> {
   return run;
 }
 
+// Screens that show history/bookmarks (Home's Continue Watching, the title
+// page's Resume button, the Library) stay mounted underneath the player, so
+// they subscribe here instead of only reading storage once on mount - which
+// left "Resume E3" showing after the user had already watched E4.
+type Listener = () => void;
+const listeners = new Set<Listener>();
+
+export function subscribeLibraryChanges(listener: Listener): () => void {
+  listeners.add(listener);
+  return () => { listeners.delete(listener); };
+}
+
+function notifyLibraryChanged(): void {
+  listeners.forEach(listener => {
+    try {
+      listener();
+    } catch (err) {
+      console.error('Library change listener failed:', err);
+    }
+  });
+}
+
+function parseList<T>(value: string | null): T[] {
+  if (!value) return [];
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    // Corrupt entry (e.g. an interrupted write) - start over rather than
+    // throwing on every read and bricking the Library screen.
+    return [];
+  }
+}
+
 // Progress ticks are coalesced: while a write is in flight only the newest
 // pending tick is kept, instead of queueing one full rewrite per second.
 let pendingProgress: WatchHistoryItem | null = null;
@@ -64,49 +98,29 @@ export function saveWatchProgress(item: WatchHistoryItem): Promise<void> {
         key: HISTORY_KEY,
         value: JSON.stringify(trimmed)
       });
+      notifyLibraryChanged();
     } catch (err) {
       console.error("Failed to save watch history:", err);
     }
   });
 }
 
-// Stored data outlives app versions and can be truncated by a crash
-// mid-write - anything that doesn't parse into the expected shape is
-// dropped rather than allowed to crash the screens that render it.
-function readList<T>(value: string | null, isValid: (item: any) => boolean): T[] {
-  if (!value) return [];
-  try {
-    const parsed = JSON.parse(value);
-    return Array.isArray(parsed) ? parsed.filter(isValid) : [];
-  } catch (err) {
-    console.error("Discarding unreadable stored list:", err);
-    return [];
-  }
-}
-
-// Real episode ids are numeric. Older versions saved "<slug>-ep-N" ids for
-// made-up placeholder episodes (which only ever played a demo clip); those
-// can't be resumed reliably, so they're dropped.
-const isHistoryItem = (h: any): boolean =>
-  !!h && typeof h.animeId === 'string' && typeof h.episodeId === 'string' &&
-  /^\d+$/.test(h.episodeId) &&
-  typeof h.currentTime === 'number' && isFinite(h.currentTime);
-
-const isAnimeItem = (a: any): boolean => !!a && typeof a.id === 'string' && typeof a.title === 'string';
-
 export async function getWatchHistory(): Promise<WatchHistoryItem[]> {
   try {
     const { value } = await Preferences.get({ key: HISTORY_KEY });
-    return readList<WatchHistoryItem>(value, isHistoryItem);
+    return parseList<WatchHistoryItem>(value);
   } catch (err) {
     console.error("Failed to load history:", err);
-    return [];
   }
+  return [];
 }
 
 export function clearWatchHistory(): Promise<void> {
   pendingProgress = null;
-  return serialized(() => Preferences.remove({ key: HISTORY_KEY }));
+  return serialized(async () => {
+    await Preferences.remove({ key: HISTORY_KEY });
+    notifyLibraryChanged();
+  });
 }
 
 // Removes a single history entry (one per anime - saveWatchProgress already
@@ -119,6 +133,7 @@ export function removeWatchHistoryItem(animeId: string): Promise<WatchHistoryIte
       key: HISTORY_KEY,
       value: JSON.stringify(filtered)
     });
+    notifyLibraryChanged();
     return filtered;
   });
 }
@@ -135,6 +150,7 @@ export function toggleBookmark(anime: AnimeItem): Promise<boolean> {
       key: BOOKMARKS_KEY,
       value: JSON.stringify(updated)
     });
+    notifyLibraryChanged();
     return !exists;
   });
 }
@@ -142,7 +158,7 @@ export function toggleBookmark(anime: AnimeItem): Promise<boolean> {
 export async function getBookmarks(): Promise<AnimeItem[]> {
   try {
     const { value } = await Preferences.get({ key: BOOKMARKS_KEY });
-    return readList<AnimeItem>(value, isAnimeItem);
+    return parseList<AnimeItem>(value);
   } catch {
     return [];
   }
@@ -151,15 +167,14 @@ export async function getBookmarks(): Promise<AnimeItem[]> {
 export async function getUserPreferences(): Promise<UserPreferences> {
   try {
     const { value } = await Preferences.get({ key: PREFERENCES_KEY });
-    const parsed = value ? JSON.parse(value) : null;
-    return parsed && typeof parsed === 'object' ? { ...DEFAULT_PREFERENCES, ...parsed } : DEFAULT_PREFERENCES;
+    return value ? { ...DEFAULT_PREFERENCES, ...JSON.parse(value) } : DEFAULT_PREFERENCES;
   } catch {
     return DEFAULT_PREFERENCES;
   }
 }
 
-// Serialized like every other read-modify-write, so toggling two settings
-// quickly can't lose one of them.
+// Also a read-modify-write: two quick toggles in Settings must not race
+// and drop one of the changes.
 export function saveUserPreferences(prefs: Partial<UserPreferences>): Promise<void> {
   return serialized(async () => {
     const current = await getUserPreferences();
@@ -169,4 +184,11 @@ export function saveUserPreferences(prefs: Partial<UserPreferences>): Promise<vo
       value: JSON.stringify(updated)
     });
   });
+}
+
+// True when an entry is effectively finished (credits or less remaining),
+// so "resume" should start the episode over / move on instead of dropping
+// the viewer into the end credits.
+export function isEpisodeFinished(item: Pick<WatchHistoryItem, 'currentTime' | 'duration'>): boolean {
+  return item.duration > 0 && (item.duration - item.currentTime <= 30 || item.currentTime / item.duration >= 0.95);
 }

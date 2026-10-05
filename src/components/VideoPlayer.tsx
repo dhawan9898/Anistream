@@ -1,5 +1,5 @@
 // VideoPlayer.tsx - Premium Mobile Video Player with HLS, Gestures, & Ani-cli controls
-import React, { useEffect, useRef, useState, useCallback } from 'react';
+import React, { useEffect, useLayoutEffect, useRef, useState, useCallback } from 'react';
 import Hls from 'hls.js';
 import {
   Play, Pause, RotateCcw, RotateCw, ArrowLeft, Maximize, Minimize, SkipForward,
@@ -16,6 +16,50 @@ const resolvePlayableUrl = (url?: string, _referer?: string): string => {
   return url;
 };
 
+// VOD episodes, not a live broadcast - lowLatencyMode trims buffers to chase
+// the live edge, which only makes stalls more likely here. A bigger forward
+// buffer instead gives real cushion against network hiccups, while the back
+// buffer is capped so a long binge doesn't keep hundreds of MB of already-
+// watched segments in memory.
+function createHls(referer: string): Hls {
+  return new Hls({
+    enableWorker: false,
+    backBufferLength: 30,
+    maxBufferLength: 60,
+    maxMaxBufferLength: 120,
+    maxBufferSize: 120 * 1000 * 1000,
+    // Loader-level retries for manifests/segments before a fatal error is
+    // even raised - covers the common single dropped request.
+    fragLoadPolicy: {
+      default: {
+        maxTimeToFirstByteMs: 10000,
+        maxLoadTimeMs: 60000,
+        timeoutRetry: { maxNumRetry: 3, retryDelayMs: 0, maxRetryDelayMs: 0 },
+        errorRetry: { maxNumRetry: 4, retryDelayMs: 1000, maxRetryDelayMs: 8000 }
+      }
+    },
+    xhrSetup: (xhr) => {
+      // CapacitorHttp intercepts this and allows setting custom headers like Referer
+      xhr.setRequestHeader('Referer', referer);
+    }
+  });
+}
+
+// Subtitles start on for sub and off for dub: a dub server's caption files
+// are usually the subbed release's, timed to the Japanese dialogue, so they
+// never line up with the English audio (they can still be turned on).
+function defaultSubtitleLabel(subtitles: StreamSource['subtitles'], mode: 'sub' | 'dub'): string | null {
+  if (mode === 'dub') return null;
+  return subtitles.find(s => s.default)?.label ?? subtitles[0]?.label ?? null;
+}
+
+// Fatal hls.js network errors are retried this many times with exponential
+// backoff (1s, 2s, 4s) before the stream is declared dead.
+const MAX_NETWORK_RETRIES = 3;
+// How often playback position is persisted while playing (it's also saved
+// on pause, on episode change and when the player closes).
+const PROGRESS_SAVE_INTERVAL_MS = 5000;
+
 interface VideoPlayerProps {
   streamSource: StreamSource;
   animeTitle: string;
@@ -24,12 +68,17 @@ interface VideoPlayerProps {
   onBack: () => void;
   onNextEpisode?: () => void;
   hasNextEpisode?: boolean;
-  onProgressUpdate?: (currentTime: number, duration: number) => void;
+  // Reported every few seconds while playing, on pause, and one final time
+  // when the stream changes or the player closes. `streamUrl` is the URL
+  // the <video> was actually playing, so the caller can drop reports that
+  // belong to a stream it has already moved on from.
+  onProgressUpdate?: (currentTime: number, duration: number, streamUrl: string) => void;
   initialTime?: number;
   episodeList?: EpisodeItem[];
   onSelectEpisode?: (ep: EpisodeItem) => void;
   // Re-resolves the same episode in the other audio language (sub <-> dub).
-  onSwitchMode?: (mode: 'sub' | 'dub') => void;
+  // positionSec: where the current audio is, so the other one continues there.
+  onSwitchMode?: (mode: 'sub' | 'dub', positionSec: number) => void;
 }
 
 const PLAYBACK_SPEEDS = [0.5, 0.75, 1, 1.25, 1.5];
@@ -39,22 +88,6 @@ const NEXT_EPISODE_COUNTDOWN_SECS = 10;
 // Without an outro marker, post-play appears this close to the end.
 const POST_PLAY_THRESHOLD_SECS = 20;
 const NETFLIX_RED = '#e50914';
-
-// Fatal network errors are retried this many times (1s, 2s, 4s, 8s backoff)
-// before the error overlay is shown.
-const MAX_NETWORK_RECOVERIES = 4;
-
-// These are VOD episodes, not a live broadcast - lowLatencyMode trims
-// buffers to chase the live edge, which only makes stalls more likely here.
-// A bigger forward buffer instead gives real cushion against network
-// hiccups.
-const HLS_CONFIG = {
-  enableWorker: false,
-  backBufferLength: 90,
-  maxBufferLength: 60,
-  maxMaxBufferLength: 120,
-  maxBufferSize: 120 * 1000 * 1000
-};
 
 export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   streamSource,
@@ -105,7 +138,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   const suppressNextTapRef = useRef<boolean>(false);
   const volumeIndicatorTimerRef = useRef<number | null>(null);
   const [activeSubtitle, setActiveSubtitle] = useState<string | null>(
-    () => streamSource.subtitles.find(s => s.default)?.label ?? streamSource.subtitles[0]?.label ?? null
+    () => defaultSubtitleLabel(streamSource.subtitles, mode)
   );
   const [showSkipIntro, setShowSkipIntro] = useState<boolean>(false);
   const [skippedIntroToast, setSkippedIntroToast] = useState<boolean>(false);
@@ -119,18 +152,114 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   const [outroInterval, setOutroInterval] = useState<SkipInterval | null>(null);
   const autoSkippedRef = useRef<boolean>(false);
   const introLookupRef = useRef<string | null>(null);
+  // Which stream `duration` currently belongs to - see the AniSkip effect.
+  const durationUrlRef = useRef<string | null>(null);
+  // Bumped by the error dialog's Retry button to rebuild the stream.
+  const [reloadToken, setReloadToken] = useState<number>(0);
+  const resumeAtRef = useRef<number | null>(null);
+  // Last known position/duration and the URL they belong to, for progress
+  // reports and for resuming after a retry.
+  const lastPositionRef = useRef<number>(0);
+  const lastDurationRef = useRef<number>(0);
+  const loadedUrlRef = useRef<string>('');
+  const lastProgressSaveRef = useRef<number>(0);
+  const onProgressUpdateRef = useRef(onProgressUpdate);
+  // Layout effect so the ref is current before the stream effect below
+  // captures it for a new stream.
+  useLayoutEffect(() => {
+    onProgressUpdateRef.current = onProgressUpdate;
+  }, [onProgressUpdate]);
+
+  // Every short-lived UI timeout goes through here so none can fire (and
+  // set state) after the player has closed.
+  const pendingTimeouts = useRef<Set<number>>(new Set());
+  const later = useCallback((fn: () => void, ms: number) => {
+    const id = window.setTimeout(() => {
+      pendingTimeouts.current.delete(id);
+      fn();
+    }, ms);
+    pendingTimeouts.current.add(id);
+    return id;
+  }, []);
 
   useEffect(() => {
+    const timeouts = pendingTimeouts.current;
+    return () => {
+      timeouts.forEach(id => window.clearTimeout(id));
+      timeouts.clear();
+      if (hideControlsTimer.current) window.clearTimeout(hideControlsTimer.current);
+      if (unlockTimerRef.current) window.clearTimeout(unlockTimerRef.current);
+      if (volumeIndicatorTimerRef.current) window.clearTimeout(volumeIndicatorTimerRef.current);
+    };
+  }, []);
+
+  // Keep the screen awake while playing (Screen Wake Lock API, where the
+  // browser/WebView has it). The lock is dropped automatically when the
+  // page is hidden, so it's re-requested when the page becomes visible.
+  useEffect(() => {
+    type WakeLockSentinelLike = { release: () => Promise<void> };
+    const wakeLock = (navigator as Navigator & {
+      wakeLock?: { request: (type: 'screen') => Promise<WakeLockSentinelLike> };
+    }).wakeLock;
+    if (!isPlaying || !wakeLock) return;
+    let sentinel: WakeLockSentinelLike | null = null;
+    let active = true;
+    const acquire = () => {
+      if (document.visibilityState !== 'visible') return;
+      wakeLock.request('screen')
+        .then(lock => {
+          if (active) sentinel = lock;
+          else lock.release().catch(() => undefined);
+        })
+        .catch(() => undefined);
+    };
+    acquire();
+    document.addEventListener('visibilitychange', acquire);
+    return () => {
+      active = false;
+      document.removeEventListener('visibilitychange', acquire);
+      sentinel?.release().catch(() => undefined);
+    };
+  }, [isPlaying]);
+
+  // The fullscreen state must follow the browser: the system back gesture
+  // or Esc leaves fullscreen without going through our toggle.
+  useEffect(() => {
+    const onChange = () => setIsFullscreen(!!document.fullscreenElement);
+    document.addEventListener('fullscreenchange', onChange);
+    return () => document.removeEventListener('fullscreenchange', onChange);
+  }, []);
+
+  const reportProgress = useCallback((force: boolean) => {
+    const url = loadedUrlRef.current;
+    const duration = lastDurationRef.current;
+    if (!url || !(duration > 0)) return;
+    const now = Date.now();
+    if (!force && now - lastProgressSaveRef.current < PROGRESS_SAVE_INTERVAL_MS) return;
+    lastProgressSaveRef.current = now;
+    onProgressUpdateRef.current?.(lastPositionRef.current, duration, url);
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
     getUserPreferences().then(p => {
+      if (cancelled) return;
       setAutoSkipIntro(p.autoSkipIntro);
       setAutoPlayNext(p.autoPlayNext);
     });
+    return () => { cancelled = true; };
   }, []);
 
   // A new episode/stream means a fresh intro/outro to (maybe) look up and auto-skip.
   useEffect(() => {
     autoSkippedRef.current = false;
     introLookupRef.current = null;
+    // The previous episode's duration/position must not leak into this one
+    // (it used to be sent to AniSkip as this episode's length).
+    durationUrlRef.current = null;
+    setDuration(0);
+    setCurrentTime(0);
+    setBuffered(0);
     postPlayStartRef.current = null;
     postPlayDismissedRef.current = false;
     advancedRef.current = false;
@@ -143,8 +272,8 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     setIntroInterval(streamSource.intro ?? null);
     setOutroInterval(streamSource.outro ?? null);
     setSelectedQuality(streamSource.quality || '1080p');
-    setActiveSubtitle(streamSource.subtitles.find(s => s.default)?.label ?? streamSource.subtitles[0]?.label ?? null);
-  }, [streamSource.streamUrl, streamSource.quality, streamSource.subtitles, streamSource.intro, streamSource.outro]);
+    setActiveSubtitle(defaultSubtitleLabel(streamSource.subtitles, mode));
+  }, [streamSource.streamUrl, streamSource.quality, streamSource.subtitles, streamSource.intro, streamSource.outro, mode]);
 
   // Keep the browser's native text tracks in sync with the chosen caption
   // label - selecting a caption in the menu only updates state, so without
@@ -166,26 +295,22 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   // so no skip button is offered for it rather than guessing.
   useEffect(() => {
     if (!duration || duration <= 0) return;
-    if (introLookupRef.current === streamSource.streamUrl) return;
-    introLookupRef.current = streamSource.streamUrl;
+    // `duration` can still be the previous episode's for one render after a
+    // stream change - only trust it once durationchange reported it for
+    // this stream.
+    const url = streamSource.streamUrl;
+    if (durationUrlRef.current !== url) return;
+    if (introLookupRef.current === url) return;
+    introLookupRef.current = url;
     if (streamSource.intro && streamSource.outro) return;
 
     getEpisodeSkipIntervals(animeTitle, episode.number, duration).then(({ opening, ending }) => {
+      // Moved on to another episode while this was in flight.
+      if (introLookupRef.current !== url) return;
       if (!streamSource.intro) setIntroInterval(opening);
       if (!streamSource.outro) setOutroInterval(ending);
     });
   }, [duration, streamSource.streamUrl, streamSource.intro, streamSource.outro, animeTitle, episode.number]);
-
-  // Bumped by the error overlay's Retry; reloading resumes from where
-  // playback stopped (resumeFromRef) instead of the episode's start.
-  const [reloadKey, setReloadKey] = useState<number>(0);
-  const resumeFromRef = useRef<number | null>(null);
-
-  const retryStream = () => {
-    const video = videoRef.current;
-    resumeFromRef.current = video && video.currentTime > 0 ? video.currentTime : null;
-    setReloadKey(k => k + 1);
-  };
 
   // Initialize Hls / Video stream
   useEffect(() => {
@@ -197,31 +322,26 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
       hlsRef.current = null;
     }
 
-    const rawStreamUrl = streamSource.streamUrl;
+    const streamUrl = resolvePlayableUrl(streamSource.streamUrl, streamSource.referer);
     const referer = streamSource.referer || 'https://zokoanime.video/';
-    const streamUrl = resolvePlayableUrl(rawStreamUrl, referer);
-    const startAt = resumeFromRef.current ?? initialTime;
-    resumeFromRef.current = null;
+    // A Retry resumes where playback stopped rather than at initialTime.
+    const startAt = resumeAtRef.current ?? initialTime;
+    resumeAtRef.current = null;
+    let disposed = false;
+    let retryTimer: number | null = null;
+
+    loadedUrlRef.current = streamUrl;
+    lastPositionRef.current = startAt;
+    lastDurationRef.current = 0;
+    lastProgressSaveRef.current = Date.now();
+    // Captured now so the final report in the cleanup goes to the handler
+    // that belongs to this stream, even after the parent re-rendered with
+    // the next episode.
+    const reportFinal = onProgressUpdateRef.current;
+
     setVideoTrackWarning(null);
     setStreamError(null);
-    setIsBuffering(false);
-
-    let disposed = false;
-    const timers: number[] = [];
-    const later = (fn: () => void, ms: number) => {
-      timers.push(window.setTimeout(() => { if (!disposed) fn(); }, ms));
-    };
-
-    const fail = (message: string) => {
-      setIsPlaying(false);
-      setIsBuffering(false);
-      setStreamError(message);
-    };
-
-    const startPlayback = () => {
-      if (startAt > 0) video.currentTime = startAt;
-      video.play().then(() => setIsPlaying(true)).catch(() => setIsPlaying(false));
-    };
+    setIsBuffering(true);
 
     // Only surface no-video-track warning if playback has been running for a few seconds
     // with continuous 0x0 video dimensions (to avoid false alarms during initial frame decoding)
@@ -245,51 +365,41 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     video.addEventListener('playing', handleResumed);
     video.addEventListener('canplay', handleResumed);
 
-    // Progressive (MP4) or native-HLS playback: the element itself loads, so
-    // its own error event is the failure signal. One silent reload from the
-    // same position covers a dropped connection before giving up.
-    let elementRetries = 0;
-    const handleElementError = () => {
-      if (hlsRef.current) return; // hls.js reports its own errors
-      const code = video.error?.code;
-      console.warn('[VideoPlayer] media element error, code:', code);
-      if (code === MediaError.MEDIA_ERR_NETWORK && elementRetries < 1) {
-        elementRetries++;
-        const at = video.currentTime;
-        later(() => {
-          video.load();
-          video.addEventListener('loadedmetadata', () => {
-            if (disposed) return; // the stream changed meanwhile
-            video.currentTime = at;
-            video.play().catch(() => setIsPlaying(false));
-          }, { once: true });
-        }, 1500);
-        return;
-      }
-      fail(code === MediaError.MEDIA_ERR_SRC_NOT_SUPPORTED
-        ? 'This stream format is not supported on this device.'
-        : 'This stream failed to load.');
+    const startPlayback = () => {
+      if (disposed) return;
+      if (startAt > 0) video.currentTime = startAt;
+      video.play()
+        .then(() => { if (!disposed) setIsPlaying(true); })
+        .catch(() => { if (!disposed) setIsPlaying(false); });
     };
-    video.addEventListener('error', handleElementError);
+
+    const failStream = (message: string) => {
+      if (disposed) return;
+      if (hlsRef.current) {
+        hlsRef.current.destroy();
+        hlsRef.current = null;
+      }
+      setIsPlaying(false);
+      setIsBuffering(false);
+      setStreamError(message);
+    };
 
     const isMp4 = streamUrl.toLowerCase().split('?')[0].endsWith('.mp4');
-    let usesMetadataStart = false;
+    const nativeHls = !Hls.isSupported() && !!video.canPlayType('application/vnd.apple.mpegurl');
 
-    if (isMp4) {
+    if (isMp4 || nativeHls) {
+      // Direct file, or native HLS (Safari/iOS WebView). The listener is
+      // removed in the cleanup - it used to stay attached, so after an
+      // episode switch the old one seeked the new episode to the old
+      // resume point.
+      video.addEventListener('loadedmetadata', startPlayback, { once: true });
       video.src = streamUrl;
       video.load();
-      usesMetadataStart = true;
     } else if (Hls.isSupported()) {
-      const hls = new Hls({
-        ...HLS_CONFIG,
-        xhrSetup: (xhr) => {
-          // CapacitorHttp intercepts this and allows setting custom headers like Referer
-          xhr.setRequestHeader('Referer', referer);
-        }
-      });
-      hls.loadSource(streamUrl);
-      hls.attachMedia(video);
+      const hls = createHls(referer);
       hlsRef.current = hls;
+      let networkRetries = 0;
+      let mediaRecoveries = 0;
 
       hls.on(Hls.Events.MANIFEST_PARSED, (_event, data) => {
         console.log('[VideoPlayer] Manifest parsed, levels count:', data.levels.length);
@@ -299,65 +409,69 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
         startPlayback();
       });
 
-      // hls.js already retries individual manifest/segment loads; a *fatal*
-      // error means those were exhausted. Recover the standard way: restart
-      // loading with backoff for network errors, recoverMediaError (then a
-      // codec swap) for decode errors, and only then show an error. A
-      // segment that loads again proves the connection is back, so the
-      // network budget resets.
-      let networkRecoveries = 0;
-      let mediaRecoveries = 0;
-      hls.on(Hls.Events.FRAG_LOADED, () => { networkRecoveries = 0; });
+      // Healthy again - a later hiccup gets the full retry budget.
+      hls.on(Hls.Events.FRAG_LOADED, () => {
+        networkRetries = 0;
+        mediaRecoveries = 0;
+      });
+
       hls.on(Hls.Events.ERROR, (_event, data) => {
-        if (!data.fatal) return;
-        console.warn('[VideoPlayer] fatal hls.js error:', data.type, data.details);
-        if (data.type === Hls.ErrorTypes.NETWORK_ERROR && networkRecoveries < MAX_NETWORK_RECOVERIES) {
-          const delay = 1000 * 2 ** networkRecoveries;
-          networkRecoveries++;
+        console.warn('[VideoPlayer] hls.js error:', data.type, data.details, 'fatal:', data.fatal);
+        if (!data.fatal || disposed) return;
+        if (data.type === Hls.ErrorTypes.NETWORK_ERROR && networkRetries < MAX_NETWORK_RETRIES) {
+          const delay = 1000 * 2 ** networkRetries;
+          networkRetries++;
           setIsBuffering(true);
-          // No levels yet means the manifest itself never loaded -
-          // startLoad() can't fetch it, so request it again.
-          later(() => {
-            if (hls.levels.length === 0) hls.loadSource(streamUrl);
-            else hls.startLoad();
+          retryTimer = window.setTimeout(() => {
+            if (!disposed) hls.startLoad(Math.max(0, video.currentTime));
           }, delay);
         } else if (data.type === Hls.ErrorTypes.MEDIA_ERROR && mediaRecoveries < 2) {
-          if (mediaRecoveries === 1) hls.swapAudioCodec();
+          // Decoder/buffer hiccup: first try a plain MSE recovery, then the
+          // audio-codec swap hls.js documents for mismatched AAC signalling.
           mediaRecoveries++;
+          if (mediaRecoveries === 2) hls.swapAudioCodec();
           hls.recoverMediaError();
         } else {
-          hls.destroy();
-          if (hlsRef.current === hls) hlsRef.current = null;
-          fail('This stream failed to load.');
+          console.warn('[VideoPlayer] HLS stream unrecoverable');
+          failStream('This stream failed to load.');
         }
       });
-    } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
-      // Native HLS support (Safari/iOS WebView)
-      video.src = streamUrl;
-      usesMetadataStart = true;
-    } else {
-      fail('This device cannot play HLS streams.');
-    }
 
-    if (usesMetadataStart) {
-      video.addEventListener('loadedmetadata', startPlayback, { once: true });
+      hls.loadSource(streamUrl);
+      hls.attachMedia(video);
+    } else {
+      failStream("This device can't play this stream format.");
     }
 
     return () => {
       disposed = true;
-      timers.forEach(t => window.clearTimeout(t));
+      if (retryTimer !== null) window.clearTimeout(retryTimer);
       video.removeEventListener('timeupdate', checkVideoTrack);
       video.removeEventListener('waiting', handleWaiting);
       video.removeEventListener('playing', handleResumed);
       video.removeEventListener('canplay', handleResumed);
-      video.removeEventListener('error', handleElementError);
       video.removeEventListener('loadedmetadata', startPlayback);
+      // Final position of this stream, before anything is torn down.
+      if (lastDurationRef.current > 0) {
+        reportFinal?.(lastPositionRef.current, lastDurationRef.current, streamUrl);
+      }
       if (hlsRef.current) {
         hlsRef.current.destroy();
         hlsRef.current = null;
       }
+      // Detach the source so the element really stops downloading/decoding
+      // (a bare unmount can keep the connection alive until GC).
+      video.pause();
+      video.removeAttribute('src');
+      video.load();
     };
-  }, [streamSource.streamUrl, streamSource.referer, initialTime, reloadKey]);
+  }, [streamSource.streamUrl, streamSource.referer, initialTime, reloadToken]);
+
+  const retryStream = () => {
+    resumeAtRef.current = lastPositionRef.current;
+    setStreamError(null);
+    setReloadToken(t => t + 1);
+  };
 
   // Opening the episode window centers the grid on the playing episode, so
   // late episodes of a long series don't need a manual scroll to find.
@@ -382,6 +496,16 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
       }, 3500);
     }
   }, [isPlaying]);
+
+  // Controls fade out on their own once playback actually starts (not only
+  // after the first tap), and come back and stay while paused.
+  useEffect(() => {
+    if (isPlaying) {
+      resetControlsTimer();
+    } else if (hideControlsTimer.current) {
+      window.clearTimeout(hideControlsTimer.current);
+    }
+  }, [isPlaying, resetControlsTimer]);
 
   const changeSpeed = (rate: number) => {
     const video = videoRef.current;
@@ -420,8 +544,9 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     const video = videoRef.current;
     if (!video) return;
     if (video.paused) {
-      video.play();
-      setIsPlaying(true);
+      // play() rejects when interrupted or blocked by autoplay policy -
+      // onPlay/onPause keep isPlaying in sync with what really happened.
+      video.play().catch(() => setIsPlaying(false));
     } else {
       video.pause();
       setIsPlaying(false);
@@ -491,9 +616,12 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
       hlsRef.current.loadSource(newUrl);
       hlsRef.current.once(Hls.Events.MANIFEST_PARSED, resume);
     } else if (Hls.isSupported()) {
-      const hls = new Hls({
-        ...HLS_CONFIG,
-        xhrSetup: (xhr) => xhr.setRequestHeader('Referer', streamSource.referer)
+      const hls = createHls(streamSource.referer);
+      hls.on(Hls.Events.ERROR, (_event, data) => {
+        if (data.fatal) {
+          setIsPlaying(false);
+          setStreamError('This quality failed to load.');
+        }
       });
       hls.loadSource(newUrl);
       hls.attachMedia(video);
@@ -533,11 +661,11 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
       if (x < width * 0.4) {
         seekBy(-10);
         setDoubleTapFeedback('left');
-        setTimeout(() => setDoubleTapFeedback(null), 600);
+        later(() => setDoubleTapFeedback(null), 600);
       } else if (x > width * 0.6) {
         seekBy(10);
         setDoubleTapFeedback('right');
-        setTimeout(() => setDoubleTapFeedback(null), 600);
+        later(() => setDoubleTapFeedback(null), 600);
       }
     } else {
       // Single tap toggle controls
@@ -610,7 +738,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
       seekTo(introInterval!.end);
       setShowSkipIntro(false);
       setSkippedIntroToast(true);
-      setTimeout(() => setSkippedIntroToast(false), 1800);
+      later(() => setSkippedIntroToast(false), 1800);
     } else {
       setShowSkipIntro(inIntroWindow && !autoSkipIntro);
     }
@@ -648,18 +776,30 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
       setBuffered(video.buffered.end(video.buffered.length - 1));
     }
 
-    onProgressUpdate?.(video.currentTime, video.duration || 0);
+    lastPositionRef.current = video.currentTime;
+    if (total > 0) lastDurationRef.current = total;
+    // Throttled: timeupdate fires ~4x a second, and every save is a full
+    // read-modify-write of the history list in storage.
+    reportProgress(false);
   };
 
   // HLS/MSE streams can report NaN duration when 'loadedmetadata' first fires
   // (it only fires once); the real duration arrives later via 'durationchange'.
   const handleDurationChange = () => {
     if (videoRef.current && isFinite(videoRef.current.duration)) {
+      durationUrlRef.current = streamSource.streamUrl;
+      lastDurationRef.current = videoRef.current.duration;
       setDuration(videoRef.current.duration);
     }
   };
 
   const handleVideoError = () => {
+    // With hls.js attached, element errors are MSE hiccups that its own
+    // ERROR handler recovers from (or reports) - don't pre-empt it.
+    if (hlsRef.current) return;
+    // The cleanup detaching the source (removeAttribute + load) is not a
+    // playback failure.
+    if (!videoRef.current?.getAttribute('src')) return;
     console.warn('[VideoPlayer] Native video playback error');
     setIsPlaying(false);
     setStreamError('This stream failed to load.');
@@ -678,16 +818,15 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     const container = containerRef.current;
     if (!container) return;
 
-    if (!document.fullscreenElement) {
-      try {
+    // isFullscreen itself follows the fullscreenchange event.
+    try {
+      if (!document.fullscreenElement) {
         await container.requestFullscreen();
-        setIsFullscreen(true);
-      } catch {
-        // Fallback for mobile browser fullscreens
+      } else {
+        await document.exitFullscreen();
       }
-    } else {
-      await document.exitFullscreen();
-      setIsFullscreen(false);
+    } catch {
+      // Fullscreen API unavailable/denied (some mobile WebViews) - ignore.
     }
   };
 
@@ -711,7 +850,9 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   const progressPct = duration > 0 ? (currentTime / duration) * 100 : 0;
   const bufferedPct = duration > 0 ? (buffered / duration) * 100 : 0;
   const anyPanelOpen = showAudioPanel || showSpeedPanel || showEpisodeMenu;
-  const controlsVisible = showControls && !isLocked && !anyPanelOpen;
+  // Paused always shows the controls (Netflix behaviour); while playing they
+  // follow the auto-hide timer / taps.
+  const controlsVisible = (showControls || !isPlaying) && !isLocked && !anyPanelOpen;
 
   const bottomAction = (
     key: string,
@@ -765,7 +906,10 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
         onDurationChange={handleDurationChange}
         onError={handleVideoError}
         onPlay={() => setIsPlaying(true)}
-        onPause={() => setIsPlaying(false)}
+        onPause={() => {
+          setIsPlaying(false);
+          reportProgress(true);
+        }}
         onEnded={() => {
           if (autoPlayNext && hasNextEpisode) playNextEpisode();
         }}
@@ -813,12 +957,12 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
       {streamError && (
         <div onClick={(e) => e.stopPropagation()} className="nf-dialog">
           <span style={{ fontSize: '15px', fontWeight: 700 }}>{streamError}</span>
-          <span style={{ fontSize: '12px', color: '#b3b3b3' }}>The connection dropped or the server stopped responding. Retrying resumes where you left off.</span>
+          <span style={{ fontSize: '12px', color: '#b3b3b3' }}>The server may be blocking it or the format isn't supported. Try again, or pick another episode.</span>
           <div style={{ display: 'flex', gap: '10px', marginTop: '6px' }}>
-            <button onClick={retryStream} className="interactive nf-btn-white">
+            <button onClick={retryStream} className="interactive nf-btn-white" style={{ whiteSpace: 'nowrap' }}>
               Retry
             </button>
-            <button onClick={onBack} className="interactive nf-btn-white" style={{ background: 'transparent', color: '#fff', border: '1px solid rgba(255,255,255,0.4)' }}>
+            <button onClick={onBack} className="interactive nf-btn-white" style={{ background: 'rgba(255,255,255,0.18)', color: '#fff', whiteSpace: 'nowrap' }}>
               Go Back
             </button>
           </div>
@@ -948,13 +1092,13 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
           )}
           {showSkipIntro && (
             <button onClick={skipIntro} className="interactive nf-skip">
-              <SkipForward size={18} fill="#fff" />
+              <SkipForward size={16} fill="#fff" />
               <span>Skip Intro</span>
             </button>
           )}
           {showSkipOutro && (
             <button onClick={skipOutro} className="interactive nf-skip">
-              <SkipForward size={18} fill="#fff" />
+              <SkipForward size={16} fill="#fff" />
               <span>Skip Outro</span>
             </button>
           )}
@@ -969,7 +1113,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
                 className="nf-next-fill"
                 style={{ width: `${autoPlayNext ? postPlayProgress * 100 : 0}%` }}
               />
-              <Play size={18} fill="#000" strokeWidth={0} />
+              <Play size={16} fill="#000" strokeWidth={0} />
               <span>Next Episode</span>
             </button>
           )}
@@ -1041,7 +1185,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
                     onClick={() => {
                       if (active || !onSwitchMode) return;
                       setShowAudioPanel(false);
-                      onSwitchMode(m);
+                      onSwitchMode(m, videoRef.current?.currentTime || 0);
                     }}
                     className={`nf-option ${active ? 'active' : ''}`}
                   >

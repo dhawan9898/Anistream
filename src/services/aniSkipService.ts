@@ -5,36 +5,48 @@
 // Jikan API) to get a MAL id, then asks the AniSkip API - a community
 // database built for exactly this - for that episode's opening timestamps.
 
-import { request } from '../core/http';
-
 export interface SkipInterval {
   start: number;
   end: number;
 }
 
-// Title -> MAL id (or null when MAL definitely has no match), so a
-// multi-episode binge only pays for the MAL lookup once. Network failures
-// are not cached - the next episode simply tries again.
+const FETCH_TIMEOUT_MS = 6000;
+
+// Title -> MAL id (or null if not found), so a multi-episode binge only
+// pays for the MAL lookup once.
 const malIdCache = new Map<string, number | null>();
 
-// Skip markers are a nice-to-have: keep the timeout short and retry once.
-const POLICY = { timeoutMs: 6000, retries: 1 };
+// Promise.race rather than an AbortSignal: the native (CapacitorHttp) fetch
+// doesn't honor signals.
+function fetchWithTimeout(url: string): Promise<Response> {
+  return Promise.race([
+    fetch(url),
+    new Promise<Response>((_, reject) => setTimeout(() => reject(new Error('timed out')), FETCH_TIMEOUT_MS))
+  ]);
+}
 
 export async function resolveMalId(title: string): Promise<number | null> {
   const cacheKey = title.trim().toLowerCase();
   if (malIdCache.has(cacheKey)) return malIdCache.get(cacheKey)!;
 
   try {
-    const res = await request(`https://api.jikan.moe/v4/anime?q=${encodeURIComponent(title)}&limit=1`, undefined, POLICY);
+    const res = await fetchWithTimeout(`https://api.jikan.moe/v4/anime?q=${encodeURIComponent(title)}&limit=1`);
+    if (!res.ok) throw new Error(`Jikan lookup failed (${res.status})`);
     const data = await res.json();
     const malId: number | null = typeof data?.data?.[0]?.mal_id === 'number' ? data.data[0].mal_id : null;
     malIdCache.set(cacheKey, malId);
     return malId;
   } catch (err) {
+    // Transient failure (timeout, Jikan's 429 rate limit, offline) - don't
+    // cache it, or skip markers would stay off for the rest of the session.
     console.warn('[aniSkipService] MAL id lookup failed:', err);
     return null;
   }
 }
+
+// (MAL id, episode, length) -> intervals, so re-opening or retrying an
+// episode doesn't query AniSkip again.
+const skipCache = new Map<string, EpisodeSkipIntervals>();
 
 export interface EpisodeSkipIntervals {
   opening: SkipInterval | null;
@@ -68,14 +80,26 @@ export async function getEpisodeSkipIntervals(
   const malId = await resolveMalId(title);
   if (!malId) return none;
 
+  const cacheKey = `${malId}:${epNum}:${Math.round(episodeLengthSeconds)}`;
+  const hit = skipCache.get(cacheKey);
+  if (hit) return hit;
+
   try {
     const url = `https://api.aniskip.com/v2/skip-times/${malId}/${epNum}?types[]=op&types[]=ed&episodeLength=${Math.round(episodeLengthSeconds)}`;
-    const res = await request(url, undefined, POLICY);
+    const res = await fetchWithTimeout(url);
+    if (res.status === 404) {
+      // AniSkip's "no timestamps for this episode" - a real answer, cache it.
+      skipCache.set(cacheKey, none);
+      return none;
+    }
+    if (!res.ok) throw new Error(`AniSkip lookup failed (${res.status})`);
     const data = await res.json();
-    return {
+    const result = {
       opening: extractInterval(data, 'op'),
       ending: extractInterval(data, 'ed')
     };
+    skipCache.set(cacheKey, result);
+    return result;
   } catch (err) {
     console.warn('[aniSkipService] Skip-time lookup failed:', err);
     return none;

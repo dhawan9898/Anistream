@@ -3,12 +3,13 @@
 import React, { useState, useEffect } from 'react';
 import { ArrowLeft, Play, Plus, Check, Loader2 } from 'lucide-react';
 import { getEpisodes, type AnimeItem, type EpisodeItem } from '../core/aniCliCore';
-import { ErrorState } from '../components/ErrorState';
 import {
   toggleBookmark,
   getBookmarks,
   getUserPreferences,
   getWatchHistory,
+  isEpisodeFinished,
+  subscribeLibraryChanges,
   type WatchHistoryItem
 } from '../services/historyService';
 import { getAnimeDetails, resolveAnime, type AnimeDetails } from '../services/catalogService';
@@ -38,10 +39,9 @@ export const AnimeDetailScreen: React.FC<AnimeDetailScreenProps> = ({
   const [mode, setMode] = useState<'sub' | 'dub'>('sub');
   const [episodes, setEpisodes] = useState<EpisodeItem[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
-  const [episodesError, setEpisodesError] = useState<boolean>(false);
-  const [episodesAttempt, setEpisodesAttempt] = useState<number>(0);
   const [isBookmarked, setIsBookmarked] = useState<boolean>(false);
-  const [activeRange, setActiveRange] = useState<number>(0);
+  // null = not picked by the user yet; see autoRange below.
+  const [pickedRange, setActiveRange] = useState<number | null>(null);
   const [details, setDetails] = useState<AnimeDetails | null>(null);
   const [tab, setTab] = useState<DetailTab>('episodes');
   const [history, setHistory] = useState<WatchHistoryItem | null>(null);
@@ -50,7 +50,9 @@ export const AnimeDetailScreen: React.FC<AnimeDetailScreenProps> = ({
   // Respect the user's "Default Audio" preference instead of always
   // starting on SUB.
   useEffect(() => {
-    getUserPreferences().then(p => setMode(p.defaultMode));
+    let cancelled = false;
+    getUserPreferences().then(p => { if (!cancelled) setMode(p.defaultMode); });
+    return () => { cancelled = true; };
   }, []);
 
   // AniList-backed entries (opened from a suggestion) first need their
@@ -58,59 +60,51 @@ export const AnimeDetailScreen: React.FC<AnimeDetailScreenProps> = ({
   // runs once per title.)
   useEffect(() => {
     if (resolved) return;
+    let cancelled = false;
     resolveAnime(anime)
-      .then(setResolved)
+      .then(item => { if (!cancelled) setResolved(item); })
       .catch(err => {
+        if (cancelled) return;
         console.warn('[AnimeDetailScreen] resolve failed:', err);
         setResolveError(`"${anime.title}" isn't available to stream right now.`);
         setLoading(false);
       });
+    return () => { cancelled = true; };
   }, [anime, resolved]);
 
   useEffect(() => {
     if (!resolved) return;
     let cancelled = false;
 
-    getBookmarks().then(bookmarks => {
-      if (!cancelled) setIsBookmarked(bookmarks.some(b => b.id === resolved.id));
-    });
-    getWatchHistory().then(list => {
-      if (!cancelled) setHistory(list.find(h => h.animeId === resolved.id) || null);
+    // This page stays mounted under the player, so Resume/My List follow
+    // library changes instead of showing what was stored when it opened.
+    const loadLibrary = () => {
+      getBookmarks().then(bookmarks => {
+        if (!cancelled) setIsBookmarked(bookmarks.some(b => b.id === resolved.id));
+      });
+      getWatchHistory().then(list => {
+        if (!cancelled) setHistory(list.find(h => h.animeId === resolved.id) || null);
+      });
+    };
+    loadLibrary();
+    const unsubscribe = subscribeLibraryChanges(loadLibrary);
+
+    // Sort ascending by number so episodes[0] is genuinely episode 1 rather
+    // than however the scraper happened to order the page.
+    getEpisodes(resolved.id).then((eps) => {
+      if (cancelled) return;
+      setEpisodes([...eps].sort((a, b) => parseFloat(a.number) - parseFloat(b.number)));
+      setLoading(false);
     });
 
     getAnimeDetails(resolved).then(d => {
       if (!cancelled) setDetails(d);
     });
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+      unsubscribe();
+    };
   }, [resolved]);
-
-  // Episodes load separately so a failure can be retried on its own.
-  useEffect(() => {
-    if (!resolved) return;
-    let cancelled = false;
-    // Sort ascending by number so episodes[0] is genuinely episode 1 rather
-    // than however the scraper happened to order the page.
-    getEpisodes(resolved.id)
-      .then((eps) => {
-        if (cancelled) return;
-        setEpisodes([...eps].sort((a, b) => parseFloat(a.number) - parseFloat(b.number)));
-        setEpisodesError(false);
-      })
-      .catch(err => {
-        console.warn('[AnimeDetailScreen] episode list failed:', err);
-        if (!cancelled) setEpisodesError(true);
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
-    return () => { cancelled = true; };
-  }, [resolved, episodesAttempt]);
-
-  const retryEpisodes = () => {
-    setEpisodesError(false);
-    setLoading(true);
-    setEpisodesAttempt(n => n + 1);
-  };
 
   const shown = resolved || anime;
 
@@ -119,18 +113,39 @@ export const AnimeDetailScreen: React.FC<AnimeDetailScreenProps> = ({
     setIsBookmarked(await toggleBookmark(resolved));
   };
 
+  // A finished last-watched episode means "up next" is the following one,
+  // not a resume into its end credits.
+  const historyIndex = history ? episodes.findIndex(e => e.id === history.episodeId) : -1;
+  const upNext = history && isEpisodeFinished(history) && historyIndex >= 0
+    ? episodes[historyIndex + 1]
+    : undefined;
+
   const handlePlay = () => {
     if (!resolved) return;
-    if (history) {
-      onResume(resolved, history);
+    if (upNext) {
+      onPlayEpisode(resolved, upNext, history?.mode || mode);
+    } else if (history) {
+      onResume(resolved, isEpisodeFinished(history) ? { ...history, currentTime: 0 } : history);
     } else if (episodes.length > 0) {
       onPlayEpisode(resolved, episodes[0], mode);
     }
   };
 
+  const playLabel = upNext
+    ? `Play E${upNext.number}`
+    : history
+      ? (isEpisodeFinished(history) ? `Rewatch E${history.episodeNumber}` : `Resume E${history.episodeNumber}`)
+      : 'Play';
+
   // Pagination for large episode lists (50 per range)
   const chunkSize = 50;
   const rangeCount = Math.max(1, Math.ceil(episodes.length / chunkSize));
+
+  // Long series: until the user picks a range, show the one holding the
+  // episode they're on instead of always 1-50.
+  const upNextIndex = upNext ? historyIndex + 1 : historyIndex;
+  const autoRange = upNextIndex >= 0 ? Math.floor(upNextIndex / chunkSize) : 0;
+  const activeRange = pickedRange ?? autoRange;
   const currentChunk = episodes.slice(activeRange * chunkSize, (activeRange + 1) * chunkSize);
 
   const description = shown.description || details?.description;
@@ -244,10 +259,10 @@ export const AnimeDetailScreen: React.FC<AnimeDetailScreenProps> = ({
               }}
             >
               {loading && !history ? <Loader2 size={20} className="animate-spin" /> : <Play size={20} fill="#000" />}
-              <span>{history ? `Resume E${history.episodeNumber}` : 'Play'}</span>
+              <span>{playLabel}</span>
             </button>
 
-            {history && history.duration > 0 && (
+            {history && history.duration > 0 && !upNext && !isEpisodeFinished(history) && (
               <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '12px' }}>
                 <div style={{ flex: 1, height: '3px', backgroundColor: 'rgba(127,127,127,0.35)', borderRadius: '2px' }}>
                   <div style={{
@@ -381,13 +396,7 @@ export const AnimeDetailScreen: React.FC<AnimeDetailScreenProps> = ({
               </div>
             )}
 
-            {episodesError && !loading ? (
-              <ErrorState
-                compact
-                message="Couldn't load the episode list."
-                onRetry={retryEpisodes}
-              />
-            ) : loading ? (
+            {loading ? (
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '40px 0', gap: '10px', color: 'var(--text-secondary)' }}>
                 <Loader2 size={24} className="animate-spin" />
                 <span style={{ fontSize: '14px' }}>Fetching episodes...</span>
