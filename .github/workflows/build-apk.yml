@@ -1,4 +1,4 @@
-name: Build AniStream v8.1 APK
+name: Build AniStream v8.2 APK
 
 on:
   push:
@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
     inputs:
       release_tag:
-        description: 'Tag to publish this build under (e.g. v8.1) - leave empty to just build, no release'
+        description: 'Tag to publish this build under (e.g. v8.2) - leave empty to just build, no release'
         required: false
         default: ''
 
@@ -72,26 +72,26 @@ jobs:
       - name: Package APK for Release
         run: |
           mkdir -p build-output
-          cp android/app/build/outputs/apk/release/app-release.apk build-output/AniStream-v8.1.apk
-          ls -lh build-output/AniStream-v8.1.apk
+          cp android/app/build/outputs/apk/release/app-release.apk build-output/AniStream-v8.2.apk
+          ls -lh build-output/AniStream-v8.2.apk
 
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: AniStream-v8.1-APK
-          path: build-output/AniStream-v8.1.apk
+          name: AniStream-v8.2-APK
+          path: build-output/AniStream-v8.2.apk
           retention-days: 30
 
       # R8 mapping - needed to de-obfuscate stack traces from this build.
       - name: Upload R8 Mapping
         uses: actions/upload-artifact@v4
         with:
-          name: AniStream-v8.1-mapping
+          name: AniStream-v8.2-mapping
           path: android/app/build/outputs/mapping/release/mapping.txt
           retention-days: 90
           if-no-files-found: warn
 
-      # A manual run republishing an existing tag (e.g. rebuilding v8.1)
+      # A manual run republishing an existing tag (e.g. rebuilding v8.2)
       # replaces that release and its tag, so the tag always points at the
       # commit this APK was built from. Tag pushes are never touched.
       - name: Replace Existing Release (manual runs only)
@@ -109,27 +109,23 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch' && inputs.release_tag != '')
         uses: softprops/action-gh-release@v2
         with:
-          files: build-output/AniStream-v8.1.apk
+          files: build-output/AniStream-v8.2.apk
           tag_name: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || inputs.release_tag }}
           # Without this a new tag is created on the default branch, not on
           # the commit that was actually built.
           target_commitish: ${{ github.sha }}
           name: AniStream ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || inputs.release_tag }} Release
           body: |
-            ## AniStream v8.1 - Android Anime Streaming App (Powered by ani-cli)
+            ## AniStream v8.2 - Android Anime Streaming App (Powered by ani-cli)
 
-            v8.1 follows up v8.0 with fixes from real-device testing.
+            v8.2 fixes audio switching: the episode now continues from the exact moment you switched Sub/Dub instead of starting over.
 
-            ### 🚀 What's new in v8.1:
+            ### 🚀 What's new in v8.2:
 
-            - **Dub only when it exists**: titles without an English dub no longer show a DUB option (title page or player) and never silently play the subbed stream as "dub".
-            - **Continue where you left off**: tapping a half-watched episode resumes it; Library entries play directly from the saved position.
-            - **Every watched episode is tracked**: the Library History lists each episode you watched (not just the last one per title), with Watched badges on the episode list.
-            - **Smoother audio and episode swaps**: the picture stays on screen while the new stream loads instead of tearing the player down.
-            - **Live scrubbing**: dragging the seek bar scrubs the real video with a time bubble.
-            - **Captions list the player's real tracks**, so picking one (including on dub) shows it.
+            - **Sub/Dub switch keeps your place**: the player re-checks the position once the new audio stream is ready and jumps back if it started early.
+            - Everything from v8.2: dub only when available, resume partial episodes, per-episode Library history, smoother swaps, live scrubbing, real caption tracks.
 
             ### 📦 Download:
-            Download **`AniStream-v8.1.apk`** below and install or update on any Android device running Android 8.0 or later - it updates previous versions in place and keeps your history and My List.
+            Download **`AniStream-v8.2.apk`** below and install or update on any Android device running Android 8.0 or later - it updates previous versions in place and keeps your history and My List.
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -147,6 +147,8 @@ public class ExoPlayerActivity extends AppCompatActivity {
     // Position the freshly prepared stream must be at once it is ready; if the
     // player reports it started elsewhere (e.g. 0:00) it is seeked there.
     private long resumeGuardMs = -1;
+    private long resumeGuardSince = 0;
+    private static final long RESUME_GUARD_WINDOW_MS = 20_000;
 
     private boolean nextEpisodeTriggered = false;
     // Post-play: playback position (ms) at which the "Next Episode" countdown
@@ -442,6 +444,7 @@ public class ExoPlayerActivity extends AppCompatActivity {
         pendingResumeMs = -1;
         pendingResumeEpisode = null;
         resumeGuardMs = startPositionMs > 2_000 ? startPositionMs : -1;
+        resumeGuardSince = android.os.SystemClock.elapsedRealtime();
         autoRetryCount = 0;
         lastKnownPositionMs = Math.max(0L, startPositionMs);
         initializePlayer(videoUrl, referer, subtitlesJson, Math.max(0L, startPositionMs), true);
@@ -677,12 +680,14 @@ public class ExoPlayerActivity extends AppCompatActivity {
         btnRewind.setOnClickListener(v -> seekBy(-SEEK_STEP_MS));
         btnForward.setOnClickListener(v -> seekBy(SEEK_STEP_MS));
         btnSkipIntro.setOnClickListener(v -> {
+            resumeGuardMs = -1;
             if (player != null && introInterval != null) {
                 player.seekTo(Math.max(0, introInterval.endMs));
             }
             btnSkipIntro.setVisibility(View.GONE);
         });
         btnSkipOutro.setOnClickListener(v -> {
+            resumeGuardMs = -1;
             if (player != null && outroInterval != null) {
                 player.seekTo(Math.max(0, outroInterval.endMs));
             }
@@ -782,6 +787,7 @@ public class ExoPlayerActivity extends AppCompatActivity {
     };
 
     private void endScrub(int progress) {
+        resumeGuardMs = -1;
         handler.removeCallbacks(scrubSeekRunnable);
         scrubSeekQueued = false;
         if (player != null && player.getDuration() > 0) {
@@ -1576,6 +1582,7 @@ public class ExoPlayerActivity extends AppCompatActivity {
 
     private void seekBy(long deltaMs) {
         if (player == null) return;
+        resumeGuardMs = -1;
         long target = Math.max(0, Math.min(player.getCurrentPosition() + deltaMs, Math.max(player.getDuration(), 0)));
         player.seekTo(target);
         showControls();
@@ -1667,13 +1674,7 @@ public class ExoPlayerActivity extends AppCompatActivity {
                 if (state == Player.STATE_READY) {
                     // Recovered - a later hiccup gets the full retry budget.
                     autoRetryCount = 0;
-                    if (resumeGuardMs > 0) {
-                        long expected = resumeGuardMs;
-                        resumeGuardMs = -1;
-                        if (player != null && player.getCurrentPosition() < expected - 3_000) {
-                            player.seekTo(expected);
-                        }
-                    }
+                    enforceResumePosition();
                     textRemainingTime.setText(formatTime(Math.max(player.getDuration(), 0)));
                     maybeFetchSkipTimes();
                 }
@@ -1683,12 +1684,6 @@ public class ExoPlayerActivity extends AppCompatActivity {
             public void onTracksChanged(Tracks tracks) {
                 applySubtitleSelection(tracks);
                 maybeResolveAdaptiveQuality(tracks);
-            }
-
-            @Override
-            public void onPositionDiscontinuity(Player.PositionInfo oldPosition, Player.PositionInfo newPosition, int reason) {
-                // A user seek / skip button moves the target: don't "correct" it.
-                if (reason == Player.DISCONTINUITY_REASON_SEEK) resumeGuardMs = -1;
             }
 
             @Override
@@ -1852,8 +1847,28 @@ public class ExoPlayerActivity extends AppCompatActivity {
         return new AniSkipClient.SkipInterval(startMs, endMs);
     }
 
+    // After a stream swap the player must be where the viewer was. If it is
+    // ready somewhere clearly earlier (the new stream started over), seek
+    // there. Stays armed - checked on ready and every tick - until the
+    // position is right, the viewer seeks themselves, or the window passes.
+    private void enforceResumePosition() {
+        if (resumeGuardMs <= 0 || player == null) return;
+        if (android.os.SystemClock.elapsedRealtime() - resumeGuardSince > RESUME_GUARD_WINDOW_MS) {
+            resumeGuardMs = -1;
+            return;
+        }
+        if (player.getPlaybackState() != Player.STATE_READY) return;
+        if (player.getCurrentPosition() >= resumeGuardMs - 3_000) {
+            resumeGuardMs = -1;
+            return;
+        }
+        Log.w(TAG, "Stream started at " + player.getCurrentPosition() + "ms, resuming at " + resumeGuardMs + "ms");
+        player.seekTo(resumeGuardMs);
+    }
+
     private void updateProgress() {
         if (player == null || userSeeking || awaitingStream) return;
+        enforceResumePosition();
         long duration = Math.max(player.getDuration(), 0);
         long position = Math.max(player.getCurrentPosition(), 0);
         if (position > 0) lastKnownPositionMs = position;
