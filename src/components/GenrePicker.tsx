@@ -4,6 +4,7 @@ import React, { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { X } from 'lucide-react';
 import { getGenres, type Genre } from '../services/catalogService';
+import { useBackHandler } from '../services/backStack';
 
 interface GenrePickerProps {
   open: boolean;
@@ -18,6 +19,8 @@ export const GenrePicker: React.FC<GenrePickerProps> = ({ open, selectedSlug, on
   useEffect(() => {
     if (open && genres.length === 0) getGenres().then(setGenres);
   }, [open, genres.length]);
+
+  useBackHandler(open, onClose);
 
   if (!open) return null;
 

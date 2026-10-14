@@ -35,3 +35,4 @@
     public <fields>;
 }
 -dontwarn org.apache.cordova.**
+-keep class com.anicli.stream.KeepAliveWebView { *; }

@@ -12,14 +12,22 @@ import type { Genre } from './services/catalogService';
 import { SettingsScreen } from './pages/SettingsScreen';
 import { ConfirmModal } from './components/ConfirmModal';
 import {
-  getEpisodeStream,
   getEpisodes,
   SourceUnavailableError,
   type AnimeItem,
   type EpisodeItem,
   type StreamSource
 } from './core/aniCliCore';
-import { saveWatchProgress, getUserPreferences, type WatchHistoryItem } from './services/historyService';
+import { resolveStream } from './services/streamResolver';
+import { handleLayerBack } from './services/backStack';
+import {
+  saveWatchProgress,
+  getUserPreferences,
+  setPlaybackActive,
+  DEFAULT_PREFERENCES,
+  type UserPreferences,
+  type WatchHistoryItem
+} from './services/historyService';
 import { getTheme, getStoredThemeSync, setTheme as persistTheme, type ThemeMode } from './services/themeService';
 
 // The web player (and hls.js, the largest dependency) is only needed once
@@ -55,6 +63,16 @@ function saveSessionProgress(session: PlaybackSession, currentTime: number, dura
   });
 }
 
+// Applies the "Default Quality" preference when the stream actually offers
+// more than one distinct rendition to choose from.
+function applyPreferredQuality(source: StreamSource, prefs: UserPreferences): StreamSource {
+  const preferred = source.qualities?.find(q => q.quality === prefs.defaultQuality);
+  if (preferred && preferred.url !== source.streamUrl) {
+    return { ...source, streamUrl: preferred.url, quality: preferred.quality };
+  }
+  return source;
+}
+
 const TABS: { id: Tab; label: string; icon: React.ComponentType<{ size?: number }> }[] = [
   { id: 'home', label: 'Home', icon: HomeIcon },
   { id: 'search', label: 'Search', icon: SearchIcon },
@@ -62,24 +80,88 @@ const TABS: { id: Tab; label: string; icon: React.ComponentType<{ size?: number 
   { id: 'settings', label: 'Settings', icon: SettingsIcon }
 ];
 
+// How long a closing screen keeps sliding out before it is removed.
+const OVERLAY_EXIT_MS = 240;
+
+// A screen that has been popped but is still animating out. It keeps the key
+// it had while open, so React reuses the same DOM node and only the class
+// changes - the slide-out starts from exactly where the screen was.
+interface ClosingOverlay {
+  key: string;
+  anime?: AnimeItem;
+  genre?: Genre;
+}
+
+const animeKey = (depth: number, anime: AnimeItem) => `detail-${depth}-${anime.id}`;
+const genreKey = (genre: Genre) => `genre-${genre.slug}`;
+
 export const App: React.FC = () => {
   const [currentTab, setCurrentTab] = useState<Tab>('home');
+  // Tabs are mounted the first time they are visited and then kept alive
+  // (hidden, not destroyed), so coming back to one keeps its scroll position
+  // and loaded content instead of rebuilding and refetching it.
+  const [mountedTabs, setMountedTabs] = useState<Record<Tab, boolean>>({
+    home: true, search: false, library: false, settings: false
+  });
   // Title pages stack up (opening a suggestion from a title page and backing
   // out returns to the previous title, like Netflix); a genre page sits
-  // underneath them.
+  // underneath them. Both slide over the tabs instead of replacing them.
   const [animeStack, setAnimeStack] = useState<AnimeItem[]>([]);
   const [selectedGenre, setSelectedGenre] = useState<Genre | null>(null);
-  const selectedAnime = animeStack.length > 0 ? animeStack[animeStack.length - 1] : null;
-  const pushAnime = (anime: AnimeItem) => setAnimeStack(stack => [...stack, anime]);
-  const popAnime = () => setAnimeStack(stack => stack.slice(0, -1));
+  const [closing, setClosing] = useState<ClosingOverlay[]>([]);
+  const animeStackRef = useRef<AnimeItem[]>([]);
+  const selectedGenreRef = useRef<Genre | null>(null);
+  const currentTabRef = useRef<Tab>('home');
+
+  const closingTimers = useRef<number[]>([]);
+  useEffect(() => () => closingTimers.current.forEach(t => window.clearTimeout(t)), []);
+
+  const updateStack = (next: AnimeItem[]) => {
+    animeStackRef.current = next;
+    setAnimeStack(next);
+  };
+  const updateGenre = (next: Genre | null) => {
+    selectedGenreRef.current = next;
+    setSelectedGenre(next);
+  };
+  const startClosing = (overlay: ClosingOverlay) => {
+    setClosing(list => [...list.filter(c => c.key !== overlay.key), overlay]);
+    closingTimers.current.push(window.setTimeout(() => {
+      setClosing(list => list.filter(c => c.key !== overlay.key));
+    }, OVERLAY_EXIT_MS + 60));
+  };
+
+  const pushAnime = (anime: AnimeItem) => {
+    const stack = animeStackRef.current;
+    const key = animeKey(stack.length, anime);
+    setClosing(list => list.filter(c => c.key !== key));
+    updateStack([...stack, anime]);
+  };
+  const popAnime = () => {
+    const stack = animeStackRef.current;
+    if (stack.length === 0) return;
+    const top = stack[stack.length - 1];
+    startClosing({ key: animeKey(stack.length - 1, top), anime: top });
+    updateStack(stack.slice(0, -1));
+  };
   const openGenre = (genre: Genre) => {
-    setAnimeStack([]);
-    setSelectedGenre(genre);
+    updateStack([]);
+    setClosing([]);
+    updateGenre(genre);
+  };
+  const closeGenre = () => {
+    const genre = selectedGenreRef.current;
+    if (!genre) return;
+    startClosing({ key: genreKey(genre), genre });
+    updateGenre(null);
   };
   const switchTab = (tab: Tab) => {
-    setAnimeStack([]);
-    setSelectedGenre(null);
+    updateStack([]);
+    updateGenre(null);
+    setClosing([]);
+    currentTabRef.current = tab;
     setCurrentTab(tab);
+    setMountedTabs(prev => (prev[tab] ? prev : { ...prev, [tab]: true }));
   };
   const [theme, setThemeState] = useState<ThemeMode>(getStoredThemeSync());
 
@@ -103,6 +185,8 @@ export const App: React.FC = () => {
 
   // Active player state
   const [isPlaying, setIsPlaying] = useState<boolean>(false);
+  // The native player is open (also while it is still resolving a stream).
+  const [nativeOpen, setNativeOpen] = useState<boolean>(false);
   const [playingAnime, setPlayingAnime] = useState<AnimeItem | null>(null);
   const [playingEpisode, setPlayingEpisode] = useState<EpisodeItem | null>(null);
   const [playingMode, setPlayingMode] = useState<'sub' | 'dub'>('sub');
@@ -120,6 +204,17 @@ export const App: React.FC = () => {
   // so a slow stream resolution that finishes after the user moved on (or
   // backed out of the player) is dropped instead of reopening the player.
   const playRequestRef = useRef<number>(0);
+
+  // While anything plays, screens underneath don't react to each progress
+  // save (see historyService.setPlaybackActive).
+  useEffect(() => {
+    setPlaybackActive(nativeOpen || isPlaying);
+  }, [nativeOpen, isPlaying]);
+
+  const prefsRef = useRef<UserPreferences>(DEFAULT_PREFERENCES);
+  useEffect(() => {
+    getUserPreferences().then(p => { prefsRef.current = p; });
+  }, []);
 
   // The real episode list for whichever anime is currently playing - used to
   // find the actual next episode (real id/title) instead of guessing one,
@@ -151,8 +246,8 @@ export const App: React.FC = () => {
   };
 
   // The native ExoPlayer's Sub/Dub button and "Next Episode" card can't
-  // re-resolve a stream themselves - they notify us here so we can call
-  // getEpisodeStream() again and relaunch the player. Read anime/episode from
+  // re-resolve a stream themselves - they notify us here so we can resolve
+  // again and hand the player the new stream. Read anime/episode from
   // refs, not state: this effect subscribes once (empty deps), so closing
   // over the state variables directly would only ever see their initial
   // (null) values.
@@ -191,8 +286,14 @@ export const App: React.FC = () => {
       setPlayingMode(mode);
       playingEpisodeRef.current = episode;
       playingModeRef.current = mode;
-      if (prefetched && prefetched.animeId === anime.id && prefetched.episode.id === episode.id && prefetched.mode === mode) {
-        const session = { anime, episode, mode, source: prefetched.source, startTime: 0 };
+      // Progress for the new episode is only saved against a committed
+      // session. Without the prefetched source (it should always be there)
+      // reuse the previous one just to carry the "not a demo clip" fact.
+      const matching = prefetched && prefetched.animeId === anime.id
+        && prefetched.episode.id === episode.id && prefetched.mode === mode;
+      const source = matching ? prefetched.source : nowPlayingRef.current?.source;
+      if (source) {
+        const session = { anime, episode, mode, source, startTime: 0 };
         nowPlayingRef.current = session;
         setNowPlaying(session);
       }
@@ -201,11 +302,11 @@ export const App: React.FC = () => {
     const nextEpHandle = ExoPlayerPlugin.addListener('nextEpisodeRequested', ({ episode: currentNumber }) => {
       const anime = playingAnimeRef.current;
       const list = episodeListRef.current;
-      // By id first, then by the number the player was showing (covers an
-      // episode object whose id doesn't match the loaded list).
+      // By the number the player was showing first (it is the authority on
+      // what is on screen), then by the episode JS thinks is playing.
       const byNumber = list.findIndex(e => e.number === currentNumber);
-      const next = findNextEpisode(playingEpisodeRef.current, list)
-        ?? (byNumber >= 0 ? list[byNumber + 1] : undefined);
+      const next = (byNumber >= 0 ? list[byNumber + 1] : undefined)
+        ?? findNextEpisode(playingEpisodeRef.current, list);
       if (!anime || !next) {
         failInPlayer("Couldn't find the next episode. Go back and pick it from the list.");
         return;
@@ -219,7 +320,10 @@ export const App: React.FC = () => {
         failInPlayer(`Couldn't load episode ${selectedNumber}. Go back and pick it from the list.`);
         return;
       }
-      handlePlayEpisode(anime, selected, playingModeRef.current, 0);
+      // Re-picking the episode that is already showing is the player's
+      // "Retry" - that must not reuse a stream that just stalled.
+      const retry = selectedNumber === playingEpisodeRef.current?.number;
+      handlePlayEpisode(anime, selected, playingModeRef.current, 0, { fresh: retry });
     });
     // The stream hit an HTTP error (e.g. 404): look the same episode up
     // again - exactly what closing and reopening it does - and resume.
@@ -230,7 +334,7 @@ export const App: React.FC = () => {
         return;
       }
       console.warn(`[App] reloading ${session.anime.title} E${episode} after a stream error`);
-      handlePlayEpisode(session.anime, session.episode, session.mode, Math.max(0, positionMs / 1000));
+      handlePlayEpisode(session.anime, session.episode, session.mode, Math.max(0, positionMs / 1000), { fresh: true });
     });
     // The native player is the only place playback position lives - unlike
     // the web <VideoPlayer>, which reports progress via its own
@@ -239,7 +343,9 @@ export const App: React.FC = () => {
     // save it here, from this bridged event.
     const closedHandle = ExoPlayerPlugin.addListener('playerClosed', () => {
       playRequestRef.current++;
+      prefetchedNextRef.current = null;
       setStreamLoading(false);
+      setNativeOpen(false);
     });
     const progressHandle = ExoPlayerPlugin.addListener('progressUpdate', ({ episode, mode, positionMs, durationMs }) => {
       // The native player sends its final report for episode N *after* it
@@ -268,7 +374,8 @@ export const App: React.FC = () => {
     mode: 'sub' | 'dub',
     source: StreamSource,
     episodes: EpisodeItem[],
-    startTime: number
+    startTime: number,
+    prefs: UserPreferences
   ) => ({
     url: source.streamUrl,
     title: anime.title,
@@ -281,16 +388,16 @@ export const App: React.FC = () => {
     isFallback: source.isFallback,
     intro: source.intro,
     outro: source.outro,
-    startPositionMs: Math.max(0, Math.round(startTime * 1000))
+    startPositionMs: Math.max(0, Math.round(startTime * 1000)),
+    autoSkipIntro: prefs.autoSkipIntro,
+    autoPlayNext: prefs.autoPlayNext
   });
 
   // The next episode's stream, resolved ahead of time and handed to the
   // native player, which starts it by itself when Next Episode is pressed
-  // (or the countdown ends). Waiting for JavaScript at that moment is what
-  // left the player stuck on its loading screen: by then this WebView has
-  // been hidden behind the player for a whole episode and may not run
-  // promptly. Best effort - without a prefetched stream the player falls
-  // back to asking JS (nextEpisodeRequested).
+  // (or the countdown ends). Best effort - without a prefetched stream the
+  // player falls back to asking JS (nextEpisodeRequested), which joins this
+  // same resolution if it is still running (see streamResolver).
   const prefetchedNextRef = useRef<{ animeId: string; episode: EpisodeItem; mode: 'sub' | 'dub'; source: StreamSource } | null>(null);
   const prefetchNext = async (
     anime: AnimeItem,
@@ -302,12 +409,13 @@ export const App: React.FC = () => {
     const next = findNextEpisode(current, episodes);
     if (!next) return;
     try {
-      const source = await getEpisodeStream(anime.id || anime.title, next.id || next.number, mode, anime.id);
+      const prefs = prefsRef.current;
+      const source = applyPreferredQuality(await resolveStream(anime, next, mode), prefs);
       // Moved on meanwhile, or nothing real to hand over.
       if (requestId !== playRequestRef.current || source.isFallback) return;
       prefetchedNextRef.current = { animeId: anime.id, episode: next, mode, source };
       await ExoPlayerPlugin.setNextEpisode({
-        ...nativePlayOptions(anime, next, mode, source, episodes, 0),
+        ...nativePlayOptions(anime, next, mode, source, episodes, 0, prefs),
         afterEpisode: current.number
       });
       console.log(`[App] prefetched E${next.number} (${mode}) for the player`);
@@ -321,7 +429,8 @@ export const App: React.FC = () => {
     anime: AnimeItem,
     episode: EpisodeItem,
     mode: 'sub' | 'dub' = 'sub',
-    startTime = 0
+    startTime = 0,
+    options: { fresh?: boolean } = {}
   ) => {
     const requestId = ++playRequestRef.current;
     const isNative = Capacitor.isNativePlatform();
@@ -331,12 +440,16 @@ export const App: React.FC = () => {
     // that same player once resolved. For next episode / audio switch the
     // player is already open and simply shows its spinner again.
     if (isNative) {
+      setNativeOpen(true);
       ExoPlayerPlugin.open({ title: anime.title, episode: episode.number, mode }).catch(err =>
         console.warn('[App] ExoPlayer open failed:', err));
     }
     setPlayingAnime(anime);
     setPlayingEpisode(episode);
     setPlayingMode(mode);
+    playingAnimeRef.current = anime;
+    playingEpisodeRef.current = episode;
+    playingModeRef.current = mode;
 
     // Real episode list for this anime, used for hasNextEpisode/next-episode
     // lookups and the native player's episode picker - only re-fetched when
@@ -356,10 +469,12 @@ export const App: React.FC = () => {
       : Promise.resolve(episodeListRef.current);
 
     try {
-      const [source, resolvedEpisodeList] = await Promise.all([
-        getEpisodeStream(anime.id || anime.title, episode.id || episode.number, mode, anime.id),
-        episodeListPromise
+      const [rawSource, resolvedEpisodeList, prefs] = await Promise.all([
+        resolveStream(anime, episode, mode, { fresh: options.fresh }),
+        episodeListPromise,
+        getUserPreferences()
       ]);
+      prefsRef.current = prefs;
 
       // The user picked something else meanwhile, or closed the player.
       if (requestId !== playRequestRef.current) return;
@@ -367,31 +482,28 @@ export const App: React.FC = () => {
       const episodesForPlayer = resolvedEpisodeList ?? [];
       if (needsEpisodeList) {
         setEpisodeList(episodesForPlayer);
+        episodeListRef.current = episodesForPlayer;
         loadedEpisodeListAnimeId.current = resolvedEpisodeList ? anime.id : null;
       }
 
-      // Apply the "Default Quality" preference when the stream actually
-      // offers more than one distinct rendition to choose from.
-      const prefs = await getUserPreferences();
-      const preferred = source.qualities?.find(q => q.quality === prefs.defaultQuality);
-      if (preferred && preferred.url !== source.streamUrl) {
-        source.streamUrl = preferred.url;
-        source.quality = preferred.quality;
-      }
-
-      if (requestId !== playRequestRef.current) return;
-      setNowPlaying({ anime, episode, mode, source, startTime });
+      const source = applyPreferredQuality(rawSource, prefs);
+      const session: PlaybackSession = { anime, episode, mode, source, startTime };
+      nowPlayingRef.current = session;
+      setNowPlaying(session);
 
       if (isNative) {
         try {
           console.log("[App] Launching Android Native ExoPlayer...");
-          await ExoPlayerPlugin.play(nativePlayOptions(anime, episode, mode, source, episodesForPlayer, startTime));
-          // Resolve the following episode now, while this WebView is
-          // certainly active, and hand it to the player (see prefetchNext).
+          await ExoPlayerPlugin.play(nativePlayOptions(anime, episode, mode, source, episodesForPlayer, startTime, prefs));
+          // Resolve the following episode now and hand it to the player
+          // (see prefetchNext).
           if (!source.isFallback) prefetchNext(anime, episode, mode, episodesForPlayer, requestId);
         } catch (e) {
-          console.warn("[App] ExoPlayer plugin call failed, falling back to Web player:", e);
-          setIsPlaying(true);
+          console.warn("[App] ExoPlayer plugin call failed:", e);
+          // The native player is already open on its loading screen: report
+          // the failure there rather than starting a second, hidden player.
+          ExoPlayerPlugin.fail({ message: "Couldn't start the player. Please try again." })
+            .catch(() => { setNativeOpen(false); setStreamErrorMessage("Couldn't start the player. Please try again."); });
         }
       } else {
         setIsPlaying(true);
@@ -403,7 +515,7 @@ export const App: React.FC = () => {
         ? "This episode isn't available from any server right now. Try again in a bit, or switch Sub/Dub."
         : "Couldn't load this episode - check your connection and try again.";
       if (isNative) {
-        ExoPlayerPlugin.fail({ message }).catch(() => setStreamErrorMessage(message));
+        ExoPlayerPlugin.fail({ message }).catch(() => { setNativeOpen(false); setStreamErrorMessage(message); });
       } else {
         setStreamErrorMessage(message);
       }
@@ -456,54 +568,121 @@ export const App: React.FC = () => {
   const hasNextEpisode = findNextEpisode(playingEpisode, episodeList) !== undefined;
 
   // ---- Android back gesture / button ----
-  // Screens are in-memory state, not URLs, so the native back action had
-  // nothing to step back through and closed the whole app. While anything
-  // is open on top of the Home tab, one "guard" history entry is kept;
-  // MainActivity turns back into history.back(), which lands here as a
-  // popstate and closes the top-most thing, exactly like the on-screen
-  // back arrows. Back on plain Home has no entry left, so Android sends the
-  // app to the background.
+  // Screens are in-memory state, not URLs. MainActivity asks the web layer
+  // what "back" should do by calling window.__anistreamBack(): it closes the
+  // top-most thing - an open dialog/picker, the web player, a title page, a
+  // genre page, then any tab other than Home (-> Home) - and answers true.
+  // On plain Home it answers false and Android sends the app to the
+  // background (like pressing Home) rather than closing it.
+  const backStepRef = useRef<() => boolean>(() => false);
+  backStepRef.current = () => {
+    if (handleLayerBack()) return true;
+    if (isPlaying) { closeWebPlayer(); return true; }
+    if (animeStackRef.current.length > 0) { popAnime(); return true; }
+    if (selectedGenreRef.current) { closeGenre(); return true; }
+    if (currentTabRef.current !== 'home') { switchTab('home'); return true; }
+    return false;
+  };
+
+  useEffect(() => {
+    const w = window as unknown as { __anistreamBack?: () => boolean };
+    w.__anistreamBack = () => backStepRef.current();
+    return () => { delete w.__anistreamBack; };
+  }, []);
+
+  // In a regular browser (dev / web build) the browser's own Back button is
+  // the only back action, so one history "guard" entry is kept while
+  // anything is open on top of Home and popstate steps back through it.
   const atRoot = !isPlaying && streamErrorMessage === null && animeStack.length === 0
     && !selectedGenre && currentTab === 'home';
   const backGuardRef = useRef(false);
   const ignoredPopsRef = useRef(0);
-  const backStepRef = useRef<() => void>(() => undefined);
-  backStepRef.current = () => {
-    if (streamErrorMessage !== null) setStreamErrorMessage(null);
-    else if (isPlaying) closeWebPlayer();
-    else if (animeStack.length > 0) popAnime();
-    else if (selectedGenre) setSelectedGenre(null);
-    else if (currentTab !== 'home') switchTab('home');
-  };
-
-  // Runs after every render: keep exactly one guard entry while not at root.
   useEffect(() => {
+    if (Capacitor.isNativePlatform()) return;
     if (!atRoot && !backGuardRef.current) {
       window.history.pushState({ anistreamBackGuard: true }, '');
       backGuardRef.current = true;
     } else if (atRoot && backGuardRef.current) {
-      // Got back to root through the on-screen arrows - drop the guard so
-      // the next back press leaves the app instead of doing nothing.
       backGuardRef.current = false;
       ignoredPopsRef.current++;
       window.history.back();
     }
   });
-
   useEffect(() => {
+    if (Capacitor.isNativePlatform()) return;
     const onPopState = () => {
       if (ignoredPopsRef.current > 0) {
         ignoredPopsRef.current--;
         return;
       }
-      // The guard was consumed by this back press; the render after this
-      // step re-adds it if something is still open.
       backGuardRef.current = false;
       backStepRef.current();
     };
     window.addEventListener('popstate', onPopState);
     return () => window.removeEventListener('popstate', onPopState);
   }, []);
+
+  // Screens underneath a covering layer (or player) stop animating/polling.
+  const covered = isPlaying || nativeOpen || animeStack.length > 0 || !!selectedGenre;
+  const dockHidden = isPlaying || animeStack.length > 0;
+
+  const renderOverlays = () => {
+    const nodes: React.ReactNode[] = [];
+    const push = (key: string, leaving: boolean, node: React.ReactNode) => {
+      nodes.push(<div key={key} className={leaving ? 'overlay leaving' : 'overlay'}>{node}</div>);
+    };
+
+    // Genre page (open, or sliding out)
+    if (selectedGenre) {
+      push(genreKey(selectedGenre), false, (
+        <GenreScreen
+          genre={selectedGenre}
+          onBack={closeGenre}
+          onSelectGenre={openGenre}
+          onSelectAnime={pushAnime}
+        />
+      ));
+    }
+    closing.filter(c => c.genre).forEach(c => push(c.key, true, (
+      <GenreScreen genre={c.genre!} onBack={() => undefined} onSelectGenre={() => undefined} onSelectAnime={() => undefined} />
+    )));
+
+    // Title pages, bottom to top, then the ones sliding out above them.
+    animeStack.forEach((anime, depth) => {
+      push(animeKey(depth, anime), false, (
+        <AnimeDetailScreen
+          anime={anime}
+          onBack={popAnime}
+          onPlayEpisode={(a, ep, mode) => handlePlayEpisode(a, ep, mode)}
+          onResume={(a, item) => handlePlayEpisode(
+            a,
+            { id: item.episodeId, number: item.episodeNumber, title: `Episode ${item.episodeNumber}` },
+            item.mode,
+            item.currentTime
+          )}
+          onSelectAnime={pushAnime}
+        />
+      ));
+    });
+    closing.filter(c => c.anime).forEach(c => push(c.key, true, (
+      <AnimeDetailScreen
+        anime={c.anime!}
+        onBack={() => undefined}
+        onPlayEpisode={() => undefined}
+        onResume={() => undefined}
+        onSelectAnime={() => undefined}
+      />
+    )));
+    return nodes;
+  };
+
+  const tabPane = (tab: Tab, node: React.ReactNode) => (
+    mountedTabs[tab] ? (
+      <div key={tab} className="tab-pane" data-active={currentTab === tab}>
+        {node}
+      </div>
+    ) : null
+  );
 
   return (
     <div style={{
@@ -515,56 +694,36 @@ export const App: React.FC = () => {
       overflow: 'hidden',
       position: 'relative'
     }}>
-      {/* Active Screen Rendering - keyed + animated so switching screens doesn't
-          hard-cut: pushing into detail glides in from the right (like iOS
-          navigation), switching tabs fades/pops in place. */}
-      <div
-        key={selectedAnime ? `detail-${animeStack.length}-${selectedAnime.id}` : selectedGenre ? `genre-${selectedGenre.slug}` : currentTab}
-        className={selectedAnime || selectedGenre ? 'animate-slide-in' : 'animate-fade-in'}
-        style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}
-      >
-        {selectedAnime ? (
-          <AnimeDetailScreen
-            anime={selectedAnime}
-            onBack={popAnime}
-            onPlayEpisode={(anime, ep, mode) => handlePlayEpisode(anime, ep, mode)}
-            onResume={(anime, item) => handlePlayEpisode(
-              anime,
-              { id: item.episodeId, number: item.episodeNumber, title: `Episode ${item.episodeNumber}` },
-              item.mode,
-              item.currentTime
-            )}
-            onSelectAnime={pushAnime}
-          />
-        ) : selectedGenre ? (
-          <GenreScreen
-            genre={selectedGenre}
-            onBack={() => setSelectedGenre(null)}
-            onSelectGenre={openGenre}
-            onSelectAnime={pushAnime}
-          />
-        ) : currentTab === 'home' ? (
+      <div style={{ flex: 1, position: 'relative', minHeight: 0 }}>
+        {tabPane('home', (
           <HomeScreen
             onSelectAnime={pushAnime}
             onResumeEpisode={handleOpenFromHistory}
             onOpenSearch={() => switchTab('search')}
             onSelectGenre={openGenre}
-            paused={isPlaying}
+            paused={covered || currentTab !== 'home'}
           />
-        ) : currentTab === 'search' ? (
+        ))}
+        {tabPane('search', (
           <SearchScreen
+            active={currentTab === 'search' && !covered}
             onBack={() => switchTab('home')}
             onSelectAnime={pushAnime}
             onSelectGenre={openGenre}
           />
-        ) : currentTab === 'library' ? (
+        ))}
+        {tabPane('library', (
           <HistoryScreen
+            active={currentTab === 'library' && !covered}
             onResumeEpisode={handleOpenFromHistory}
             onSelectAnime={pushAnime}
           />
-        ) : (
-          <SettingsScreen theme={theme} onChangeTheme={handleSetTheme} />
-        )}
+        ))}
+        {tabPane('settings', (
+          <SettingsScreen active={currentTab === 'settings' && !covered} theme={theme} onChangeTheme={handleSetTheme} />
+        ))}
+
+        {renderOverlays()}
       </div>
 
       {/* Stream loading: a slim, non-blocking bar at the top (the native
@@ -602,72 +761,40 @@ export const App: React.FC = () => {
         </Suspense>
       )}
 
-      {/* Floating Apple-TV style glass dock (hidden during player and detail view).
-          Detached from the screen edge with a sliding liquid-glass indicator
-          that glides behind whichever tab is active. */}
-      {!selectedAnime && !isPlaying && (
-        <div
-          style={{
-            position: 'fixed',
-            left: '20px',
-            right: '20px',
-            bottom: 'calc(16px + var(--safe-bottom))',
-            zIndex: 50,
-            display: 'flex',
-            justifyContent: 'center'
-          }}
-        >
+      {/* Floating dock (slides away while a title page or the player is
+          open). A solid pane with a sliding indicator behind the active tab -
+          no backdrop blur, which would be re-rendered under every scroll frame. */}
+      <div
+        className={dockHidden ? 'dock-wrap hidden' : 'dock-wrap'}
+        style={{ bottom: 'calc(16px + var(--safe-bottom))' }}
+        aria-hidden={dockHidden}
+      >
+        <nav className="glass-dock" aria-label="Main">
           <div
-            className="glass-dock"
+            className="dock-indicator"
             style={{
-              position: 'relative',
-              width: '100%',
-              maxWidth: '360px',
-              height: '64px',
-              display: 'flex',
-              alignItems: 'stretch'
+              width: `${100 / TABS.length}%`,
+              transform: `translateX(${TABS.findIndex(t => t.id === currentTab) * 100}%)`
             }}
-          >
-            {/* Sliding liquid indicator */}
-            <div
-              className="dock-indicator"
-              style={{
-                left: 0,
-                width: `${100 / TABS.length}%`,
-                transform: `translateX(${TABS.findIndex(t => t.id === currentTab) * 100}%)`
-              }}
-            />
-
-            {TABS.map((tab) => {
-              const Icon = tab.icon;
-              const active = currentTab === tab.id;
-              return (
-                <button
-                  key={tab.id}
-                  onClick={() => switchTab(tab.id)}
-                  className={`interactive dock-item ${active ? 'active' : ''}`}
-                  style={{
-                    position: 'relative',
-                    zIndex: 1,
-                    flex: 1,
-                    background: 'none',
-                    border: 'none',
-                    display: 'flex',
-                    flexDirection: 'column',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    gap: '3px',
-                    color: active ? 'var(--select-text)' : 'var(--text-muted)'
-                  }}
-                >
-                  <Icon size={20} />
-                  <span style={{ fontSize: '10px', fontWeight: active ? 700 : 500 }}>{tab.label}</span>
-                </button>
-              );
-            })}
-          </div>
-        </div>
-      )}
+          />
+          {TABS.map((tab) => {
+            const Icon = tab.icon;
+            const active = currentTab === tab.id;
+            return (
+              <button
+                key={tab.id}
+                onClick={() => { if (!active || animeStack.length || selectedGenre) switchTab(tab.id); }}
+                className={`interactive dock-item ${active ? 'active' : ''}`}
+                aria-label={tab.label}
+                aria-current={active ? 'page' : undefined}
+              >
+                <Icon size={20} />
+                <span>{tab.label}</span>
+              </button>
+            );
+          })}
+        </nav>
+      </div>
     </div>
   );
 };

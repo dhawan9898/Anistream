@@ -1,4 +1,12 @@
-/* index.css - Premium Glassmorphic Design System for AniStream (dark + light) */
+/* index.css - Design system for AniStream (dark + light).
+
+   Performance rules this file follows (Android WebView):
+   - only `transform` and `opacity` are ever animated;
+   - no `backdrop-filter` on anything that sits over scrolling content (it is
+     re-blurred every frame) - glass looks come from translucent fills,
+     hairline borders and inner highlights instead;
+   - no permanent `will-change` (each one costs a GPU layer);
+   - skeleton shimmer is a moving pseudo-element, not an animated gradient. */
 :root,
 :root[data-theme="dark"] {
   --bg-main: #08090e;
@@ -33,6 +41,7 @@
   --select-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.4), inset 0 0 0 1px rgba(255, 255, 255, 0.06), 0 6px 18px rgba(0, 0, 0, 0.35);
   --track-bg: rgba(255, 255, 255, 0.06);
   --shadow-dock: 0 16px 40px rgba(0, 0, 0, 0.55), 0 4px 14px rgba(0, 0, 0, 0.4);
+  --bg-dock: rgba(18, 20, 30, 0.96);
 
   --radius-sm: 8px;
   --radius-md: 14px;
@@ -80,6 +89,7 @@
   --select-shadow: 0 6px 16px rgba(15, 23, 42, 0.16), inset 0 1px 0 rgba(255, 255, 255, 0.7);
   --track-bg: rgba(15, 23, 42, 0.05);
   --shadow-dock: 0 16px 36px rgba(15, 23, 42, 0.16), 0 4px 12px rgba(15, 23, 42, 0.08);
+  --bg-dock: rgba(255, 255, 255, 0.96);
 
   --radius-sm: 8px;
   --radius-md: 14px;
@@ -102,15 +112,95 @@
   user-select: none;
 }
 
+html {
+  background-color: var(--bg-main);
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
 body {
   background-color: var(--bg-main);
   color: var(--text-primary);
-  font-family: 'Outfit', 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+  font-family: 'Outfit', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  -webkit-font-smoothing: antialiased;
   overflow-x: hidden;
   height: 100%;
   width: 100%;
   position: fixed;
-  transition: background-color 0.4s ease, color 0.4s ease;
+}
+
+button { font-family: inherit; }
+
+/* Keyboard / D-pad focus ring (touch taps never show it). */
+:focus-visible {
+  outline: 2px solid var(--accent-primary);
+  outline-offset: 2px;
+}
+
+/* Every screen's scroll container: momentum scrolling that never chains
+   into the page behind it, and layout work contained to the screen. */
+.screen-scroll {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior-y: contain;
+  -webkit-overflow-scrolling: touch;
+  contain: layout style;
+}
+
+/* Horizontal rails. */
+.rail {
+  display: flex;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
+}
+.rail::-webkit-scrollbar { display: none; }
+
+/* ---- Navigation layers ----
+   Tabs stay mounted and are only hidden (state and scroll position are
+   kept); title/genre pages are layers that slide over them. */
+.tab-pane {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+}
+.tab-pane[data-active="false"] {
+  visibility: hidden;
+  pointer-events: none;
+  content-visibility: hidden;
+}
+.tab-pane[data-active="true"] {
+  animation: paneIn 0.22s ease-out both;
+}
+
+.overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-main);
+  box-shadow: -14px 0 32px rgba(0, 0, 0, 0.35);
+  animation: overlayIn 0.32s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+.overlay.leaving {
+  pointer-events: none;
+  animation: overlayOut 0.24s cubic-bezier(0.4, 0, 0.9, 0.6) both;
+}
+@keyframes overlayIn {
+  from { transform: translate3d(100%, 0, 0); }
+  to { transform: translate3d(0, 0, 0); }
+}
+@keyframes overlayOut {
+  from { transform: translate3d(0, 0, 0); }
+  to { transform: translate3d(100%, 0, 0); }
+}
+@keyframes paneIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
 }
 
 #root {
@@ -180,6 +270,7 @@ body {
   border: 1px solid var(--border-subtle);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05);
   transition: transform 0.25s cubic-bezier(0.22, 1, 0.36, 1);
+  contain: layout paint;
 }
 
 .glass-panel:active {
@@ -188,8 +279,6 @@ body {
 
 .glass-nav {
   background: var(--bg-glass-heavy);
-  backdrop-filter: blur(16px);
-  -webkit-backdrop-filter: blur(16px);
   border-top: 1px solid var(--border-subtle);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.07);
   transition: background-color 0.4s ease, border-color 0.4s ease;
@@ -198,10 +287,29 @@ body {
 /* Floating Apple-TV style dock: detached from the screen edge, fully
    rounded, and lifted with a deep ambient shadow so it reads as a physical
    pane hovering above the content rather than a docked bar. */
+.dock-wrap {
+  position: fixed;
+  left: 20px;
+  right: 20px;
+  z-index: 50;
+  display: flex;
+  justify-content: center;
+  transition: transform 0.32s cubic-bezier(0.22, 1, 0.36, 1), opacity 0.2s ease;
+}
+.dock-wrap.hidden {
+  transform: translate3d(0, 140%, 0);
+  opacity: 0;
+  pointer-events: none;
+}
+
 .glass-dock {
-  background: var(--bg-glass-heavy);
-  backdrop-filter: blur(16px);
-  -webkit-backdrop-filter: blur(16px);
+  position: relative;
+  width: 100%;
+  max-width: 360px;
+  height: 64px;
+  display: flex;
+  align-items: stretch;
+  background: var(--bg-dock);
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-full);
   box-shadow:
@@ -214,8 +322,6 @@ body {
 .glass-pill {
   position: relative;
   background: rgba(255, 255, 255, 0.08);
-  backdrop-filter: blur(10px);
-  -webkit-backdrop-filter: blur(10px);
   border: 1px solid rgba(255, 255, 255, 0.1);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.12);
   transition: transform 0.35s cubic-bezier(0.22, 1, 0.36, 1), background-color 0.25s ease, box-shadow 0.35s ease;
@@ -232,9 +338,7 @@ body {
    look rather than following the light/dark toggle. */
 .glass-panel-dark {
   position: relative;
-  background: rgba(16, 18, 26, 0.88);
-  backdrop-filter: blur(16px);
-  -webkit-backdrop-filter: blur(16px);
+  background: rgba(16, 18, 26, 0.94);
   border: 1px solid rgba(255, 255, 255, 0.09);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.09), 0 12px 36px rgba(0, 0, 0, 0.6);
 }
@@ -243,10 +347,8 @@ body {
    badges, poster overlay controls) - the photo always has a dark filter
    under it, so these stay dark-glass regardless of the light/dark toggle. */
 .glass-pill-dark {
-  background: rgba(255, 255, 255, 0.08);
-  backdrop-filter: blur(10px);
-  -webkit-backdrop-filter: blur(10px);
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(20, 22, 32, 0.55);
+  border: 1px solid rgba(255, 255, 255, 0.14);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.12);
   color: #fff;
 }
@@ -254,9 +356,8 @@ body {
 /* Interactive touch feedback - a slight spring overshoot on release reads as
    "liquid" rather than a stiff linear scale. */
 .interactive {
-  transition: transform 0.35s cubic-bezier(0.34, 1.56, 0.64, 1), opacity 0.15s ease, background-color 0.25s ease;
+  transition: transform 0.35s cubic-bezier(0.34, 1.56, 0.64, 1), opacity 0.15s ease;
   cursor: pointer;
-  will-change: transform;
 }
 .interactive:active {
   transform: scale(0.96);
@@ -291,21 +392,30 @@ body {
 }
 
 @keyframes skeletonShimmer {
-  0% { background-position: -200% 0; }
-  100% { background-position: 200% 0; }
+  from { transform: translate3d(-100%, 0, 0); }
+  to { transform: translate3d(100%, 0, 0); }
 }
 
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+.animate-spin { animation: spin 0.9s linear infinite; }
+
 /* Loading placeholder - never real (or fake-real) content, just an inert
-   shimmering block, so a slow fetch never reads as fabricated data. */
+   shimmering block, so a slow fetch never reads as fabricated data. The
+   highlight is a pseudo-element that only translates (compositor-only). */
 .skeleton {
-  background: linear-gradient(
-    100deg,
-    var(--bg-glass) 30%,
-    rgba(255, 255, 255, 0.08) 50%,
-    var(--bg-glass) 70%
-  );
-  background-size: 200% 100%;
-  animation: skeletonShimmer 1.6s ease-in-out infinite;
+  position: relative;
+  overflow: hidden;
+  background: var(--track-bg);
+}
+.skeleton::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(100deg, transparent 30%, rgba(255, 255, 255, 0.09) 50%, transparent 70%);
+  animation: skeletonShimmer 1.4s ease-in-out infinite;
+  will-change: transform;
 }
 
 .animate-fade-in {
@@ -329,11 +439,22 @@ body {
 /* Floating dock nav item: the active tab's icon lifts and glows, echoing the
    Apple TV focus engine's "floating" affordance. */
 .dock-item {
-  transition: transform 0.4s cubic-bezier(0.34, 1.56, 0.64, 1), color 0.3s ease;
+  position: relative;
+  z-index: 1;
+  flex: 1;
+  background: none;
+  border: none;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  color: var(--text-muted);
+  transition: transform 0.35s cubic-bezier(0.34, 1.56, 0.64, 1), color 0.25s ease;
 }
-.dock-item.active {
-  transform: translateY(-2px);
-}
+.dock-item span { font-size: 10px; font-weight: 500; }
+.dock-item.active { color: var(--select-text); transform: translateY(-2px); }
+.dock-item.active span { font-weight: 700; }
 
 /* Sliding liquid indicator that glides behind the active dock icon. A frosted,
    lifted pane of glass - not a brand-colored fill - so "selected" reads as
@@ -343,12 +464,11 @@ body {
   top: 6px;
   bottom: 6px;
   border-radius: var(--radius-full);
+  left: 0;
   background: var(--select-bg);
-  backdrop-filter: blur(10px);
-  -webkit-backdrop-filter: blur(10px);
   border: 1px solid var(--select-border);
   box-shadow: var(--select-shadow);
-  transition: transform 0.5s cubic-bezier(0.22, 1, 0.36, 1), width 0.5s cubic-bezier(0.22, 1, 0.36, 1), background-color 0.4s ease, border-color 0.4s ease;
+  transition: transform 0.38s cubic-bezier(0.22, 1, 0.36, 1);
   z-index: 0;
 }
 
@@ -375,12 +495,11 @@ body {
   align-items: center;
   justify-content: center;
   gap: 6px;
-  transition: background-color 0.35s ease, color 0.35s ease, box-shadow 0.35s ease;
+  border: 1px solid transparent;
+  transition: background-color 0.25s ease, color 0.25s ease, box-shadow 0.25s ease;
 }
 .seg-pill.active {
   background: var(--select-bg);
-  backdrop-filter: blur(10px);
-  -webkit-backdrop-filter: blur(10px);
   border: 1px solid var(--select-border);
   color: var(--select-text);
   box-shadow: var(--select-shadow);
@@ -452,14 +571,15 @@ input {
   position: absolute;
   top: 0;
   bottom: 0;
+  left: 0;
   width: 40%;
   background: #e50914;
   animation: stream-loading-slide 1s ease-in-out infinite;
 }
 
 @keyframes stream-loading-slide {
-  from { left: -40%; }
-  to { left: 100%; }
+  from { transform: translate3d(-100%, 0, 0); }
+  to { transform: translate3d(250%, 0, 0); }
 }
 
 /* ---- Hero carousel (HeroCarousel.tsx) ----
@@ -481,6 +601,12 @@ input {
   scroll-snap-stop: always;
   overflow: hidden;
 }
+.hero-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
 .hero-overlay {
   position: absolute;
   inset: 0;
@@ -488,7 +614,7 @@ input {
   flex-direction: column;
   justify-content: flex-end;
   padding: 24px 20px 40px 20px;
-  background: linear-gradient(180deg, rgba(8,9,14,0.25) 0%, rgba(8,9,14,0.55) 50%, var(--bg-main) 100%);
+  background: linear-gradient(180deg, rgba(8,9,14,0.4) 0%, rgba(8,9,14,0.62) 50%, var(--bg-main) 100%);
 }
 .hero-rank {
   background: #e50914;
@@ -549,6 +675,22 @@ input {
   border: none;
   border-radius: 3px;
   background: rgba(255,255,255,0.35);
-  transition: width 0.25s ease, background 0.25s ease;
+  transition: width 0.25s ease, background-color 0.25s ease;
 }
 .hero-dot.active { width: 18px; background: #fff; }
+
+
+/* Poster/banner images fade in once decoded instead of popping. */
+.fade-img {
+  opacity: 0;
+  transition: opacity 0.28s ease;
+}
+.fade-img.loaded { opacity: 1; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

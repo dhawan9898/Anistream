@@ -3,11 +3,14 @@ import React, { useState, useEffect, useRef } from 'react';
 import { Search as SearchIcon, X, Loader2, ArrowLeft } from 'lucide-react';
 import { searchAnimeLive, type AnimeItem } from '../core/aniCliCore';
 import { getGenres, type Genre } from '../services/catalogService';
+import { FadeImage } from '../components/FadeImage';
 
 // Tile colors for the "Browse by genre" grid, cycled in order.
 const GENRE_TILE_COLORS = ['#b91c1c', '#7c3aed', '#0e7490', '#b45309', '#be185d', '#15803d', '#1d4ed8', '#9f1239'];
 
 interface SearchScreenProps {
+  // True while this tab is the visible one (tabs stay mounted when hidden).
+  active: boolean;
   onBack: () => void;
   onSelectAnime: (anime: AnimeItem) => void;
   onSelectGenre: (genre: Genre) => void;
@@ -25,6 +28,7 @@ const POPULAR_TAGS = [
 ];
 
 export const SearchScreen: React.FC<SearchScreenProps> = ({
+  active,
   onBack,
   onSelectAnime,
   onSelectGenre
@@ -43,9 +47,17 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({
   const [searchError, setSearchError] = useState<boolean>(false);
   const inputRef = useRef<HTMLInputElement | null>(null);
 
+  // Focus the field (raising the keyboard) when the tab is opened - after
+  // the tab's fade-in, so the keyboard animation doesn't fight it - and put
+  // the keyboard away again when the tab is left.
   useEffect(() => {
-    inputRef.current?.focus();
-  }, []);
+    if (!active) {
+      inputRef.current?.blur();
+      return;
+    }
+    const timer = window.setTimeout(() => inputRef.current?.focus(), 260);
+    return () => window.clearTimeout(timer);
+  }, [active]);
 
   // Typing is debounced and only the newest request may update the screen,
   // so a slow response for an earlier keystroke can't overwrite newer results.
@@ -97,7 +109,7 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({
   };
 
   return (
-    <div style={{ flex: 1, overflowY: 'auto', paddingBottom: '90px', display: 'flex', flexDirection: 'column' }}>
+    <div className="screen-scroll" style={{ paddingBottom: '110px', display: 'flex', flexDirection: 'column' }}>
       {/* Sticky Header with Search Bar */}
       <div 
         style={{
@@ -114,6 +126,7 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({
       >
         <button
           onClick={onBack}
+          aria-label="Back to Home"
           className="interactive glass-pill"
           style={{
             width: '40px',
@@ -146,7 +159,7 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({
             ref={inputRef}
             type="text"
             value={query}
-            placeholder="Search anime or movie..."
+            placeholder="Search titles, genres…"
             aria-label="Search anime"
             enterKeyHint="search"
             onChange={(e) => handleSearch(e.target.value, false)}
@@ -173,7 +186,7 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({
       </div>
 
       {/* Suggested Quick Tags */}
-      <div style={{ padding: '14px 20px', display: 'flex', gap: '8px', overflowX: 'auto', scrollbarWidth: 'none' }}>
+      <div className="rail" style={{ padding: '14px 20px', gap: '8px' }}>
         {POPULAR_TAGS.map((tag) => {
           const active = query.toLowerCase() === tag.toLowerCase();
           return (
@@ -210,7 +223,7 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({
       {loading ? (
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '60px 0', gap: '10px', color: 'var(--text-secondary)' }}>
           <Loader2 size={24} className="animate-spin" />
-          <span style={{ fontSize: '14px' }}>Searching ani-cli database...</span>
+          <span style={{ fontSize: '14px' }}>Searching…</span>
         </div>
       ) : !query ? (
         <div style={{ padding: '4px 20px 0 20px' }}>
@@ -281,11 +294,10 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({
               }}
             >
               <div style={{ position: 'relative', width: '100%', paddingTop: '140%', overflow: 'hidden' }}>
-                <img
+                <FadeImage
                   src={anime.poster}
                   alt={anime.title}
                   loading="lazy"
-                  decoding="async"
                   style={{
                     position: 'absolute',
                     top: 0,
@@ -299,8 +311,7 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({
                   position: 'absolute',
                   top: '8px',
                   right: '8px',
-                  backgroundColor: 'rgba(0,0,0,0.7)',
-                  backdropFilter: 'blur(8px)',
+                  backgroundColor: 'rgba(0,0,0,0.72)',
                   padding: '2px 7px',
                   borderRadius: '4px',
                   fontSize: '11px',

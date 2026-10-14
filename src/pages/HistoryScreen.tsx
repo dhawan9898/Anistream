@@ -7,13 +7,17 @@ import {
 } from '../services/historyService';
 import type { AnimeItem } from '../core/aniCliCore';
 import { ConfirmModal } from '../components/ConfirmModal';
+import { FadeImage } from '../components/FadeImage';
 
 interface HistoryScreenProps {
+  // True while this tab is the visible one (tabs stay mounted when hidden).
+  active: boolean;
   onResumeEpisode: (history: WatchHistoryItem) => void;
   onSelectAnime: (anime: AnimeItem) => void;
 }
 
 export const HistoryScreen: React.FC<HistoryScreenProps> = ({
+  active,
   onResumeEpisode,
   onSelectAnime
 }) => {
@@ -23,9 +27,10 @@ export const HistoryScreen: React.FC<HistoryScreenProps> = ({
   const [loading, setLoading] = useState<boolean>(true);
   const [confirmingClear, setConfirmingClear] = useState<boolean>(false);
 
-  // Reloaded whenever history/bookmarks change (e.g. progress saved by the
-  // player that was opened from this screen).
+  // Reloaded whenever the tab is opened and whenever history/bookmarks change
+  // while it is visible (hidden tabs stay quiet).
   useEffect(() => {
+    if (!active) return;
     let cancelled = false;
     const loadData = async () => {
       const [history, bookmarks] = await Promise.all([getWatchHistory(), getBookmarks()]);
@@ -40,7 +45,7 @@ export const HistoryScreen: React.FC<HistoryScreenProps> = ({
       cancelled = true;
       unsubscribe();
     };
-  }, []);
+  }, [active]);
 
   const handleClearHistory = async () => {
     await clearWatchHistory();
@@ -55,7 +60,7 @@ export const HistoryScreen: React.FC<HistoryScreenProps> = ({
   };
 
   return (
-    <div style={{ flex: 1, overflowY: 'auto', paddingBottom: '90px' }}>
+    <div className="screen-scroll" style={{ paddingBottom: '110px' }}>
       {/* Top Header */}
       <div style={{
         position: 'sticky',
@@ -117,7 +122,7 @@ export const HistoryScreen: React.FC<HistoryScreenProps> = ({
             className={`interactive seg-pill ${activeTab === 'bookmarks' ? 'active' : ''}`}
           >
             <Bookmark size={16} />
-            <span>Saved ({bookmarkedAnime.length})</span>
+            <span>My List ({bookmarkedAnime.length})</span>
           </button>
         </div>
       </div>
@@ -154,7 +159,7 @@ export const HistoryScreen: React.FC<HistoryScreenProps> = ({
                     }}
                   >
                     <div style={{ position: 'relative', width: '80px', height: '60px', borderRadius: '8px', overflow: 'hidden', flexShrink: 0 }}>
-                      <img src={item.poster} alt={item.animeTitle} loading="lazy" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                      <FadeImage src={item.poster} alt={item.animeTitle} loading="lazy" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
                       <div style={{
                         position: 'absolute',
                         inset: 0,
@@ -207,8 +212,8 @@ export const HistoryScreen: React.FC<HistoryScreenProps> = ({
           bookmarkedAnime.length === 0 ? (
             <div style={{ textAlign: 'center', padding: '60px 20px', color: 'var(--text-secondary)' }}>
               <Bookmark size={40} color="var(--accent-secondary)" style={{ margin: '0 auto 12px auto', opacity: 0.8 }} />
-              <p style={{ fontSize: '16px', fontWeight: 600, color: 'var(--text-primary)', marginBottom: '6px' }}>No bookmarks saved</p>
-              <p style={{ fontSize: '13px' }}>Tap the bookmark icon on any anime to save it to your library.</p>
+              <p style={{ fontSize: '16px', fontWeight: 600, color: 'var(--text-primary)', marginBottom: '6px' }}>Your list is empty</p>
+              <p style={{ fontSize: '13px' }}>Tap “My List” on any title to save it here.</p>
             </div>
           ) : (
             <div className="grid-posters">
@@ -225,7 +230,7 @@ export const HistoryScreen: React.FC<HistoryScreenProps> = ({
                   }}
                 >
                   <div style={{ position: 'relative', width: '100%', paddingTop: '140%', overflow: 'hidden' }}>
-                    <img
+                    <FadeImage
                       src={anime.poster}
                       alt={anime.title}
                       loading="lazy"

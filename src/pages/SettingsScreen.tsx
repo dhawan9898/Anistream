@@ -2,7 +2,7 @@
 import React, { useEffect, useState } from 'react';
 import {
   Settings as SettingsIcon, PlayCircle, SkipForward, Rewind, Trash2,
-  Info, Terminal, Bookmark, Clock, ChevronRight, Sun, Moon, Loader2
+  Info, Terminal, Bookmark, Clock, Sun, Moon, Loader2
 } from 'lucide-react';
 import {
   getUserPreferences, saveUserPreferences, clearWatchHistory,
@@ -64,11 +64,13 @@ const SectionLabel: React.FC<{ children: React.ReactNode }> = ({ children }) => 
 );
 
 interface SettingsScreenProps {
+  // True while this tab is the visible one (tabs stay mounted when hidden).
+  active: boolean;
   theme: ThemeMode;
   onChangeTheme: (theme: ThemeMode) => void;
 }
 
-export const SettingsScreen: React.FC<SettingsScreenProps> = ({ theme, onChangeTheme }) => {
+export const SettingsScreen: React.FC<SettingsScreenProps> = ({ active, theme, onChangeTheme }) => {
   const [prefs, setPrefs] = useState<UserPreferences | null>(null);
   const [historyCount, setHistoryCount] = useState<number>(0);
   const [bookmarkCount, setBookmarkCount] = useState<number>(0);
@@ -76,11 +78,13 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({ theme, onChangeT
   const [confirmingClearHistory, setConfirmingClearHistory] = useState<boolean>(false);
   const [confirmingClearBookmarks, setConfirmingClearBookmarks] = useState<boolean>(false);
 
+  // Counts are re-read whenever the tab is opened.
   useEffect(() => {
+    if (!active) return;
     getUserPreferences().then(setPrefs);
     getWatchHistory().then(list => setHistoryCount(list.length));
     getBookmarks().then(list => setBookmarkCount(list.length));
-  }, []);
+  }, [active]);
 
   const updatePrefs = async (patch: Partial<UserPreferences>) => {
     setPrefs(prev => prev ? { ...prev, ...patch } : prev);
@@ -110,7 +114,7 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({ theme, onChangeT
   }
 
   return (
-    <div style={{ flex: 1, overflowY: 'auto', paddingBottom: '110px' }}>
+    <div className="screen-scroll" style={{ paddingBottom: '110px' }}>
       {/* Header */}
       <div style={{
         position: 'sticky',
@@ -321,7 +325,7 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({ theme, onChangeT
             </div>
             <div style={{ flex: 1 }}>
               <h4 style={{ fontSize: '14px', fontWeight: 700, color: 'var(--text-primary)' }}>AniStream</h4>
-              <p style={{ fontSize: '12px', color: 'var(--text-secondary)', marginTop: '2px' }}>Version 7.1.0</p>
+              <p style={{ fontSize: '12px', color: 'var(--text-secondary)', marginTop: '2px' }}>Version {__APP_VERSION__}</p>
             </div>
           </div>
           <div style={{ height: '1px', background: 'var(--border-subtle)', margin: '0 16px' }} />
@@ -337,7 +341,6 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({ theme, onChangeT
               <h4 style={{ fontSize: '14px', fontWeight: 700, color: 'var(--text-primary)' }}>Powered by ani-cli</h4>
               <p style={{ fontSize: '12px', color: 'var(--text-secondary)', marginTop: '2px' }}>Streams resolved through the ani-cli scraping engine</p>
             </div>
-            <ChevronRight size={16} color="var(--text-muted)" />
           </div>
           <div style={{ height: '1px', background: 'var(--border-subtle)', margin: '0 16px' }} />
           <div style={{ display: 'flex', alignItems: 'center', gap: '14px', padding: '14px 16px' }}>

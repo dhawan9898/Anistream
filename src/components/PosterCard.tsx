@@ -2,6 +2,7 @@
 // (genre rows, Collection) and poster grids (genre pages, More Like This).
 import React from 'react';
 import type { AnimeItem } from '../core/aniCliCore';
+import { FadeImage } from './FadeImage';
 
 interface PosterCardProps {
   anime: AnimeItem;
@@ -46,11 +47,10 @@ export const PosterCard: React.FC<PosterCardProps> = ({ anime, onClick, width, c
       boxShadow: highlighted ? '0 0 0 2px #fff' : 'none'
     }}>
       {anime.poster && (
-        <img
+        <FadeImage
           src={anime.poster}
           alt={anime.title}
           loading="lazy"
-          decoding="async"
           style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }}
         />
       )}

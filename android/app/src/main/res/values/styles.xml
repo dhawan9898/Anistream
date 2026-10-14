@@ -20,6 +20,21 @@
         <item name="android:background">@drawable/splash</item>
     </style>
 
+    <!-- Native player window: opaque black, fullscreen, fades in/out. -->
+    <style name="Theme.AniStream.Player" parent="Theme.AppCompat.NoActionBar">
+        <item name="android:windowBackground">@android:color/black</item>
+        <item name="android:windowNoTitle">true</item>
+        <item name="android:windowFullscreen">true</item>
+        <item name="android:windowAnimationStyle">@style/Animation.AniStream.Player</item>
+    </style>
+
+    <style name="Animation.AniStream.Player" parent="@android:style/Animation.Activity">
+        <item name="android:activityOpenEnterAnimation">@anim/player_enter</item>
+        <item name="android:activityOpenExitAnimation">@anim/player_hold</item>
+        <item name="android:activityCloseEnterAnimation">@anim/player_hold</item>
+        <item name="android:activityCloseExitAnimation">@anim/player_exit</item>
+    </style>
+
     <!-- Netflix-style player: bottom action row ("Speed (1x)", "Lock", ...) -->
     <style name="NetflixPlayerAction">
         <item name="android:layout_width">0dp</item>

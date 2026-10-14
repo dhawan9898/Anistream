@@ -38,9 +38,13 @@ import androidx.media3.datasource.DefaultHttpDataSource;
 import androidx.media3.datasource.HttpDataSource;
 import androidx.media3.exoplayer.DefaultLoadControl;
 import androidx.media3.exoplayer.ExoPlayer;
+import androidx.media3.exoplayer.SeekParameters;
+import androidx.media3.exoplayer.trackselection.DefaultTrackSelector;
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory;
 import androidx.media3.exoplayer.upstream.DefaultLoadErrorHandlingPolicy;
+import androidx.media3.ui.CaptionStyleCompat;
 import androidx.media3.ui.PlayerView;
+import androidx.media3.ui.SubtitleView;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
@@ -109,6 +113,32 @@ public class ExoPlayerActivity extends AppCompatActivity {
     private TextView gestureIndicator;
     private View bufferingSpinner;
     private SeekBar seekBar;
+
+    // Scrub preview (see the SeekBar listener): a second, muted, lowest-
+    // quality decoder that only ever shows the frame at the seek position.
+    private View seekPreviewContainer;
+    private View seekPreviewCard;
+    private PlayerView previewView;
+    private View previewSpinner;
+    private TextView seekPreviewTime;
+    private ExoPlayer previewPlayer;
+    private long previewTargetMs = -1;
+    private boolean previewSeekQueued = false;
+    private static final long PREVIEW_SEEK_INTERVAL_MS = 90;
+
+    // Settings (Playback) handed over with each stream.
+    private boolean autoSkipIntro = false;
+    private boolean autoPlayNext = true;
+    private boolean introAutoSkipped = false;
+
+    // Where playback has to continue after a stream swap (audio switch,
+    // re-resolve after an HTTP error). Remembered here, in the player, so the
+    // position survives no matter what the JS round trip passes back.
+    private long pendingResumeMs = -1;
+    private String pendingResumeEpisode;
+    // Position the freshly prepared stream must be at once it is ready; if the
+    // player reports it started elsewhere (e.g. 0:00) it is seeked there.
+    private long resumeGuardMs = -1;
 
     private boolean nextEpisodeTriggered = false;
     // Post-play: playback position (ms) at which the "Next Episode" countdown
@@ -235,7 +265,7 @@ public class ExoPlayerActivity extends AppCompatActivity {
     // Loading watchdog: if no stream arrives this long after the player went
     // into its loading state (next episode, episode pick, audio switch), show
     // a Retry instead of spinning forever.
-    private static final long LOADING_WATCHDOG_MS = 40_000;
+    private static final long LOADING_WATCHDOG_MS = 30_000;
     private final Runnable loadingWatchdog = this::showLoadingStalled;
 
     // HTTP failures (e.g. a 404 that a fresh lookup doesn't hit) get one
@@ -324,6 +354,8 @@ public class ExoPlayerActivity extends AppCompatActivity {
         String qualitiesJson = intent.getStringExtra("qualities");
         String episodesJson = intent.getStringExtra("episodes");
         boolean isFallback = intent.getBooleanExtra("isFallback", false);
+        if (intent.hasExtra("autoSkipIntro")) autoSkipIntro = intent.getBooleanExtra("autoSkipIntro", false);
+        if (intent.hasExtra("autoPlayNext")) autoPlayNext = intent.getBooleanExtra("autoPlayNext", true);
         String title = intent.getStringExtra("title");
         if (title != null) animeTitle = title;
         String episode = intent.getStringExtra("episode");
@@ -358,6 +390,7 @@ public class ExoPlayerActivity extends AppCompatActivity {
         errorOverlay.setVisibility(View.GONE);
         nextEpisodeTriggered = false;
         postPlayDismissed = false;
+        introAutoSkipped = false;
         hidePostPlay();
         btnSkipIntro.setVisibility(View.GONE);
         btnSkipOutro.setVisibility(View.GONE);
@@ -378,6 +411,15 @@ public class ExoPlayerActivity extends AppCompatActivity {
         pendingReferer = referer;
         pendingSubtitlesJson = subtitlesJson;
         long startPositionMs = intent.getLongExtra("startPositionMs", 0L);
+        // Same episode coming back after an audio switch / re-resolve: the
+        // position remembered by the player wins over whatever came back.
+        if (pendingResumeMs > 0 && startPositionMs <= 0
+                && episodeNumber != null && episodeNumber.equals(pendingResumeEpisode)) {
+            startPositionMs = pendingResumeMs;
+        }
+        pendingResumeMs = -1;
+        pendingResumeEpisode = null;
+        resumeGuardMs = startPositionMs > 2_000 ? startPositionMs : -1;
         autoRetryCount = 0;
         lastKnownPositionMs = Math.max(0L, startPositionMs);
         initializePlayer(videoUrl, referer, subtitlesJson, Math.max(0L, startPositionMs), true);
@@ -401,6 +443,7 @@ public class ExoPlayerActivity extends AppCompatActivity {
     private void releasePlayer() {
         handler.removeCallbacks(progressTicker);
         handler.removeCallbacks(autoRetryRunnable);
+        releasePreviewPlayer();
         if (player != null) {
             player.release();
             player = null;
@@ -449,6 +492,8 @@ public class ExoPlayerActivity extends AppCompatActivity {
     // and hands it back via onNewIntent - stay open, show the spinner.
     private void enterLoading(String newEpisodeNumber, String newMode) {
         reloadAttemptedKey = null;
+        pendingResumeMs = -1;
+        pendingResumeEpisode = null;
         reportProgressNow();
         if (newEpisodeNumber != null) episodeNumber = newEpisodeNumber;
         if (newMode != null) currentMode = newMode;
@@ -502,6 +547,11 @@ public class ExoPlayerActivity extends AppCompatActivity {
         errorOverlay = findViewById(R.id.error_overlay);
         textErrorMessage = findViewById(R.id.text_error_message);
         btnRetry = findViewById(R.id.btn_retry);
+        seekPreviewContainer = findViewById(R.id.seek_preview_container);
+        seekPreviewCard = findViewById(R.id.seek_preview_card);
+        previewView = findViewById(R.id.preview_view);
+        previewSpinner = findViewById(R.id.preview_spinner);
+        seekPreviewTime = findViewById(R.id.seek_preview_time);
     }
 
     // Netflix look: bare white icons over bounded top/bottom scrims, square-
@@ -553,6 +603,23 @@ public class ExoPlayerActivity extends AppCompatActivity {
         retryBg.setCornerRadius(4f * density);
         retryBg.setColor(Color.WHITE);
         btnRetry.setBackground(retryBg);
+
+        GradientDrawable previewBg = new GradientDrawable();
+        previewBg.setCornerRadius(8f * density);
+        previewBg.setColor(Color.BLACK);
+        previewBg.setStroke(Math.round(1.5f * density), Color.argb(200, 255, 255, 255));
+        seekPreviewCard.setBackground(previewBg);
+        seekPreviewCard.setClipToOutline(true);
+        darkPanel(seekPreviewTime, 12f, 0.75f);
+
+        // Captions: white with a black outline reads on any scene.
+        SubtitleView subtitleView = playerView.getSubtitleView();
+        if (subtitleView != null) {
+            subtitleView.setStyle(new CaptionStyleCompat(Color.WHITE, Color.TRANSPARENT, Color.TRANSPARENT,
+                    CaptionStyleCompat.EDGE_TYPE_OUTLINE, Color.BLACK, null));
+            subtitleView.setFractionalTextSize(0.058f);
+            subtitleView.setBottomPaddingFraction(0.08f);
+        }
 
         scrimTop.setBackground(edgeScrim(GradientDrawable.Orientation.TOP_BOTTOM));
         scrimBottom.setBackground(edgeScrim(GradientDrawable.Orientation.BOTTOM_TOP));
@@ -617,13 +684,17 @@ public class ExoPlayerActivity extends AppCompatActivity {
                 if (fromUser && player != null && player.getDuration() > 0) {
                     long target = (long) ((progress / 1000.0) * player.getDuration());
                     textRemainingTime.setText(formatTime(Math.max(player.getDuration() - target, 0)));
+                    updateSeekPreview(progress, target);
                 }
             }
 
             @Override
             public void onStartTrackingTouch(SeekBar sb) {
                 userSeeking = true;
+                handler.removeCallbacks(hideControlsRunnable);
                 showControls();
+                handler.removeCallbacks(hideControlsRunnable);
+                startSeekPreview();
             }
 
             @Override
@@ -631,11 +702,138 @@ public class ExoPlayerActivity extends AppCompatActivity {
                 if (player != null && player.getDuration() > 0) {
                     long target = (long) ((sb.getProgress() / 1000.0) * player.getDuration());
                     player.seekTo(target);
+                    lastKnownPositionMs = target;
                 }
                 userSeeking = false;
+                endSeekPreview();
                 scheduleAutoHide();
             }
         });
+    }
+
+    // ---- Scrub preview ---------------------------------------------------
+    //
+    // HLS has no thumbnail sprites to show, so a second ExoPlayer decodes the
+    // frame at the scrub position: lowest rendition only, no audio/text,
+    // muted, paused, a tiny buffer. It is created on the first scrub of an
+    // episode and reused (seeking is cheap) until the episode changes.
+
+    private void ensurePreviewPlayer() {
+        if (previewPlayer != null || pendingVideoUrl == null) return;
+        DefaultTrackSelector selector = new DefaultTrackSelector(this);
+        selector.setParameters(selector.buildUponParameters()
+                .setMaxVideoSize(480, 270)
+                .setForceLowestBitrate(true)
+                .setTrackTypeDisabled(C.TRACK_TYPE_AUDIO, true)
+                .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true));
+        DefaultLoadControl loadControl = new DefaultLoadControl.Builder()
+                .setBufferDurationsMs(1_500, 6_000, 250, 500)
+                .build();
+        try {
+            previewPlayer = new ExoPlayer.Builder(this)
+                    .setMediaSourceFactory(new DefaultMediaSourceFactory(buildDataSourceFactory(pendingReferer)))
+                    .setTrackSelector(selector)
+                    .setLoadControl(loadControl)
+                    .build();
+        } catch (Exception e) {
+            Log.w(TAG, "Scrub preview unavailable", e);
+            previewPlayer = null;
+            return;
+        }
+        previewPlayer.setVolume(0f);
+        previewPlayer.setSeekParameters(SeekParameters.CLOSEST_SYNC);
+        previewPlayer.setPlayWhenReady(false);
+        previewView.setPlayer(previewPlayer);
+        previewPlayer.addListener(new Player.Listener() {
+            @Override
+            public void onPlaybackStateChanged(int state) {
+                if (state == Player.STATE_READY) previewSpinner.setVisibility(View.GONE);
+            }
+
+            @Override
+            public void onRenderedFirstFrame() {
+                previewSpinner.setVisibility(View.GONE);
+            }
+
+            @Override
+            public void onPlayerError(androidx.media3.common.PlaybackException error) {
+                // The preview is a nicety - never let it surface as an error.
+                Log.w(TAG, "Scrub preview failed", error);
+                releasePreviewPlayer();
+                previewSpinner.setVisibility(View.GONE);
+            }
+        });
+        previewPlayer.setMediaItem(buildMediaItem(pendingVideoUrl, null));
+        previewPlayer.prepare();
+    }
+
+    private void releasePreviewPlayer() {
+        handler.removeCallbacks(previewSeekRunnable);
+        previewSeekQueued = false;
+        previewTargetMs = -1;
+        if (previewView != null) previewView.setPlayer(null);
+        if (previewPlayer != null) {
+            previewPlayer.release();
+            previewPlayer = null;
+        }
+        if (seekPreviewContainer != null) seekPreviewContainer.setVisibility(View.GONE);
+    }
+
+    private void startSeekPreview() {
+        if (player == null || player.getDuration() <= 0) return;
+        ensurePreviewPlayer();
+        previewSpinner.setVisibility(previewPlayer != null ? View.VISIBLE : View.GONE);
+        seekPreviewCard.setVisibility(previewPlayer != null ? View.VISIBLE : View.GONE);
+        long target = (long) ((seekBar.getProgress() / 1000.0) * player.getDuration());
+        seekPreviewContainer.animate().cancel();
+        seekPreviewContainer.setAlpha(0f);
+        seekPreviewContainer.setVisibility(View.VISIBLE);
+        updateSeekPreview(seekBar.getProgress(), target);
+        seekPreviewContainer.animate().alpha(1f).setDuration(120).start();
+    }
+
+    private void updateSeekPreview(int progress, long targetMs) {
+        if (seekPreviewContainer.getVisibility() != View.VISIBLE) return;
+        seekPreviewTime.setText(formatTime(Math.max(targetMs, 0)));
+
+        // Follow the thumb, kept on screen.
+        int[] seekLoc = new int[2];
+        int[] rootLoc = new int[2];
+        seekBar.getLocationInWindow(seekLoc);
+        findViewById(R.id.root_container).getLocationInWindow(rootLoc);
+        int trackWidth = seekBar.getWidth() - seekBar.getPaddingLeft() - seekBar.getPaddingRight();
+        float thumbX = seekLoc[0] - rootLoc[0] + seekBar.getPaddingLeft() + trackWidth * (progress / 1000f);
+        int rootWidth = findViewById(R.id.root_container).getWidth();
+        int width = seekPreviewContainer.getWidth() > 0 ? seekPreviewContainer.getWidth() : dp(168);
+        float x = Math.max(dp(8), Math.min(rootWidth - width - dp(8), thumbX - width / 2f));
+        seekPreviewContainer.setTranslationX(x);
+
+        previewTargetMs = targetMs;
+        if (previewPlayer != null && !previewSeekQueued) {
+            previewSeekQueued = true;
+            handler.postDelayed(previewSeekRunnable, PREVIEW_SEEK_INTERVAL_MS);
+        }
+    }
+
+    // Seeks are coalesced: while the finger moves quickly only the latest
+    // target is decoded, instead of queueing a seek per pixel.
+    private final Runnable previewSeekRunnable = new Runnable() {
+        @Override
+        public void run() {
+            previewSeekQueued = false;
+            if (previewPlayer != null && previewTargetMs >= 0) {
+                previewPlayer.seekTo(previewTargetMs);
+            }
+        }
+    };
+
+    private void endSeekPreview() {
+        handler.removeCallbacks(previewSeekRunnable);
+        previewSeekQueued = false;
+        seekPreviewContainer.animate().cancel();
+        seekPreviewContainer.animate().alpha(0f).setDuration(140)
+                .withEndAction(() -> seekPreviewContainer.setVisibility(View.GONE))
+                .start();
     }
 
     private int dp(float value) {
@@ -926,6 +1124,9 @@ public class ExoPlayerActivity extends AppCompatActivity {
         long position = player != null ? Math.max(player.getCurrentPosition(), 0) : lastKnownPositionMs;
         ExoPlayerPlugin.notifyModeSwitchRequested(animeTitle, episodeNumber, newMode, position);
         enterLoading(null, newMode);
+        // Sub and dub are the same cut: carry on from here in the new audio.
+        pendingResumeMs = position;
+        pendingResumeEpisode = episodeNumber;
     }
 
     private void selectSubtitle(String label) {
@@ -1413,25 +1614,7 @@ public class ExoPlayerActivity extends AppCompatActivity {
         videoQualityOptions.clear();
         currentVideoTrackIndex = -1;
 
-        Map<String, String> headers = new HashMap<>();
-        headers.put("Referer", referer);
-        headers.put("User-Agent", "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36");
-
-        DefaultHttpDataSource.Factory dataSourceFactory = new DefaultHttpDataSource.Factory()
-                .setDefaultRequestProperties(headers)
-                .setAllowCrossProtocolRedirects(true)
-                .setConnectTimeoutMs(CONNECT_TIMEOUT_MS)
-                .setReadTimeoutMs(READ_TIMEOUT_MS);
-
-        Uri uri = Uri.parse(videoUrl);
-        MediaItem.Builder mediaItemBuilder = new MediaItem.Builder().setUri(uri);
-
-        // Explicitly set MIME type for HLS streams so DefaultMediaSourceFactory creates HlsMediaSource
-        // even when the URL is proxied, redirected, or has query parameters without a literal .m3u8 extension
-        boolean isHls = videoUrl.contains("m3u8") || videoUrl.contains("/hls/") || videoUrl.contains("master") || videoUrl.contains("index") || !videoUrl.toLowerCase(java.util.Locale.US).contains(".mp4");
-        if (isHls) {
-            mediaItemBuilder.setMimeType(MimeTypes.APPLICATION_M3U8);
-        }
+        DefaultHttpDataSource.Factory dataSourceFactory = buildDataSourceFactory(referer);
 
         java.util.List<MediaItem.SubtitleConfiguration> subtitleConfigs = parseSubtitles(subtitlesJson);
         if (!subtitleSelectionInitialized) {
@@ -1443,11 +1626,7 @@ public class ExoPlayerActivity extends AppCompatActivity {
             subtitleSelectionInitialized = true;
         }
 
-        if (!subtitleConfigs.isEmpty()) {
-            mediaItemBuilder.setSubtitleConfigurations(subtitleConfigs);
-        }
-
-        MediaItem mediaItem = mediaItemBuilder.build();
+        MediaItem mediaItem = buildMediaItem(videoUrl, subtitleConfigs);
         DefaultMediaSourceFactory mediaSourceFactory = new DefaultMediaSourceFactory(dataSourceFactory)
                 .setLoadErrorHandlingPolicy(new DefaultLoadErrorHandlingPolicy(LOAD_RETRY_COUNT));
 
@@ -1495,9 +1674,23 @@ public class ExoPlayerActivity extends AppCompatActivity {
                 // "still loading", never a frozen/broken player.
                 bufferingSpinner.setVisibility(state == Player.STATE_BUFFERING ? View.VISIBLE : View.GONE);
                 updateKeepScreenOn();
+                if (state == Player.STATE_ENDED) {
+                    if (autoPlayNext && !postPlayDismissed && nextEpisodeNumber() != null) {
+                        triggerNextEpisode();
+                    } else {
+                        showControls();
+                    }
+                }
                 if (state == Player.STATE_READY) {
                     // Recovered - a later hiccup gets the full retry budget.
                     autoRetryCount = 0;
+                    if (resumeGuardMs > 0) {
+                        long expected = resumeGuardMs;
+                        resumeGuardMs = -1;
+                        if (player != null && player.getCurrentPosition() < expected - 3_000) {
+                            player.seekTo(expected);
+                        }
+                    }
                     textRemainingTime.setText(formatTime(Math.max(player.getDuration(), 0)));
                     maybeFetchSkipTimes();
                 }
@@ -1507,6 +1700,12 @@ public class ExoPlayerActivity extends AppCompatActivity {
             public void onTracksChanged(Tracks tracks) {
                 applySubtitleSelection(tracks);
                 maybeResolveAdaptiveQuality(tracks);
+            }
+
+            @Override
+            public void onPositionDiscontinuity(Player.PositionInfo oldPosition, Player.PositionInfo newPosition, int reason) {
+                // A user seek / skip button moves the target: don't "correct" it.
+                if (reason == Player.DISCONTINUITY_REASON_SEEK) resumeGuardMs = -1;
             }
 
             @Override
@@ -1547,6 +1746,8 @@ public class ExoPlayerActivity extends AppCompatActivity {
                     errorOverlay.setVisibility(View.GONE);
                     showLoadingState();
                     lastKnownPositionMs = resumeAt;
+                    pendingResumeMs = resumeAt;
+                    pendingResumeEpisode = episodeNumber;
                     return;
                 }
                 showPlaybackError(describePlaybackError(error));
@@ -1559,6 +1760,31 @@ public class ExoPlayerActivity extends AppCompatActivity {
         handler.removeCallbacks(progressTicker);
         handler.post(progressTicker);
         showControls();
+    }
+
+    private DefaultHttpDataSource.Factory buildDataSourceFactory(String referer) {
+        Map<String, String> headers = new HashMap<>();
+        headers.put("Referer", referer != null ? referer : "https://zokoanime.video/");
+        headers.put("User-Agent", "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36");
+        return new DefaultHttpDataSource.Factory()
+                .setDefaultRequestProperties(headers)
+                .setAllowCrossProtocolRedirects(true)
+                .setConnectTimeoutMs(CONNECT_TIMEOUT_MS)
+                .setReadTimeoutMs(READ_TIMEOUT_MS);
+    }
+
+    private MediaItem buildMediaItem(String videoUrl, java.util.List<MediaItem.SubtitleConfiguration> subtitleConfigs) {
+        MediaItem.Builder mediaItemBuilder = new MediaItem.Builder().setUri(Uri.parse(videoUrl));
+        // Explicitly set MIME type for HLS streams so DefaultMediaSourceFactory creates HlsMediaSource
+        // even when the URL is proxied, redirected, or has query parameters without a literal .m3u8 extension
+        boolean isHls = videoUrl.contains("m3u8") || videoUrl.contains("/hls/") || videoUrl.contains("master") || videoUrl.contains("index") || !videoUrl.toLowerCase(java.util.Locale.US).contains(".mp4");
+        if (isHls) {
+            mediaItemBuilder.setMimeType(MimeTypes.APPLICATION_M3U8);
+        }
+        if (subtitleConfigs != null && !subtitleConfigs.isEmpty()) {
+            mediaItemBuilder.setSubtitleConfigurations(subtitleConfigs);
+        }
+        return mediaItemBuilder.build();
     }
 
     private java.util.List<MediaItem.SubtitleConfiguration> parseSubtitles(String subtitlesJson) {
@@ -1656,6 +1882,14 @@ public class ExoPlayerActivity extends AppCompatActivity {
 
         boolean shouldShowIntro = introInterval != null
                 && position >= introInterval.startMs && position < introInterval.endMs;
+        if (shouldShowIntro && autoSkipIntro && !introAutoSkipped) {
+            // "Auto-Skip Intro" (Settings): jump past the opening once.
+            introAutoSkipped = true;
+            player.seekTo(Math.max(0, introInterval.endMs));
+            showGestureIndicator("Skipped intro");
+            handler.postDelayed(() -> gestureIndicator.setVisibility(View.GONE), 1200);
+            shouldShowIntro = false;
+        }
         if (shouldShowIntro && btnSkipIntro.getVisibility() != View.VISIBLE) {
             btnSkipIntro.setVisibility(View.VISIBLE);
         } else if (!shouldShowIntro && btnSkipIntro.getVisibility() == View.VISIBLE) {
@@ -1717,10 +1951,13 @@ public class ExoPlayerActivity extends AppCompatActivity {
         if (postPlayStartMs < 0 || position < postPlayStartMs) postPlayStartMs = position;
         btnNextEpisode.setVisibility(View.VISIBLE);
         btnWatchCredits.setVisibility(inOutro ? View.GONE : View.VISIBLE);
-        float progress = Math.min(1f, (position - postPlayStartMs) / (float) NEXT_EPISODE_COUNTDOWN_MS);
+        // With "Autoplay Next Episode" off the button just waits to be tapped.
+        float progress = autoPlayNext
+                ? Math.min(1f, (position - postPlayStartMs) / (float) NEXT_EPISODE_COUNTDOWN_MS)
+                : 0f;
         nextEpisodeFill.animate().cancel();
         nextEpisodeFill.animate().scaleX(progress).setDuration(450).start();
-        if (progress >= 1f) triggerNextEpisode();
+        if (autoPlayNext && progress >= 1f) triggerNextEpisode();
     }
 
     private void hidePostPlay() {
@@ -1876,6 +2113,21 @@ public class ExoPlayerActivity extends AppCompatActivity {
     }
 
     @Override
+    public void onWindowFocusChanged(boolean hasFocus) {
+        super.onWindowFocusChanged(hasFocus);
+        // Dialogs and the system shade pull the bars back in; hide them again.
+        if (hasFocus) {
+            getWindow().getDecorView().setSystemUiVisibility(
+                    View.SYSTEM_UI_FLAG_FULLSCREEN
+                            | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
+                            | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
+                            | View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+                            | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
+                            | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN);
+        }
+    }
+
+    @Override
     protected void onStart() {
         super.onStart();
         activityStopped = false;
@@ -1886,6 +2138,7 @@ public class ExoPlayerActivity extends AppCompatActivity {
         super.onStop();
         activityStopped = true;
         reportProgressNow();
+        releasePreviewPlayer();
         if (player != null) {
             player.pause();
         }

@@ -2,6 +2,7 @@
 // sub/dub selector, synopsis, then Episodes / Collection / More Like This tabs.
 import React, { useState, useEffect } from 'react';
 import { ArrowLeft, Play, Plus, Check, Loader2 } from 'lucide-react';
+import { FadeImage } from '../components/FadeImage';
 import { ErrorState } from '../components/ErrorState';
 import { getEpisodes, type AnimeItem, type EpisodeItem } from '../core/aniCliCore';
 import {
@@ -9,7 +10,10 @@ import {
   getBookmarks,
   getUserPreferences,
   getWatchHistory,
+  getEpisodeProgress,
+  episodeWatchState,
   isEpisodeFinished,
+  type EpisodeProgress,
   subscribeLibraryChanges,
   type WatchHistoryItem
 } from '../services/historyService';
@@ -49,6 +53,15 @@ export const AnimeDetailScreen: React.FC<AnimeDetailScreenProps> = ({
   const [tab, setTab] = useState<DetailTab>('episodes');
   const [history, setHistory] = useState<WatchHistoryItem | null>(null);
   const [expanded, setExpanded] = useState<boolean>(false);
+  const [progress, setProgress] = useState<Record<string, EpisodeProgress>>({});
+  // The page slides in over the previous one; the heavy lower half (episode
+  // grid, posters) is built only once that slide has finished, so the
+  // animation never competes with layout work.
+  const [settled, setSettled] = useState<boolean>(false);
+  useEffect(() => {
+    const timer = window.setTimeout(() => setSettled(true), 340);
+    return () => window.clearTimeout(timer);
+  }, []);
 
   // Respect the user's "Default Audio" preference instead of always
   // starting on SUB.
@@ -87,6 +100,9 @@ export const AnimeDetailScreen: React.FC<AnimeDetailScreenProps> = ({
       });
       getWatchHistory().then(list => {
         if (!cancelled) setHistory(list.find(h => h.animeId === resolved.id) || null);
+      });
+      getEpisodeProgress(resolved.id).then(map => {
+        if (!cancelled) setProgress(map);
       });
     };
     loadLibrary();
@@ -158,7 +174,7 @@ export const AnimeDetailScreen: React.FC<AnimeDetailScreenProps> = ({
     ? `Play E${upNext.number}`
     : history
       ? (isEpisodeFinished(history) ? `Rewatch E${history.episodeNumber}` : `Resume E${history.episodeNumber}`)
-      : 'Play';
+      : episodes.length > 0 ? `Play E${episodes[0].number}` : 'Play';
 
   // Pagination for large episode lists (50 per range)
   const chunkSize = 50;
@@ -189,18 +205,18 @@ export const AnimeDetailScreen: React.FC<AnimeDetailScreenProps> = ({
   ].filter(Boolean);
 
   return (
-    <div style={{ flex: 1, overflowY: 'auto', paddingBottom: '90px', position: 'relative' }}>
+    <div className="screen-scroll" style={{ paddingBottom: '40px', position: 'relative' }}>
       {/* Backdrop */}
       <div style={{ position: 'relative', width: '100%', height: '280px' }}>
-        <img
+        <FadeImage
           src={shown.banner || shown.poster}
-          alt={shown.title}
-          style={{ width: '100%', height: '100%', objectFit: 'cover', filter: 'brightness(0.6)' }}
+          alt=""
+          style={{ width: '100%', height: '100%', objectFit: 'cover' }}
         />
         <div style={{
           position: 'absolute',
           inset: 0,
-          background: 'linear-gradient(180deg, rgba(8,9,14,0.4) 0%, rgba(8,9,14,0.8) 70%, var(--bg-main) 100%)'
+          background: 'linear-gradient(180deg, rgba(8,9,14,0.55) 0%, rgba(8,9,14,0.82) 70%, var(--bg-main) 100%)'
         }} />
         <div style={{
           position: 'absolute',
@@ -231,7 +247,7 @@ export const AnimeDetailScreen: React.FC<AnimeDetailScreenProps> = ({
       <div style={{ padding: '0 20px', marginTop: '-70px', position: 'relative', zIndex: 10 }}>
         {/* Poster + title */}
         <div style={{ display: 'flex', gap: '16px', alignItems: 'flex-end', marginBottom: '14px' }}>
-          <img
+          <FadeImage
             src={shown.poster}
             alt={shown.title}
             style={{
@@ -391,7 +407,15 @@ export const AnimeDetailScreen: React.FC<AnimeDetailScreenProps> = ({
           })}
         </div>
 
-        {tab === 'episodes' && (
+        {!settled && (
+          <div className="grid-episodes">
+            {Array.from({ length: 12 }).map((_, i) => (
+              <div key={i} className="skeleton" style={{ height: '62px', borderRadius: 'var(--radius-sm)' }} />
+            ))}
+          </div>
+        )}
+
+        {settled && tab === 'episodes' && (
           <>
             {rangeCount > 1 && (
               <div style={{ display: 'flex', gap: '8px', overflowX: 'auto', paddingBottom: '12px', marginBottom: '6px' }}>
@@ -430,6 +454,11 @@ export const AnimeDetailScreen: React.FC<AnimeDetailScreenProps> = ({
               <div className="grid-episodes">
                 {currentChunk.map((ep) => {
                   const isLastWatched = history?.episodeId === ep.id;
+                  const entry = progress[ep.id];
+                  const watchState = episodeWatchState(entry);
+                  const pct = entry && entry.duration > 0
+                    ? Math.min(100, Math.round((entry.currentTime / entry.duration) * 100))
+                    : 0;
                   return (
                     <button
                       key={ep.id}
@@ -443,13 +472,27 @@ export const AnimeDetailScreen: React.FC<AnimeDetailScreenProps> = ({
                         alignItems: 'center',
                         justifyContent: 'center',
                         gap: '4px',
-                        boxShadow: isLastWatched ? 'inset 0 -3px 0 #e50914' : undefined
+                        overflow: 'hidden',
+                        opacity: watchState === 'finished' && !isLastWatched ? 0.62 : 1
                       }}
+                      aria-label={`Episode ${ep.number}${watchState === 'finished' ? ', watched' : watchState === 'partial' ? ', in progress' : ''}`}
                     >
                       <span style={{ fontSize: '15px', fontWeight: 800, color: 'var(--text-primary)' }}>{ep.number}</span>
-                      <span style={{ fontSize: '10px', color: 'var(--accent-primary)', textTransform: 'uppercase', fontWeight: 600 }}>
-                        {isLastWatched ? 'Resume' : 'Play'}
+                      <span style={{
+                        fontSize: '10px',
+                        color: watchState === 'finished' ? 'var(--text-muted)' : 'var(--accent-primary)',
+                        textTransform: 'uppercase',
+                        fontWeight: 600,
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '3px'
+                      }}>
+                        {watchState === 'finished' && <Check size={10} />}
+                        {watchState === 'finished' ? 'Watched' : watchState === 'partial' || isLastWatched ? 'Resume' : 'Play'}
                       </span>
+                      {watchState === 'partial' && (
+                        <span style={{ position: 'absolute', left: 0, bottom: 0, height: '3px', width: `${pct}%`, background: '#e50914' }} />
+                      )}
                     </button>
                   );
                 })}
@@ -458,7 +501,7 @@ export const AnimeDetailScreen: React.FC<AnimeDetailScreenProps> = ({
           </>
         )}
 
-        {tab === 'collection' && (
+        {settled && tab === 'collection' && (
           <div className="grid-collection">
             {collection.map(item => {
               const isCurrent = item.id === shown.id;
@@ -476,7 +519,7 @@ export const AnimeDetailScreen: React.FC<AnimeDetailScreenProps> = ({
           </div>
         )}
 
-        {tab === 'similar' && (
+        {settled && tab === 'similar' && (
           details === null ? (
             <div className="grid-collection">
               {Array.from({ length: 6 }).map((_, i) => (

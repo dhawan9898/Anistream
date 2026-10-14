@@ -24,6 +24,18 @@ export interface UserPreferences {
 const HISTORY_KEY = 'anistream_watch_history';
 const BOOKMARKS_KEY = 'anistream_bookmarks';
 const PREFERENCES_KEY = 'anistream_preferences';
+const EPISODE_PROGRESS_KEY = 'anistream_episode_progress';
+// Titles whose per-episode progress is remembered (least recently watched go first).
+const EPISODE_PROGRESS_MAX_TITLES = 60;
+
+// How far into one episode the viewer got. Kept for every episode watched
+// (not just the latest per title) so the episode list can show what has been
+// seen and what is half-finished.
+export interface EpisodeProgress {
+  currentTime: number;
+  duration: number;
+}
+type EpisodeProgressMap = Record<string, Record<string, [number, number]>>;
 
 export const DEFAULT_PREFERENCES: UserPreferences = {
   defaultQuality: '1080p',
@@ -55,7 +67,25 @@ export function subscribeLibraryChanges(listener: Listener): () => void {
   return () => { listeners.delete(listener); };
 }
 
-function notifyLibraryChanged(): void {
+// While an episode plays, progress is saved every few seconds. Screens
+// underneath the player must not re-render for each of those saves, so the
+// notification is held back and delivered once playback is over.
+let playbackActive = false;
+let notifyPending = false;
+
+export function setPlaybackActive(active: boolean): void {
+  playbackActive = active;
+  if (!active && notifyPending) {
+    notifyPending = false;
+    notifyLibraryChanged();
+  }
+}
+
+function notifyLibraryChanged(force = true): void {
+  if (playbackActive && !force) {
+    notifyPending = true;
+    return;
+  }
   listeners.forEach(listener => {
     try {
       listener();
@@ -109,11 +139,48 @@ export function saveWatchProgress(item: WatchHistoryItem): Promise<void> {
         key: HISTORY_KEY,
         value: JSON.stringify(trimmed)
       });
-      notifyLibraryChanged();
+      await recordEpisodeProgress(latest);
+      notifyLibraryChanged(false);
     } catch (err) {
       console.error("Failed to save watch history:", err);
     }
   });
+}
+
+async function readEpisodeProgress(): Promise<EpisodeProgressMap> {
+  try {
+    const { value } = await Preferences.get({ key: EPISODE_PROGRESS_KEY });
+    const parsed = value ? JSON.parse(value) : {};
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+async function recordEpisodeProgress(item: WatchHistoryItem): Promise<void> {
+  const map = await readEpisodeProgress();
+  const episodes = map[item.animeId] || {};
+  // Keys are re-inserted so insertion order doubles as recency.
+  delete map[item.animeId];
+  episodes[item.episodeId] = [Math.round(item.currentTime), Math.round(item.duration)];
+  map[item.animeId] = episodes;
+  const titles = Object.keys(map);
+  for (const stale of titles.slice(0, Math.max(0, titles.length - EPISODE_PROGRESS_MAX_TITLES))) {
+    delete map[stale];
+  }
+  await Preferences.set({ key: EPISODE_PROGRESS_KEY, value: JSON.stringify(map) });
+}
+
+// Per-episode progress for one title, keyed by episode id.
+export async function getEpisodeProgress(animeId: string): Promise<Record<string, EpisodeProgress>> {
+  const episodes = (await readEpisodeProgress())[animeId] || {};
+  const result: Record<string, EpisodeProgress> = {};
+  for (const [episodeId, entry] of Object.entries(episodes)) {
+    if (Array.isArray(entry) && isFinite(entry[0]) && isFinite(entry[1])) {
+      result[episodeId] = { currentTime: entry[0], duration: entry[1] };
+    }
+  }
+  return result;
 }
 
 export async function getWatchHistory(): Promise<WatchHistoryItem[]> {
@@ -130,6 +197,7 @@ export function clearWatchHistory(): Promise<void> {
   pendingProgress = null;
   return serialized(async () => {
     await Preferences.remove({ key: HISTORY_KEY });
+    await Preferences.remove({ key: EPISODE_PROGRESS_KEY });
     notifyLibraryChanged();
   });
 }
@@ -144,6 +212,11 @@ export function removeWatchHistoryItem(animeId: string): Promise<WatchHistoryIte
       key: HISTORY_KEY,
       value: JSON.stringify(filtered)
     });
+    const progress = await readEpisodeProgress();
+    if (progress[animeId]) {
+      delete progress[animeId];
+      await Preferences.set({ key: EPISODE_PROGRESS_KEY, value: JSON.stringify(progress) });
+    }
     notifyLibraryChanged();
     return filtered;
   });
@@ -200,6 +273,13 @@ export function saveUserPreferences(prefs: Partial<UserPreferences>): Promise<vo
 // True when an entry is effectively finished (credits or less remaining),
 // so "resume" should start the episode over / move on instead of dropping
 // the viewer into the end credits.
+// 'finished' / 'partial' / 'unwatched' for the episode list badges.
+export function episodeWatchState(p: EpisodeProgress | undefined): 'finished' | 'partial' | 'unwatched' {
+  if (!p) return 'unwatched';
+  if (isEpisodeFinished(p)) return 'finished';
+  return p.currentTime >= 15 ? 'partial' : 'unwatched';
+}
+
 export function isEpisodeFinished(item: Pick<WatchHistoryItem, 'currentTime' | 'duration'>): boolean {
   return item.duration > 0 && (item.duration - item.currentTime <= 30 || item.currentTime / item.duration >= 0.95);
 }

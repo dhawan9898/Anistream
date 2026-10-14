@@ -12,29 +12,35 @@ public class MainActivity extends BridgeActivity {
         registerPlugin(ExoPlayerPlugin.class);
         super.onCreate(savedInstanceState);
 
-        // The native player covers this WebView for a whole episode, yet the
-        // player still relies on the app's JavaScript (audio switch, reload,
-        // watch history). Keep the WebView's renderer at full priority while
-        // hidden instead of letting it be deprioritized in the background.
+        // Keep the WebView's renderer at full priority (and, through
+        // KeepAliveWebView, its page "visible"): the native player sits on
+        // top of it for a whole episode and still relies on the app's
+        // JavaScript (next episode, audio switch, watch history).
         WebView appWebView = getBridge() != null ? getBridge().getWebView() : null;
         if (appWebView != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             appWebView.setRendererPriorityPolicy(WebView.RENDERER_PRIORITY_IMPORTANT, false);
         }
 
-        // Android back (button or gesture). The app's screens (title page,
-        // genre page, other tabs, web player) push browser history entries
-        // (see App.tsx), so back steps through them like the on-screen back
-        // arrows do. With nothing left to go back to, the app is sent to the
-        // background (like Home) instead of being closed and losing its state.
+        // Android back (button or gesture). Screens are in-memory state, not
+        // URLs, so the app itself decides what "back" means: the web layer
+        // exposes window.__anistreamBack(), which closes the top-most thing
+        // (title page, genre page, search/settings/library -> Home) and
+        // returns true. Only when it reports nothing left to close - i.e. on
+        // Home - is the app sent to the background (like the Home button)
+        // instead of being closed and losing its state.
         getOnBackPressedDispatcher().addCallback(this, new OnBackPressedCallback(true) {
             @Override
             public void handleOnBackPressed() {
-                WebView webView = getBridge() != null ? getBridge().getWebView() : null;
-                if (webView != null && webView.canGoBack()) {
-                    webView.goBack();
-                } else {
+                final WebView webView = getBridge() != null ? getBridge().getWebView() : null;
+                if (webView == null) {
                     moveTaskToBack(true);
+                    return;
                 }
+                webView.evaluateJavascript(
+                        "(function(){try{return window.__anistreamBack?window.__anistreamBack():false}catch(e){return false}})()",
+                        value -> {
+                            if (!"true".equals(value)) moveTaskToBack(true);
+                        });
             }
         });
     }

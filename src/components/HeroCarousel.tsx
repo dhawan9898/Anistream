@@ -5,6 +5,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Play, Plus, Check } from 'lucide-react';
 import type { AnimeItem } from '../core/aniCliCore';
+import { FadeImage } from './FadeImage';
 import { getBookmarks, subscribeLibraryChanges, toggleBookmark } from '../services/historyService';
 
 const MAX_SLIDES = 8;
@@ -108,13 +109,11 @@ export const HeroCarousel: React.FC<HeroCarouselProps> = ({ items, onSelect, pau
           const inList = saved.has(anime.id);
           return (
             <div key={anime.id} className="hero-slide" style={{ height: `${HERO_HEIGHT}px` }}>
-              <img
+              <FadeImage
                 src={anime.banner || anime.poster}
                 alt=""
                 loading={i === 0 ? 'eager' : 'lazy'}
-                decoding="async"
-                draggable={false}
-                style={{ width: '100%', height: '100%', objectFit: 'cover', filter: 'brightness(0.75)' }}
+                className="hero-img"
               />
               <div className="hero-overlay">
                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>

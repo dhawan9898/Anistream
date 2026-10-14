@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { Play, Flame, Clock, ChevronRight, ChevronDown, Search as SearchIcon } from 'lucide-react';
 import { getTrendingAnime, type AnimeItem } from '../core/aniCliCore';
-import { getWatchHistory, subscribeLibraryChanges, type WatchHistoryItem } from '../services/historyService';
+import { getWatchHistory, isEpisodeFinished, subscribeLibraryChanges, type WatchHistoryItem } from '../services/historyService';
+import { FadeImage } from '../components/FadeImage';
 import { getAnimeByGenre, getGenres, type Genre } from '../services/catalogService';
 import { PosterCard } from '../components/PosterCard';
 import { GenrePicker } from '../components/GenrePicker';
@@ -43,7 +44,7 @@ const GenreRow: React.FC<{
           <ChevronRight size={16} />
         </button>
       </div>
-      <div style={{ display: 'flex', gap: '10px', overflowX: 'auto', padding: '0 20px 6px 20px', scrollbarWidth: 'none' }}>
+      <div className="rail" style={{ gap: '10px', padding: '0 20px 6px 20px' }}>
         {items
           ? items.map(anime => (
               <PosterCard key={anime.id} anime={anime} width={112} onClick={() => onSelectAnime(anime)} />
@@ -128,7 +129,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
   }, [paused]);
 
   return (
-    <div style={{ flex: 1, overflowY: 'auto', paddingBottom: '90px', position: 'relative' }}>
+    <div className="screen-scroll" style={{ paddingBottom: '110px', position: 'relative' }}>
       {/* Top Mobile Bar */}
       <div 
         style={{
@@ -137,7 +138,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
           zIndex: 40,
           // Gradient only, no blur: a blurred sticky bar re-renders the whole
           // feed under it on every scroll frame.
-          background: 'linear-gradient(180deg, rgba(8,9,14,0.92) 0%, rgba(8,9,14,0.7) 70%, transparent 100%)',
+          background: 'linear-gradient(180deg, rgba(8,9,14,0.85) 0%, rgba(8,9,14,0.55) 65%, transparent 100%)',
           padding: 'calc(var(--safe-top) + 12px) 20px 12px 20px',
           display: 'flex',
           alignItems: 'center',
@@ -227,15 +228,11 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
             <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>{history.length} {history.length === 1 ? 'title' : 'titles'}</span>
           </div>
 
-          <div style={{
-            display: 'flex',
-            gap: '14px',
-            overflowX: 'auto',
-            paddingBottom: '10px',
-            scrollbarWidth: 'none'
-          }}>
+          <div className="rail" style={{ gap: '14px', paddingBottom: '10px' }}>
             {history.map((item) => {
               const progressPct = Math.min(100, Math.round((item.currentTime / (item.duration || 1)) * 100));
+              const finished = isEpisodeFinished(item);
+              const minutesLeft = Math.max(1, Math.round((item.duration - item.currentTime) / 60));
               return (
                 <div
                   key={`${item.animeId}-${item.episodeId}`}
@@ -249,9 +246,10 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
                   }}
                 >
                   <div style={{ position: 'relative', height: '110px' }}>
-                    <img
+                    <FadeImage
                       src={item.poster}
                       alt={item.animeTitle}
+                      loading="lazy"
                       style={{ width: '100%', height: '100%', objectFit: 'cover' }}
                     />
                     <div style={{
@@ -267,7 +265,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
                         height: '36px',
                         borderRadius: '50%',
                         backgroundColor: 'rgba(0,0,0,0.65)',
-                        backdropFilter: 'blur(8px)',
+                        border: '1px solid rgba(255,255,255,0.25)',
                         display: 'flex',
                         alignItems: 'center',
                         justifyContent: 'center'
@@ -294,7 +292,9 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
                       {item.animeTitle}
                     </h4>
                     <span style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>
-                      Episode {item.episodeNumber} • {progressPct}% watched
+                      {finished
+                        ? `Finished E${item.episodeNumber} · Up next`
+                        : `E${item.episodeNumber} · ${minutesLeft}m left`}
                     </span>
                   </div>
                 </div>
@@ -322,7 +322,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
               <ChevronRight size={16} />
             </button>
           </div>
-          <div style={{ display: 'flex', gap: '10px', overflowX: 'auto', padding: '0 20px 6px 20px', scrollbarWidth: 'none' }}>
+          <div className="rail" style={{ gap: '10px', padding: '0 20px 6px 20px' }}>
             {loadingTrending
               ? Array.from({ length: 5 }).map((_, i) => (
                   <div key={i} className="skeleton" style={{ flex: '0 0 112px', height: '162px', borderRadius: '6px' }} />

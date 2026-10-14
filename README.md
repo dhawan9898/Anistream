@@ -1,6 +1,6 @@
 # AniStream — Android Anime Streaming App (powered by `ani-cli`)
 
-[![Version](https://img.shields.io/badge/Version-v7.1-indigo?style=for-the-badge&logo=android)](https://github.com/dhawan9898/Anistream/releases)
+[![Version](https://img.shields.io/badge/Version-v8.0-indigo?style=for-the-badge&logo=android)](https://github.com/dhawan9898/Anistream/releases)
 [![Android](https://img.shields.io/badge/Android-8.0%2B-green?style=for-the-badge&logo=android)](https://github.com/dhawan9898/Anistream/releases)
 [![License](https://img.shields.io/badge/License-GPLv3-blue?style=for-the-badge)](https://www.gnu.org/licenses/gpl-3.0)
 
@@ -30,8 +30,8 @@ steps as [`ani-cli`](https://github.com/pystardust/ani-cli).
 
 ## 1. Install the APK
 
-1. Open the **[Releases page](https://github.com/dhawan9898/Anistream/releases)** and pick the latest release (**v7.1**).
-2. Under **Assets**, download **`AniStream-v7.1.apk`**.
+1. Open the **[Releases page](https://github.com/dhawan9898/Anistream/releases)** and pick the latest release (**v8.0**).
+2. Under **Assets**, download **`AniStream-v8.0.apk`**.
 3. Open the file on your phone. If Android asks, enable **Install unknown apps** for your browser or file manager.
 4. Tap **Install**. If you already have AniStream, the new version installs over it and keeps your history and My List, because every release is signed with the same key.
 
@@ -159,9 +159,9 @@ Use the browser's device toolbar (Ctrl+Shift+M in Chrome) to preview phone and t
 
 | Trigger | Result |
 |---------|--------|
-| Push to `main` / `master` | APK uploaded as a workflow artifact (`AniStream-v7.1-APK`, kept 30 days), plus the R8 mapping (`AniStream-v7.1-mapping`) |
-| Push a tag `v*` (e.g. `git tag v7.1 && git push origin v7.1`) | Artifact plus a GitHub Release under that tag with the APK attached |
-| **Actions ▸ Build AniStream v7.1 APK ▸ Run workflow** | Builds any branch. Fill in `release_tag` (e.g. `v7.1`) to also publish a release. If that release already exists, it and its tag are replaced so the tag points at the built commit. Leave it empty to only build. |
+| Push to `main` / `master` | APK uploaded as a workflow artifact (`AniStream-v8.0-APK`, kept 30 days), plus the R8 mapping (`AniStream-v8.0-mapping`) |
+| Push a tag `v*` (e.g. `git tag v8.0 && git push origin v8.0`) | Artifact plus a GitHub Release under that tag with the APK attached |
+| **Actions ▸ Build AniStream v8.0 APK ▸ Run workflow** | Builds any branch. Fill in `release_tag` (e.g. `v8.0`) to also publish a release. If that release already exists, it and its tag are replaced so the tag points at the built commit. Leave it empty to only build. |
 
 ---
 
@@ -213,11 +213,22 @@ Network requests to the site go through a small in-memory cache (5 min for pages
 | "Couldn't reach the server" in Search | No connection, or the site is down or blocked on your network. Tap **Retry**. |
 | Audio but no picture | The server sent an unsupported codec. Pick another episode or audio type. |
 | No Skip Intro button | Neither the source nor AniSkip has timestamps for that episode. |
-| APK won't install over an older version | Android only updates to a higher `versionCode`. v7.0 (code 10) was below v6.4 (code 14) and was refused; v7.1 (code 701) installs over both. Since v7.1 the code is `major * 100 + minor`, checked in CI by `npm run check-version`. A build signed with a different key still needs one uninstall. |
+| APK won't install over an older version | Android only updates to a higher `versionCode`. v7.0 (code 10) was below v6.4 (code 14) and was refused; v7.1 (code 701) installed over both; v8.0 is code 800. Since v7.1 the code is `major * 100 + minor`, checked in CI by `npm run check-version`. A build signed with a different key still needs one uninstall. |
 
 ---
 
 ## 10. What's new
+
+### v8.0
+
+- **Next Episode no longer gets stuck on loading.** Root cause: the native player is a separate screen, so Android stopped the app's WebView behind it and Chromium throttled its timers (to one a *minute* after five minutes) - and the player relies on that WebView's JavaScript to look up the next episode, switch audio and save history. The WebView now stays live while the player is open (`KeepAliveWebView`). In addition, pressing Next before the prefetch has finished joins the lookup already running instead of restarting it, and the loading watchdog is 30 s with a one-tap Retry that always fetches a fresh stream.
+- **Back gesture**: the web layer now answers Android back directly (`window.__anistreamBack()`) instead of relying on browser history entries. Search, Library and Settings return to Home; on Home the app goes to the background; open dialogs and pickers close first.
+- **Per-episode history**: every watched episode is remembered (not only the latest per title). The episode list shows *Watched*, a red progress bar for half-watched episodes and *Resume*; a stale "now playing" session after an automatic next episode no longer drops later progress. Updates are held back while a video plays, so screens underneath don't re-render every few seconds.
+- **Seek preview**: scrubbing the native seek bar shows a muted, lowest-resolution second decoder's frame at the target position, plus the time, following your finger.
+- **Audio switch continues from the same position**: the player remembers the position itself and verifies it once the new stream is ready, instead of trusting the round trip through JavaScript.
+- **Auto-Skip Intro and Autoplay Next Episode** (Settings) now apply in the native player; with autoplay off, Next Episode waits to be tapped.
+- **Smoothness**: tabs stay mounted (scroll position and loaded rows are kept; no refetch when switching), title/genre pages slide over them with transform-only animations in and out, the dock and chips no longer use backdrop blur, per-element `will-change` and filter-on-image are gone, skeletons shimmer on the compositor, spinners actually spin (the `animate-spin` class was never defined), posters fade in, and the app's fonts are bundled.
+- **Polish**: captions are outlined, immersive mode is restored after dialogs, an error screen replaces a blank WebView on a render crash, "My List" naming is consistent, search copy no longer mentions internals.
 
 ### v7.1
 

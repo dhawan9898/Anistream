@@ -2,6 +2,7 @@
 // destructive-action confirmations and error messages stay inside the app's
 // own glass UI instead of breaking out to a native browser dialog.
 import React from 'react';
+import { useBackHandler } from '../services/backStack';
 
 interface ConfirmModalProps {
   open: boolean;
@@ -24,6 +25,8 @@ export const ConfirmModal: React.FC<ConfirmModalProps> = ({
   onConfirm,
   onCancel
 }) => {
+  useBackHandler(open, () => (onCancel ?? onConfirm)());
+
   if (!open) return null;
 
   return (

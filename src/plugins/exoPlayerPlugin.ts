@@ -73,6 +73,9 @@ export interface ExoPlayerPluginInterface {
     outro?: { start: number; end: number };
     // Where to start playing (resume), in ms.
     startPositionMs?: number;
+    // Playback settings, applied by the player itself.
+    autoSkipIntro?: boolean;
+    autoPlayNext?: boolean;
   }): Promise<{ success: boolean }>;
 
   // Same options as play(), for the episode after `afterEpisode`: the

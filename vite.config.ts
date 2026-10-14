@@ -1,10 +1,15 @@
 import react from '@vitejs/plugin-react'
 import { defineConfig } from 'vite'
+import { readFileSync } from 'node:fs'
 import { aniCliBridgePlugin } from './aniCliBridgePlugin.ts'
+
+const pkg = JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 'utf8'))
 
 // https://vite.dev/config/
 export default defineConfig({
   plugins: [react(), aniCliBridgePlugin()],
+  define: { __APP_VERSION__: JSON.stringify(pkg.version) },
+  build: { chunkSizeWarningLimit: 700 },
   server: {
     port: 3000,
     host: true,

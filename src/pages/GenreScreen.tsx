@@ -62,7 +62,7 @@ export const GenreScreen: React.FC<GenreScreenProps> = ({ genre, onBack, onSelec
   };
 
   return (
-    <div onScroll={handleScroll} style={{ flex: 1, overflowY: 'auto', paddingBottom: '90px' }}>
+    <div onScroll={handleScroll} className="screen-scroll" style={{ paddingBottom: '110px' }}>
       <div style={{
         position: 'sticky',
         top: 0,
