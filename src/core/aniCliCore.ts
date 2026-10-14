@@ -1,5 +1,6 @@
 // aniCliCore.ts - Port of ani-cli scraping & deobfuscation logic
 import { Capacitor } from '@capacitor/core';
+import { MAX_STALE_MS, readPersisted, writePersisted } from './persistentCache.ts';
 
 export interface AnimeItem {
   id: string;          // e.g. "solo-leveling-season-2-arise-from-the-shadow-19413"
@@ -60,6 +61,9 @@ export interface StreamSource {
   // Absent when the server didn't tag this episode.
   intro?: SkipRange;
   outro?: SkipRange;
+  // WebVTT file mapping time ranges to regions of thumbnail sprite sheets
+  // (the player's own scrub-preview data), when the embed offers one.
+  spriteVtt?: string;
 }
 
 // The sources payload carries chapter markers as { start, end } (seconds);
@@ -152,7 +156,7 @@ function sleep(ms: number): Promise<void> {
 // lists, and without this each of them hit the site separately (the fastest
 // way to get rate-limited or IP-banned). Failures are never cached.
 const responseCache = new Map<string, { expires: number; value: Promise<unknown> }>();
-const CACHE_MAX_ENTRIES = 200;
+const CACHE_MAX_ENTRIES = 80; // pages are large strings - keep the in-memory set modest
 
 function cached<T>(key: string, ttlMs: number, load: () => Promise<T>): Promise<T> {
   const now = Date.now();
@@ -184,7 +188,9 @@ const UPSTREAM_HEADERS: Record<string, string> = {
 // ("/genre/action") or an absolute URL on the site.
 export function fetchSiteHtml(path: string): Promise<string> {
   const sitePath = path.startsWith('http') ? new URL(path).pathname + new URL(path).search : path;
-  return cached(`html:${sitePath}`, PAGE_TTL_MS, async () => {
+  // Browse pages (home, genres) are kept on disk too; searches are not.
+  const persist = !sitePath.startsWith('/search');
+  return cached(`html:${sitePath}`, PAGE_TTL_MS, () => loadPersisted(`html:${sitePath}`, PAGE_TTL_MS, persist, async () => {
     const res = await fetchWithRetry(`${getApiBase()}${sitePath}`, {
       headers: {
         'Accept': 'text/html,application/xhtml+xml',
@@ -195,7 +201,31 @@ export function fetchSiteHtml(path: string): Promise<string> {
       throw new Error(`GET ${sitePath} failed with HTTP ${res.status}`);
     }
     return res.text();
-  });
+  }));
+}
+
+// Disk layer under the in-memory cache: a copy younger than ttlMs is used
+// as is (instant cold start); otherwise the network is asked, and if that
+// fails the last saved copy (up to MAX_STALE_MS old) stands in.
+async function loadPersisted(
+  key: string,
+  ttlMs: number,
+  persist: boolean,
+  load: () => Promise<string>
+): Promise<string> {
+  const saved = persist ? readPersisted(key) : null;
+  if (saved && Date.now() - saved.savedAt < ttlMs) return saved.value;
+  try {
+    const fresh = await load();
+    if (persist) writePersisted(key, fresh);
+    return fresh;
+  } catch (err) {
+    if (saved && Date.now() - saved.savedAt < MAX_STALE_MS) {
+      console.warn(`[aniCliCore] ${key} unreachable, serving the saved copy`, err);
+      return saved.value;
+    }
+    throw err;
+  }
 }
 
 // Live search only - no curated/mock fallback. Throws on network failure.
@@ -307,7 +337,11 @@ export function sitePathOf(href: string): string {
 // Throws when the list can't be loaded (failures aren't cached, so the
 // next call retries) - it never invents episodes.
 export function getEpisodes(animeId: string): Promise<EpisodeItem[]> {
-  return cached(`episodes:${animeId}`, EPISODE_LIST_TTL_MS, () => loadEpisodes(animeId));
+  return cached(`episodes:${animeId}`, EPISODE_LIST_TTL_MS, async () => {
+    const json = await loadPersisted(`episodes:${animeId}`, EPISODE_LIST_TTL_MS, true,
+      async () => JSON.stringify(await loadEpisodes(animeId)));
+    return JSON.parse(json) as EpisodeItem[];
+  });
 }
 
 async function loadEpisodes(animeId: string): Promise<EpisodeItem[]> {
@@ -594,10 +628,27 @@ async function resolveEmbed(hash: string, episodeId: string, mode: 'sub' | 'dub'
   });
   if (!embedRes.ok) return null;
   const embedHtml = await embedRes.text();
+  const embedOrigin = new URL(embedUrl).origin;
+
+  // Current embeds carry the whole payload inline (window.__P, XOR-obfuscated);
+  // older ones expose a sources endpoint keyed by a data-id.
+  const inline = parseEmbedPayload(embedHtml);
+  if (inline) {
+    const src = typeof inline.src === 'string' ? inline.src : '';
+    if (!src) return null;
+    return sourceFrom(
+      src,
+      embedOrigin,
+      (Array.isArray(inline.subtitles) ? inline.subtitles : []).map((t: any) => ({ ...t, file: t.src, kind: 'captions' })),
+      parseSkipRange(inline.skip?.intro),
+      parseSkipRange(inline.skip?.outro),
+      typeof inline.sprite_vtt === 'string' ? inline.sprite_vtt : undefined
+    );
+  }
+
   const idMatch = embedHtml.match(/data-id="(\d+)"/i);
   if (!idMatch) return null;
 
-  const embedOrigin = new URL(embedUrl).origin;
   const sourcesUrl = `${embedOrigin}/stream/getSourcesNew?id=${idMatch[1]}`;
   const sourcesRes = await fetchTimed(sourcesUrl, {
     headers: {
@@ -631,15 +682,50 @@ async function resolveEmbed(hash: string, episodeId: string, mode: 'sub' | 'dub'
   }
   if (!rawStreamUrl || typeof rawStreamUrl !== "string") return null;
 
-  const subtitles = parseSubtitleTracks(tracks);
   console.log(`[aniCliCore] episodeId=${episodeId} mode=${mode} RESOLVED STREAM URL:`, rawStreamUrl);
   console.log(`[aniCliCore] episodeId=${episodeId} skip markers: intro=`, intro, 'outro=', outro);
 
+  return sourceFrom(rawStreamUrl, embedOrigin, tracks, intro, outro, findSpriteVtt(tracks));
+}
+
+// The inline payload of current embeds: base64 of JSON, XOR-ed with a fixed key.
+export function parseEmbedPayload(html: string): any | null {
+  const match = html.match(/window\.__P\s*=\s*"([^"]+)"/);
+  if (!match) return null;
+  try {
+    const raw = atob(match[1]);
+    const key = "otaku-embed-v1";
+    const bytes = new Uint8Array(raw.length);
+    for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i) ^ key.charCodeAt(i % key.length);
+    return JSON.parse(new TextDecoder().decode(bytes));
+  } catch (err) {
+    console.warn("[aniCliCore] embed payload could not be decoded:", err);
+    return null;
+  }
+}
+
+// The thumbnails sprite VTT listed among a sources payload's tracks.
+function findSpriteVtt(tracks: any): string | undefined {
+  if (!Array.isArray(tracks)) return undefined;
+  const t = tracks.find((x: any) => String(x?.kind || '').toLowerCase() === 'thumbnails' && (x?.file || x?.src));
+  return t ? String(t.file || t.src) : undefined;
+}
+
+function sourceFrom(
+  rawStreamUrl: string,
+  embedOrigin: string,
+  tracks: any,
+  intro: SkipRange | undefined,
+  outro: SkipRange | undefined,
+  spriteVtt: string | undefined
+): StreamSource {
+  const subtitles = parseSubtitleTracks(tracks);
   return {
     streamUrl: rawStreamUrl,
     quality: "1080p",
     subtitles,
     referer: embedOrigin + '/',
+    spriteVtt,
     masterUrl: rawStreamUrl,
     // One adaptive (HLS master) URL - the players pick the rendition. The
     // labels only exist so the "Default Quality" preference has something

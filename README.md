@@ -1,6 +1,6 @@
 # AniStream — Android Anime Streaming App (powered by `ani-cli`)
 
-[![Version](https://img.shields.io/badge/Version-v8.2-indigo?style=for-the-badge&logo=android)](https://github.com/dhawan9898/Anistream/releases)
+[![Version](https://img.shields.io/badge/Version-v8.3-indigo?style=for-the-badge&logo=android)](https://github.com/dhawan9898/Anistream/releases)
 [![Android](https://img.shields.io/badge/Android-8.0%2B-green?style=for-the-badge&logo=android)](https://github.com/dhawan9898/Anistream/releases)
 [![License](https://img.shields.io/badge/License-GPLv3-blue?style=for-the-badge)](https://www.gnu.org/licenses/gpl-3.0)
 
@@ -30,8 +30,8 @@ steps as [`ani-cli`](https://github.com/pystardust/ani-cli).
 
 ## 1. Install the APK
 
-1. Open the **[Releases page](https://github.com/dhawan9898/Anistream/releases)** and pick the latest release (**v8.2**).
-2. Under **Assets**, download **`AniStream-v8.2.apk`**.
+1. Open the **[Releases page](https://github.com/dhawan9898/Anistream/releases)** and pick the latest release (**v8.3**).
+2. Under **Assets**, download **`AniStream-v8.3.apk`**.
 3. Open the file on your phone. If Android asks, enable **Install unknown apps** for your browser or file manager.
 4. Tap **Install**. If you already have AniStream, the new version installs over it and keeps your history and My List, because every release is signed with the same key.
 
@@ -159,9 +159,9 @@ Use the browser's device toolbar (Ctrl+Shift+M in Chrome) to preview phone and t
 
 | Trigger | Result |
 |---------|--------|
-| Push to `main` / `master` | APK uploaded as a workflow artifact (`AniStream-v8.2-APK`, kept 30 days), plus the R8 mapping (`AniStream-v8.2-mapping`) |
-| Push a tag `v*` (e.g. `git tag v8.2 && git push origin v8.2`) | Artifact plus a GitHub Release under that tag with the APK attached |
-| **Actions ▸ Build AniStream v8.2 APK ▸ Run workflow** | Builds any branch. Fill in `release_tag` (e.g. `v8.2`) to also publish a release. If that release already exists, it and its tag are replaced so the tag points at the built commit. Leave it empty to only build. |
+| Push to `main` / `master` | APK uploaded as a workflow artifact (`AniStream-v8.3-APK`, kept 30 days), plus the R8 mapping (`AniStream-v8.3-mapping`) |
+| Push a tag `v*` (e.g. `git tag v8.3 && git push origin v8.3`) | Artifact plus a GitHub Release under that tag with the APK attached |
+| **Actions ▸ Build AniStream v8.3 APK ▸ Run workflow** | Builds any branch. Fill in `release_tag` (e.g. `v8.3`) to also publish a release. If that release already exists, it and its tag are replaced so the tag points at the built commit. Leave it empty to only build. |
 
 ---
 
@@ -213,11 +213,19 @@ Network requests to the site go through a small in-memory cache (5 min for pages
 | "Couldn't reach the server" in Search | No connection, or the site is down or blocked on your network. Tap **Retry**. |
 | Audio but no picture | The server sent an unsupported codec. Pick another episode or audio type. |
 | No Skip Intro button | Neither the source nor AniSkip has timestamps for that episode. |
-| APK won't install over an older version | Android only updates to a higher `versionCode`. v7.0 (code 10) was below v6.4 (code 14) and was refused; v7.1 (code 701) installed over both; v8.2 is code 802. Since v7.1 the code is `major * 100 + minor`, checked in CI by `npm run check-version`. A build signed with a different key still needs one uninstall. |
+| APK won't install over an older version | Android only updates to a higher `versionCode`. v7.0 (code 10) was below v6.4 (code 14) and was refused; v7.1 (code 701) installed over both; v8.3 is code 803. Since v7.1 the code is `major * 100 + minor`, checked in CI by `npm run check-version`. A build signed with a different key still needs one uninstall. |
 
 ---
 
 ## 10. What's new
+
+### v8.3
+
+- **Native stream lookup** (`NativeStreamResolver`): Next Episode, Sub/Dub switch, episode picks, HTTP-error reloads and Retry now resolve the stream inside the player (servers -> embed -> sources, same steps as the app's scraper), with the app's JavaScript only as a fallback. The next episode is warmed ~3 minutes before the end so the link is fresh; concurrent asks share one lookup.
+- **Inline embed format**: embeds that carry their data in `window.__P` (base64, XOR `otaku-embed-v1`) are now understood in both the app and the player - before, such streams could not be resolved at all. Their intro/outro markers and subtitles are used.
+- **Seek preview from the stream's thumbnail sprites** (`ThumbnailSprites`): the embed's sprite VTT maps time ranges to regions of sheet images; the bubble shows the frame for the scrub position.
+- **Auto-Skip Intro defaults to off**; installs that persisted the old default have it reset once (prefs version 2).
+- **Caching**: home/genre pages and episode lists are kept on disk (instant cold start inside the TTL, stale copy when offline, 2 MB budget), the in-memory page cache is smaller, home rails load when scrolled near, and the episode log is written at most every 20 s.
 
 ### v8.2
 

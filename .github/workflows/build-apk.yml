@@ -1,4 +1,4 @@
-name: Build AniStream v8.2 APK
+name: Build AniStream v8.3 APK
 
 on:
   push:
@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
     inputs:
       release_tag:
-        description: 'Tag to publish this build under (e.g. v8.2) - leave empty to just build, no release'
+        description: 'Tag to publish this build under (e.g. v8.3) - leave empty to just build, no release'
         required: false
         default: ''
 
@@ -72,26 +72,26 @@ jobs:
       - name: Package APK for Release
         run: |
           mkdir -p build-output
-          cp android/app/build/outputs/apk/release/app-release.apk build-output/AniStream-v8.2.apk
-          ls -lh build-output/AniStream-v8.2.apk
+          cp android/app/build/outputs/apk/release/app-release.apk build-output/AniStream-v8.3.apk
+          ls -lh build-output/AniStream-v8.3.apk
 
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: AniStream-v8.2-APK
-          path: build-output/AniStream-v8.2.apk
+          name: AniStream-v8.3-APK
+          path: build-output/AniStream-v8.3.apk
           retention-days: 30
 
       # R8 mapping - needed to de-obfuscate stack traces from this build.
       - name: Upload R8 Mapping
         uses: actions/upload-artifact@v4
         with:
-          name: AniStream-v8.2-mapping
+          name: AniStream-v8.3-mapping
           path: android/app/build/outputs/mapping/release/mapping.txt
           retention-days: 90
           if-no-files-found: warn
 
-      # A manual run republishing an existing tag (e.g. rebuilding v8.2)
+      # A manual run republishing an existing tag (e.g. rebuilding v8.3)
       # replaces that release and its tag, so the tag always points at the
       # commit this APK was built from. Tag pushes are never touched.
       - name: Replace Existing Release (manual runs only)
@@ -109,23 +109,26 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch' && inputs.release_tag != '')
         uses: softprops/action-gh-release@v2
         with:
-          files: build-output/AniStream-v8.2.apk
+          files: build-output/AniStream-v8.3.apk
           tag_name: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || inputs.release_tag }}
           # Without this a new tag is created on the default branch, not on
           # the commit that was actually built.
           target_commitish: ${{ github.sha }}
           name: AniStream ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || inputs.release_tag }} Release
           body: |
-            ## AniStream v8.2 - Android Anime Streaming App (Powered by ani-cli)
+            ## AniStream v8.3 - Android Anime Streaming App (Powered by ani-cli)
 
-            v8.2 fixes audio switching: the episode now continues from the exact moment you switched Sub/Dub instead of starting over.
+            v8.3 is a reliability release: episodes can be looked up inside the player, newer stream formats are supported, and the app caches to disk.
 
-            ### 🚀 What's new in v8.2:
+            ### 🚀 What's new in v8.3:
 
-            - **Sub/Dub switch keeps your place**: the player re-checks the position once the new audio stream is ready and jumps back if it started early.
-            - Everything from v8.2: dub only when available, resume partial episodes, per-episode Library history, smoother swaps, live scrubbing, real caption tracks.
+            - **Next Episode / Sub-Dub switch no longer depend on the app's web layer**: the player looks the stream up itself (falling back to the app only if that fails), warms the next episode shortly before the current one ends, and retries with a fresh link when a stream dies.
+            - **Newer embed format supported**: streams whose player page carries its data inline (ZokoAnime) previously could not be resolved at all; they now play, with their intro/outro markers and subtitles.
+            - **Real seek preview**: dragging the seek bar shows the stream's own thumbnail for that moment.
+            - **Auto-Skip Intro is off by default** (and reset once for existing installs); turn it on in Settings if you want it.
+            - **Faster, steadier browsing**: home and genre pages and episode lists are cached on disk (instant restarts, and still shown when the site is unreachable), rails load only when scrolled near, fewer writes while watching.
 
             ### 📦 Download:
-            Download **`AniStream-v8.2.apk`** below and install or update on any Android device running Android 8.0 or later - it updates previous versions in place and keeps your history and My List.
+            Download **`AniStream-v8.3.apk`** below and install or update on any Android device running Android 8.0 or later - it updates previous versions in place and keeps your history and My List.
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

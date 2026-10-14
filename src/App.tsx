@@ -389,6 +389,7 @@ export const App: React.FC = () => {
     isFallback: source.isFallback,
     intro: source.intro,
     outro: source.outro,
+    spriteVtt: source.spriteVtt,
     startPositionMs: Math.max(0, Math.round(startTime * 1000)),
     autoSkipIntro: prefs.autoSkipIntro,
     autoPlayNext: prefs.autoPlayNext,

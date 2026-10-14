@@ -75,6 +75,7 @@ public class ExoPlayerPlugin extends Plugin {
         boolean autoSkipIntro = call.getBoolean("autoSkipIntro", false);
         boolean autoPlayNext = call.getBoolean("autoPlayNext", true);
         boolean hasDub = call.getBoolean("hasDub", true);
+        String spriteVtt = call.getString("spriteVtt");
 
         Intent intent = new Intent(getContext(), ExoPlayerActivity.class);
         intent.putExtra("url", url);
@@ -89,6 +90,7 @@ public class ExoPlayerPlugin extends Plugin {
         intent.putExtra("autoSkipIntro", autoSkipIntro);
         intent.putExtra("autoPlayNext", autoPlayNext);
         intent.putExtra("hasDub", hasDub);
+        if (spriteVtt != null && !spriteVtt.isEmpty()) intent.putExtra("spriteVtt", spriteVtt);
         putSkipRange(intent, "intro", intro);
         putSkipRange(intent, "outro", outro);
         if (startPositionMs != null && startPositionMs > 0) {

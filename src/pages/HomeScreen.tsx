@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Play, Flame, Clock, ChevronRight, ChevronDown, Search as SearchIcon } from 'lucide-react';
 import { getTrendingAnime, type AnimeItem } from '../core/aniCliCore';
 import { getWatchHistory, isEpisodeFinished, subscribeLibraryChanges, type WatchHistoryItem } from '../services/historyService';
@@ -20,19 +20,35 @@ const GenreRow: React.FC<{
   onSeeAll: () => void;
 }> = ({ genre, onSelectAnime, onSeeAll }) => {
   const [items, setItems] = useState<AnimeItem[] | null>(null);
+  const rootRef = useRef<HTMLDivElement | null>(null);
+  // Rails are only fetched once they are near the screen, so opening the app
+  // doesn't fire a request per rail while most are far below the fold.
+  const [near, setNear] = useState(false);
 
   useEffect(() => {
+    const el = rootRef.current;
+    if (!el || near) return;
+    if (typeof IntersectionObserver === 'undefined') { setNear(true); return; }
+    const observer = new IntersectionObserver(entries => {
+      if (entries.some(e => e.isIntersecting)) { setNear(true); observer.disconnect(); }
+    }, { rootMargin: '600px 0px' });
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [near]);
+
+  useEffect(() => {
+    if (!near) return;
     let cancelled = false;
     getAnimeByGenre(genre, 1).then(page => {
       if (!cancelled) setItems(page.items.slice(0, 15));
-    });
+    }).catch(() => { if (!cancelled) setItems([]); });
     return () => { cancelled = true; };
-  }, [genre]);
+  }, [genre, near]);
 
   if (items && items.length === 0) return null;
 
   return (
-    <div style={{ padding: '18px 0 4px 0' }}>
+    <div ref={rootRef} style={{ padding: '18px 0 4px 0' }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 20px', marginBottom: '10px' }}>
         <h2 style={{ fontSize: '17px', fontWeight: 800, color: 'var(--text-primary)' }}>{genre.name} Anime</h2>
         <button

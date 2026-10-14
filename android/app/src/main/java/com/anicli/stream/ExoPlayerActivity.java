@@ -117,11 +117,23 @@ public class ExoPlayerActivity extends AppCompatActivity {
     // Scrubbing: the video itself seeks live (throttled) while the seek bar
     // is dragged, with a time bubble over the thumb.
     private View seekPreviewContainer;
+    private View seekPreviewCard;
+    private ImageView seekPreviewImage;
     private TextView seekPreviewTime;
+    private ThumbnailSprites sprites;
     private long scrubTargetMs = -1;
     private boolean scrubSeekQueued = false;
     private boolean scrubWasPlaying = false;
     private static final long SCRUB_SEEK_INTERVAL_MS = 80;
+
+    // Native stream resolution (see NativeStreamResolver): bumped per request
+    // so a slow answer for something the viewer has moved on from is dropped.
+    private int resolveToken = 0;
+    private boolean nativePrefetchStarted = false;
+    private static final long NATIVE_PREFETCH_REMAINING_MS = 180_000;
+    // A stream the app resolved this long ago may have expired; resolve anew.
+    private static final long PREFETCH_MAX_AGE_MS = 15 * 60 * 1000;
+    private long prefetchedAtMs = 0;
 
     // True from the moment a new stream is asked for until it arrives; the
     // old player (if any) stays on screen, paused, meanwhile.
@@ -415,6 +427,7 @@ public class ExoPlayerActivity extends AppCompatActivity {
         nextEpisodeTriggered = false;
         postPlayDismissed = false;
         introAutoSkipped = false;
+        nativePrefetchStarted = false;
         hidePostPlay();
         btnSkipIntro.setVisibility(View.GONE);
         btnSkipOutro.setVisibility(View.GONE);
@@ -434,6 +447,9 @@ public class ExoPlayerActivity extends AppCompatActivity {
         pendingVideoUrl = videoUrl;
         pendingReferer = referer;
         pendingSubtitlesJson = subtitlesJson;
+        if (sprites != null) sprites.release();
+        String spriteVtt = intent.getStringExtra("spriteVtt");
+        sprites = spriteVtt != null && !spriteVtt.isEmpty() ? ThumbnailSprites.load(spriteVtt, referer) : null;
         long startPositionMs = intent.getLongExtra("startPositionMs", 0L);
         // Same episode coming back after an audio switch / re-resolve: the
         // position remembered by the player wins over whatever came back.
@@ -509,11 +525,11 @@ public class ExoPlayerActivity extends AppCompatActivity {
         bufferingSpinner.setVisibility(View.GONE);
         textErrorMessage.setText("This episode is taking too long to load.");
         btnRetry.setText("Retry");
-        btnRetry.setOnClickListener(v -> {
-            errorOverlay.setVisibility(View.GONE);
+        btnRetry.setOnClickListener(v -> retryFresh(() -> {
+            // Native lookup failed too: ask the app, as if picked from the list.
             ExoPlayerPlugin.notifyEpisodeSelected(animeTitle, episode, episode);
             showLoadingState();
-        });
+        }));
         errorOverlay.setVisibility(View.VISIBLE);
         setControlsVisible(true);
     }
@@ -531,6 +547,104 @@ public class ExoPlayerActivity extends AppCompatActivity {
                 + ("dub".equals(currentMode) ? " · Dub" : ""));
         btnNextEp.setVisibility(nextEpisodeNumber() != null ? View.VISIBLE : View.GONE);
         showLoadingState();
+    }
+
+    private String episodeIdFor(String number) {
+        if (number == null) return null;
+        for (EpisodeOption option : episodeOptions) {
+            if (option.number.equals(number)) return option.id;
+        }
+        return null;
+    }
+
+    // Resolves `number` in `mode` inside the player and starts it, continuing
+    // at resumeMs. When that can't be done (no episode id, no server answers)
+    // `fallback` hands the request to the app's JavaScript as before.
+    // `announce` tells JS which episode/audio is now playing, so watch
+    // history and its own bookkeeping follow.
+    private void resolveNatively(final String number, final String mode, final long resumeMs,
+                                 final boolean fresh, final boolean announce, final Runnable fallback) {
+        final int token = ++resolveToken;
+        final String episodeId = episodeIdFor(number);
+        if (episodeId == null) {
+            fallback.run();
+            return;
+        }
+        NativeStreamResolver.runAsync(() -> {
+            NativeStreamResolver.Result result = null;
+            try {
+                result = NativeStreamResolver.resolve(episodeId, mode, fresh);
+            } catch (Exception e) {
+                Log.w(TAG, "Native resolve failed for E" + number + " (" + mode + "): " + e);
+            }
+            final NativeStreamResolver.Result resolved = result;
+            handler.post(() -> {
+                if (token != resolveToken || isFinishing() || isDestroyed()) return;
+                if (resolved == null) {
+                    fallback.run();
+                    return;
+                }
+                startResolved(number, mode, resumeMs, resolved, announce);
+            });
+        });
+    }
+
+    private void startResolved(String number, String mode, long resumeMs,
+                               NativeStreamResolver.Result r, boolean announce) {
+        Intent intent = new Intent(this, ExoPlayerActivity.class);
+        intent.putExtra("url", r.url);
+        intent.putExtra("title", animeTitle);
+        intent.putExtra("episode", number);
+        intent.putExtra("referer", r.referer);
+        intent.putExtra("mode", mode);
+        intent.putExtra("subtitles", r.subtitlesJson);
+        if (r.spriteVtt != null && !r.spriteVtt.isEmpty()) intent.putExtra("spriteVtt", r.spriteVtt);
+        intent.putExtra("isFallback", false);
+        intent.putExtra("autoSkipIntro", autoSkipIntro);
+        intent.putExtra("autoPlayNext", autoPlayNext);
+        intent.putExtra("hasDub", hasDub);
+        if (resumeMs > 0) intent.putExtra("startPositionMs", resumeMs);
+        if (r.introStartMs >= 0) {
+            intent.putExtra("introStartMs", r.introStartMs);
+            intent.putExtra("introEndMs", r.introEndMs);
+        }
+        if (r.outroStartMs >= 0) {
+            intent.putExtra("outroStartMs", r.outroStartMs);
+            intent.putExtra("outroEndMs", r.outroEndMs);
+        }
+        if (announce) ExoPlayerPlugin.notifyNextEpisodeStarted(animeTitle, number, mode, r.url);
+        setIntent(intent);
+        loadFromIntent(intent);
+    }
+
+    // Warms the next episode's stream shortly before the current one ends,
+    // so Next / the countdown starts it at once with a fresh link.
+    private void maybePrefetchNextNatively(long duration, long position) {
+        if (nativePrefetchStarted || duration <= 0 || duration - position > NATIVE_PREFETCH_REMAINING_MS) return;
+        String next = nextEpisodeNumber();
+        String id = episodeIdFor(next);
+        if (id == null) return;
+        nativePrefetchStarted = true;
+        final String mode = currentMode;
+        NativeStreamResolver.runAsync(() -> {
+            try {
+                NativeStreamResolver.resolve(id, mode, false);
+                Log.i(TAG, "Prefetched E" + next + " natively");
+            } catch (Exception e) {
+                Log.w(TAG, "Native prefetch failed (will resolve on demand): " + e);
+            }
+        });
+    }
+
+    // Retry that really starts over: a fresh lookup (an old link may be dead)
+    // at the position reached, falling back to the app's lookup.
+    private void retryFresh(final Runnable fallback) {
+        final long resumeAt = Math.max(lastKnownPositionMs, player != null ? player.getCurrentPosition() : 0);
+        final String number = episodeNumber;
+        final String mode = currentMode;
+        errorOverlay.setVisibility(View.GONE);
+        showLoadingState();
+        resolveNatively(number, mode, resumeAt, true, true, fallback);
     }
 
     // JS couldn't resolve a stream for the requested episode.
@@ -580,6 +694,8 @@ public class ExoPlayerActivity extends AppCompatActivity {
         textErrorMessage = findViewById(R.id.text_error_message);
         btnRetry = findViewById(R.id.btn_retry);
         seekPreviewContainer = findViewById(R.id.seek_preview_container);
+        seekPreviewCard = findViewById(R.id.seek_preview_card);
+        seekPreviewImage = findViewById(R.id.seek_preview_image);
         seekPreviewTime = findViewById(R.id.seek_preview_time);
     }
 
@@ -634,6 +750,12 @@ public class ExoPlayerActivity extends AppCompatActivity {
         btnRetry.setBackground(retryBg);
 
         darkPanel(seekPreviewTime, 18f, 0.8f);
+        GradientDrawable previewBg = new GradientDrawable();
+        previewBg.setCornerRadius(8f * density);
+        previewBg.setColor(Color.BLACK);
+        previewBg.setStroke(Math.round(1.5f * density), Color.argb(200, 255, 255, 255));
+        seekPreviewCard.setBackground(previewBg);
+        seekPreviewCard.setClipToOutline(true);
 
         // Captions: white with a black outline reads on any scene.
         // Keep the last frame on screen while a new stream replaces the player
@@ -748,6 +870,15 @@ public class ExoPlayerActivity extends AppCompatActivity {
         seekPreviewContainer.animate().cancel();
         seekPreviewContainer.setAlpha(0f);
         seekPreviewContainer.setVisibility(View.VISIBLE);
+        seekPreviewCard.setVisibility(sprites != null ? View.VISIBLE : View.GONE);
+        if (sprites != null) {
+            float aspect = sprites.aspect();
+            if (aspect > 0) {
+                android.view.ViewGroup.LayoutParams lp = seekPreviewCard.getLayoutParams();
+                lp.height = Math.round(lp.width / aspect);
+                seekPreviewCard.setLayoutParams(lp);
+            }
+        }
         long target = (long) ((seekBar.getProgress() / 1000.0) * player.getDuration());
         updateScrub(seekBar.getProgress(), target);
         seekPreviewContainer.animate().alpha(1f).setDuration(100).start();
@@ -756,6 +887,7 @@ public class ExoPlayerActivity extends AppCompatActivity {
     private void updateScrub(int progress, long targetMs) {
         if (seekPreviewContainer.getVisibility() != View.VISIBLE) return;
         seekPreviewTime.setText(formatTime(Math.max(targetMs, 0)));
+        showSpriteFrame(targetMs);
 
         // Follow the thumb, kept on screen.
         int[] seekLoc = new int[2];
@@ -774,6 +906,17 @@ public class ExoPlayerActivity extends AppCompatActivity {
             scrubSeekQueued = true;
             handler.postDelayed(scrubSeekRunnable, SCRUB_SEEK_INTERVAL_MS);
         }
+    }
+
+    // The thumbnail for the scrub position (when the stream has sprites);
+    // if its sheet is still downloading, it appears the moment it arrives.
+    private void showSpriteFrame(long targetMs) {
+        if (sprites == null) return;
+        android.graphics.Bitmap frame = sprites.frameAt(targetMs,
+                () -> handler.post(() -> {
+                    if (userSeeking && scrubTargetMs >= 0) showSpriteFrame(scrubTargetMs);
+                }));
+        if (frame != null) seekPreviewImage.setImageBitmap(frame);
     }
 
     // Seeks are coalesced: while the finger moves quickly only the latest
@@ -798,6 +941,7 @@ public class ExoPlayerActivity extends AppCompatActivity {
             if (scrubWasPlaying) player.setPlayWhenReady(true);
         }
         scrubTargetMs = -1;
+        seekPreviewImage.setImageDrawable(null);
         seekPreviewContainer.animate().cancel();
         seekPreviewContainer.animate().alpha(0f).setDuration(140)
                 .withEndAction(() -> seekPreviewContainer.setVisibility(View.GONE))
@@ -1097,11 +1241,14 @@ public class ExoPlayerActivity extends AppCompatActivity {
     private void requestModeSwitch() {
         String newMode = "sub".equals(currentMode) ? "dub" : "sub";
         long position = player != null ? Math.max(player.getCurrentPosition(), 0) : lastKnownPositionMs;
-        ExoPlayerPlugin.notifyModeSwitchRequested(animeTitle, episodeNumber, newMode, position);
+        final String episode = episodeNumber;
+        final String title = animeTitle;
         enterLoading(null, newMode);
         // Sub and dub are the same cut: carry on from here in the new audio.
         pendingResumeMs = position;
-        pendingResumeEpisode = episodeNumber;
+        pendingResumeEpisode = episode;
+        resolveNatively(episode, newMode, position, false, true,
+                () -> ExoPlayerPlugin.notifyModeSwitchRequested(title, episode, newMode, position));
     }
 
     private void selectSubtitle(String label) {
@@ -1388,8 +1535,11 @@ public class ExoPlayerActivity extends AppCompatActivity {
     // for it) and closes, mirroring triggerNextEpisode()'s handoff.
     private void selectEpisode(EpisodeOption option) {
         if (option.number.equals(episodeNumber)) return;
-        ExoPlayerPlugin.notifyEpisodeSelected(animeTitle, episodeNumber, option.number);
+        final String previous = episodeNumber;
+        final String title = animeTitle;
         enterLoading(option.number, null);
+        resolveNatively(option.number, currentMode, 0, false, true,
+                () -> ExoPlayerPlugin.notifyEpisodeSelected(title, previous, option.number));
     }
 
     private static final class MenuRow {
@@ -1423,6 +1573,7 @@ public class ExoPlayerActivity extends AppCompatActivity {
         prefetchedAfterEpisode = afterEpisode;
         prefetchedMode = mode;
         prefetchedNextIntent = intent;
+        prefetchedAtMs = android.os.SystemClock.elapsedRealtime();
         Log.i(TAG, "Next episode stream ready (after E" + afterEpisode + ", " + mode + ")");
     }
 
@@ -1435,6 +1586,7 @@ public class ExoPlayerActivity extends AppCompatActivity {
         // without a round trip through JavaScript (see setNextEpisode).
         Intent prefetched = prefetchedNextIntent;
         if (prefetched != null && next != null
+                && android.os.SystemClock.elapsedRealtime() - prefetchedAtMs < PREFETCH_MAX_AGE_MS
                 && episodeNumber != null && episodeNumber.equals(prefetchedAfterEpisode)
                 && currentMode != null && currentMode.equals(prefetchedMode)
                 && next.equals(prefetched.getStringExtra("episode"))) {
@@ -1451,8 +1603,14 @@ public class ExoPlayerActivity extends AppCompatActivity {
             return;
         }
 
-        ExoPlayerPlugin.notifyNextEpisodeRequested(animeTitle, episodeNumber);
+        prefetchedNextIntent = null;
+        final String previous = episodeNumber;
+        final String title = animeTitle;
         enterLoading(next, null);
+        // Resolved right here (usually warm from the prefetch); the app is
+        // only asked when that fails.
+        resolveNatively(next, currentMode, 0, false, true,
+                () -> ExoPlayerPlugin.notifyNextEpisodeRequested(title, previous));
     }
 
     // Surfaces the real cause of a playback failure - an HTTP status code
@@ -1490,12 +1648,14 @@ public class ExoPlayerActivity extends AppCompatActivity {
         handler.removeCallbacksAndMessages(null);
         textErrorMessage.setText(message);
         btnRetry.setText("Retry");
-        btnRetry.setOnClickListener(v -> retryPlayback());
+        btnRetry.setOnClickListener(v -> retryFresh(this::retryPlayback));
         errorOverlay.setVisibility(View.VISIBLE);
         setControlsVisible(true);
     }
 
     private void retryPlayback() {
+        awaitingStream = false;
+        handler.removeCallbacks(loadingWatchdog);
         handler.removeCallbacks(autoRetryRunnable);
         errorOverlay.setVisibility(View.GONE);
         long resumeAt = lastKnownPositionMs;
@@ -1715,17 +1875,29 @@ public class ExoPlayerActivity extends AppCompatActivity {
                 // lookup of the episode (that's why closing and reopening it
                 // works) - do that once automatically, resuming here.
                 String key = episodeNumber + "|" + currentMode;
-                if (failedUri != null && !key.equals(reloadAttemptedKey)
-                        && ExoPlayerPlugin.notifyReloadRequested(animeTitle, episodeNumber, currentMode, lastKnownPositionMs)) {
-                    reloadAttemptedKey = key;
+                if (failedUri != null && !key.equals(reloadAttemptedKey)) {
                     Log.w(TAG, "HTTP error, re-resolving episode " + key + " once: " + failedUri);
-                    long resumeAt = lastKnownPositionMs;
+                    final long resumeAt = lastKnownPositionMs;
+                    final String number = episodeNumber;
+                    final String mode = currentMode;
+                    final String title = animeTitle;
                     releasePlayer();
                     errorOverlay.setVisibility(View.GONE);
                     showLoadingState();
                     lastKnownPositionMs = resumeAt;
                     pendingResumeMs = resumeAt;
-                    pendingResumeEpisode = episodeNumber;
+                    pendingResumeEpisode = number;
+                    NativeStreamResolver.forget(episodeIdFor(number) != null ? episodeIdFor(number) : "", mode);
+                    resolveNatively(number, mode, resumeAt, true, false, () -> {
+                        // Native lookup failed: ask the app once; if it is not
+                        // there either, show the error.
+                        if (ExoPlayerPlugin.notifyReloadRequested(title, number, mode, resumeAt)) {
+                            reloadAttemptedKey = number + "|" + mode;
+                        } else {
+                            showPlaybackError(describePlaybackError(error));
+                        }
+                    });
+                    reloadAttemptedKey = key;
                     return;
                 }
                 showPlaybackError(describePlaybackError(error));
@@ -1905,6 +2077,7 @@ public class ExoPlayerActivity extends AppCompatActivity {
         // Report before updatePostPlay(): it may switch to the next episode,
         // after which this position would be reported under the new one.
         maybeReportProgress(position, duration);
+        maybePrefetchNextNatively(duration, position);
         updatePostPlay(duration, position, shouldShowOutro);
     }
 
@@ -2147,6 +2320,11 @@ public class ExoPlayerActivity extends AppCompatActivity {
         if (isFinishing()) ExoPlayerPlugin.notifyPlayerClosed();
         if (currentActivity != null && currentActivity.get() == this) currentActivity = null;
         handler.removeCallbacksAndMessages(null);
+        resolveToken++;
+        if (sprites != null) {
+            sprites.release();
+            sprites = null;
+        }
         if (player != null) {
             player.release();
             player = null;

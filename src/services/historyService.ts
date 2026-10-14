@@ -19,6 +19,8 @@ export interface UserPreferences {
   defaultMode: 'sub' | 'dub';
   autoSkipIntro: boolean;
   autoPlayNext: boolean;
+  // Bumped when a default changes, so old saved copies of it are reset once.
+  prefsVersion?: number;
 }
 
 const HISTORY_KEY = 'anistream_watch_history';
@@ -35,11 +37,16 @@ export interface EpisodeProgress {
   duration: number;
 }
 
+const PREFS_VERSION = 2;
+
+// Auto-Skip Intro is off by default: jumping past the opening without being
+// asked surprised people. (v1 saved copies had it on - see getUserPreferences.)
 export const DEFAULT_PREFERENCES: UserPreferences = {
   defaultQuality: '1080p',
   defaultMode: 'sub',
-  autoSkipIntro: true,
-  autoPlayNext: true
+  autoSkipIntro: false,
+  autoPlayNext: true,
+  prefsVersion: PREFS_VERSION
 };
 
 // Read-modify-write updates of the same storage key must not interleave, or
@@ -158,7 +165,20 @@ async function readEpisodeLog(): Promise<WatchHistoryItem[]> {
 
 const logKey = (h: Pick<WatchHistoryItem, 'animeId' | 'episodeId'>) => `${h.animeId}|${h.episodeId}`;
 
+// Progress arrives every few seconds; the (larger) episode log is only
+// rewritten every LOG_WRITE_INTERVAL_MS or when the episode changes. The
+// latest-per-title list above is written every time, so the log can lag by
+// at most that interval and getEpisodeLog() reconciles the two.
+const LOG_WRITE_INTERVAL_MS = 20_000;
+let lastLogWrite = 0;
+let lastLogKey = '';
+
 async function recordEpisode(item: WatchHistoryItem): Promise<void> {
+  const key = logKey(item);
+  const now = Date.now();
+  if (key === lastLogKey && now - lastLogWrite < LOG_WRITE_INTERVAL_MS) return;
+  lastLogKey = key;
+  lastLogWrite = now;
   const log = (await readEpisodeLog()).filter(h => logKey(h) !== logKey(item));
   log.unshift(item);
   await Preferences.set({ key: EPISODE_LOG_KEY, value: JSON.stringify(log.slice(0, EPISODE_LOG_MAX)) });
@@ -168,9 +188,14 @@ async function recordEpisode(item: WatchHistoryItem): Promise<void> {
 // (latest episode per title) are included so nothing disappears on update.
 export async function getEpisodeLog(): Promise<WatchHistoryItem[]> {
   const [log, latest] = await Promise.all([readEpisodeLog(), getWatchHistory()]);
-  const seen = new Set(log.map(logKey));
-  const merged = [...log, ...latest.filter(h => !seen.has(logKey(h)))];
-  return merged.sort((a, b) => b.updatedAt - a.updatedAt);
+  // Per title + episode the newest record wins (the log is written less
+  // often than the "latest" list, so it can be a little behind).
+  const newest = new Map<string, WatchHistoryItem>();
+  for (const h of [...log, ...latest]) {
+    const known = newest.get(logKey(h));
+    if (!known || h.updatedAt > known.updatedAt) newest.set(logKey(h), h);
+  }
+  return Array.from(newest.values()).sort((a, b) => b.updatedAt - a.updatedAt);
 }
 
 // Per-episode progress for one title, keyed by episode id.
@@ -268,7 +293,15 @@ export async function getBookmarks(): Promise<AnimeItem[]> {
 export async function getUserPreferences(): Promise<UserPreferences> {
   try {
     const { value } = await Preferences.get({ key: PREFERENCES_KEY });
-    return value ? { ...DEFAULT_PREFERENCES, ...JSON.parse(value) } : DEFAULT_PREFERENCES;
+    if (!value) return DEFAULT_PREFERENCES;
+    const stored = { ...DEFAULT_PREFERENCES, ...JSON.parse(value) } as UserPreferences;
+    // Copies saved before v2 carry the old "on" default for Auto-Skip Intro
+    // (it was persisted by any unrelated settings change): reset it once.
+    if ((stored.prefsVersion ?? 1) < PREFS_VERSION) {
+      stored.autoSkipIntro = false;
+      stored.prefsVersion = PREFS_VERSION;
+    }
+    return stored;
   } catch {
     return DEFAULT_PREFERENCES;
   }

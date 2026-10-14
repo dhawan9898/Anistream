@@ -73,6 +73,8 @@ export interface ExoPlayerPluginInterface {
     outro?: { start: number; end: number };
     // Where to start playing (resume), in ms.
     startPositionMs?: number;
+    // Thumbnail sprite VTT for the seek bar preview, when the stream has one.
+    spriteVtt?: string;
     // Playback settings, applied by the player itself.
     autoSkipIntro?: boolean;
     autoPlayNext?: boolean;

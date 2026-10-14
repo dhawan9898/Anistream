@@ -315,6 +315,21 @@
         android:orientation="vertical"
         android:visibility="gone">
 
+        <FrameLayout
+            android:id="@+id/seek_preview_card"
+            android:layout_width="168dp"
+            android:layout_height="95dp"
+            android:layout_marginBottom="6dp"
+            android:background="#000000"
+            android:visibility="gone">
+
+            <ImageView
+                android:id="@+id/seek_preview_image"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:scaleType="centerCrop" />
+        </FrameLayout>
+
         <TextView
             android:id="@+id/seek_preview_time"
             android:layout_width="wrap_content"
