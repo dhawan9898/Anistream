@@ -24,6 +24,7 @@ import {
   saveWatchProgress,
   getUserPreferences,
   setPlaybackActive,
+  isEpisodeFinished,
   DEFAULT_PREFERENCES,
   type UserPreferences,
   type WatchHistoryItem
@@ -390,7 +391,8 @@ export const App: React.FC = () => {
     outro: source.outro,
     startPositionMs: Math.max(0, Math.round(startTime * 1000)),
     autoSkipIntro: prefs.autoSkipIntro,
-    autoPlayNext: prefs.autoPlayNext
+    autoPlayNext: prefs.autoPlayNext,
+    hasDub: anime.dubCount === undefined ? true : anime.dubCount > 0
   });
 
   // The next episode's stream, resolved ahead of time and handed to the
@@ -534,6 +536,16 @@ export const App: React.FC = () => {
       type: 'TV'
     };
     pushAnime(anime);
+  };
+
+  // Library: play that very episode, continuing where it was left.
+  const handlePlayFromHistory = (item: WatchHistoryItem) => {
+    handlePlayEpisode(
+      { id: item.animeId, title: item.animeTitle, poster: item.poster, type: 'TV' },
+      { id: item.episodeId, number: item.episodeNumber, title: `Episode ${item.episodeNumber}` },
+      item.mode,
+      isEpisodeFinished(item) ? 0 : item.currentTime
+    );
   };
 
   // Progress handler bound to one committed session: the player captures it
@@ -715,7 +727,7 @@ export const App: React.FC = () => {
         {tabPane('library', (
           <HistoryScreen
             active={currentTab === 'library' && !covered}
-            onResumeEpisode={handleOpenFromHistory}
+            onPlayHistoryItem={handlePlayFromHistory}
             onSelectAnime={pushAnime}
           />
         ))}

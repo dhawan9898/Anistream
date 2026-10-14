@@ -302,12 +302,12 @@
         </LinearLayout>
     </FrameLayout>
 
-    <!-- Scrub preview: a frame from a low-resolution second decoder plus the
-         time being seeked to, floating above the seek bar thumb while the
-         viewer drags it. Positioned from code (ExoPlayerActivity). -->
+    <!-- Scrub bubble: the time being seeked to, floating above the seek bar
+         thumb while it is dragged (the video itself scrubs live behind it).
+         Positioned from code (ExoPlayerActivity). -->
     <LinearLayout
         android:id="@+id/seek_preview_container"
-        android:layout_width="168dp"
+        android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:layout_gravity="bottom|start"
         android:layout_marginBottom="104dp"
@@ -315,41 +315,16 @@
         android:orientation="vertical"
         android:visibility="gone">
 
-        <FrameLayout
-            android:id="@+id/seek_preview_card"
-            android:layout_width="168dp"
-            android:layout_height="95dp"
-            android:background="#000000">
-
-            <androidx.media3.ui.PlayerView
-                android:id="@+id/preview_view"
-                android:layout_width="match_parent"
-                android:layout_height="match_parent"
-                app:use_controller="false"
-                app:surface_type="texture_view"
-                app:resize_mode="zoom"
-                app:shutter_background_color="#000000" />
-
-            <ProgressBar
-                android:id="@+id/preview_spinner"
-                style="?android:attr/progressBarStyleSmall"
-                android:layout_width="24dp"
-                android:layout_height="24dp"
-                android:layout_gravity="center"
-                android:indeterminateTint="#E50914" />
-        </FrameLayout>
-
         <TextView
             android:id="@+id/seek_preview_time"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:layout_marginTop="6dp"
-            android:paddingStart="8dp"
-            android:paddingEnd="8dp"
-            android:paddingTop="2dp"
-            android:paddingBottom="2dp"
+            android:paddingStart="14dp"
+            android:paddingEnd="14dp"
+            android:paddingTop="6dp"
+            android:paddingBottom="6dp"
             android:textColor="#ffffff"
-            android:textSize="14sp"
+            android:textSize="16sp"
             android:textStyle="bold" />
     </LinearLayout>
 

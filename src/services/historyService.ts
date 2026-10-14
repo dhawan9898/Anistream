@@ -24,9 +24,8 @@ export interface UserPreferences {
 const HISTORY_KEY = 'anistream_watch_history';
 const BOOKMARKS_KEY = 'anistream_bookmarks';
 const PREFERENCES_KEY = 'anistream_preferences';
-const EPISODE_PROGRESS_KEY = 'anistream_episode_progress';
-// Titles whose per-episode progress is remembered (least recently watched go first).
-const EPISODE_PROGRESS_MAX_TITLES = 60;
+const EPISODE_LOG_KEY = 'anistream_episode_log';
+const EPISODE_LOG_MAX = 300;
 
 // How far into one episode the viewer got. Kept for every episode watched
 // (not just the latest per title) so the episode list can show what has been
@@ -35,7 +34,6 @@ export interface EpisodeProgress {
   currentTime: number;
   duration: number;
 }
-type EpisodeProgressMap = Record<string, Record<string, [number, number]>>;
 
 export const DEFAULT_PREFERENCES: UserPreferences = {
   defaultQuality: '1080p',
@@ -139,7 +137,7 @@ export function saveWatchProgress(item: WatchHistoryItem): Promise<void> {
         key: HISTORY_KEY,
         value: JSON.stringify(trimmed)
       });
-      await recordEpisodeProgress(latest);
+      await recordEpisode(latest);
       notifyLibraryChanged(false);
     } catch (err) {
       console.error("Failed to save watch history:", err);
@@ -147,37 +145,40 @@ export function saveWatchProgress(item: WatchHistoryItem): Promise<void> {
   });
 }
 
-async function readEpisodeProgress(): Promise<EpisodeProgressMap> {
+// Every episode ever watched, one entry per title + episode, newest first.
+// (HISTORY_KEY keeps only the latest episode per title for Continue Watching.)
+async function readEpisodeLog(): Promise<WatchHistoryItem[]> {
   try {
-    const { value } = await Preferences.get({ key: EPISODE_PROGRESS_KEY });
-    const parsed = value ? JSON.parse(value) : {};
-    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+    const { value } = await Preferences.get({ key: EPISODE_LOG_KEY });
+    return parseList<WatchHistoryItem>(value, isHistoryItem);
   } catch {
-    return {};
+    return [];
   }
 }
 
-async function recordEpisodeProgress(item: WatchHistoryItem): Promise<void> {
-  const map = await readEpisodeProgress();
-  const episodes = map[item.animeId] || {};
-  // Keys are re-inserted so insertion order doubles as recency.
-  delete map[item.animeId];
-  episodes[item.episodeId] = [Math.round(item.currentTime), Math.round(item.duration)];
-  map[item.animeId] = episodes;
-  const titles = Object.keys(map);
-  for (const stale of titles.slice(0, Math.max(0, titles.length - EPISODE_PROGRESS_MAX_TITLES))) {
-    delete map[stale];
-  }
-  await Preferences.set({ key: EPISODE_PROGRESS_KEY, value: JSON.stringify(map) });
+const logKey = (h: Pick<WatchHistoryItem, 'animeId' | 'episodeId'>) => `${h.animeId}|${h.episodeId}`;
+
+async function recordEpisode(item: WatchHistoryItem): Promise<void> {
+  const log = (await readEpisodeLog()).filter(h => logKey(h) !== logKey(item));
+  log.unshift(item);
+  await Preferences.set({ key: EPISODE_LOG_KEY, value: JSON.stringify(log.slice(0, EPISODE_LOG_MAX)) });
+}
+
+// All watched episodes for the Library. Entries from before the log existed
+// (latest episode per title) are included so nothing disappears on update.
+export async function getEpisodeLog(): Promise<WatchHistoryItem[]> {
+  const [log, latest] = await Promise.all([readEpisodeLog(), getWatchHistory()]);
+  const seen = new Set(log.map(logKey));
+  const merged = [...log, ...latest.filter(h => !seen.has(logKey(h)))];
+  return merged.sort((a, b) => b.updatedAt - a.updatedAt);
 }
 
 // Per-episode progress for one title, keyed by episode id.
 export async function getEpisodeProgress(animeId: string): Promise<Record<string, EpisodeProgress>> {
-  const episodes = (await readEpisodeProgress())[animeId] || {};
   const result: Record<string, EpisodeProgress> = {};
-  for (const [episodeId, entry] of Object.entries(episodes)) {
-    if (Array.isArray(entry) && isFinite(entry[0]) && isFinite(entry[1])) {
-      result[episodeId] = { currentTime: entry[0], duration: entry[1] };
+  for (const h of await getEpisodeLog()) {
+    if (h.animeId === animeId && h.duration > 0) {
+      result[h.episodeId] = { currentTime: h.currentTime, duration: h.duration };
     }
   }
   return result;
@@ -197,7 +198,8 @@ export function clearWatchHistory(): Promise<void> {
   pendingProgress = null;
   return serialized(async () => {
     await Preferences.remove({ key: HISTORY_KEY });
-    await Preferences.remove({ key: EPISODE_PROGRESS_KEY });
+    await Preferences.remove({ key: EPISODE_LOG_KEY });
+    await Preferences.remove({ key: 'anistream_episode_progress' });
     notifyLibraryChanged();
   });
 }
@@ -212,13 +214,28 @@ export function removeWatchHistoryItem(animeId: string): Promise<WatchHistoryIte
       key: HISTORY_KEY,
       value: JSON.stringify(filtered)
     });
-    const progress = await readEpisodeProgress();
-    if (progress[animeId]) {
-      delete progress[animeId];
-      await Preferences.set({ key: EPISODE_PROGRESS_KEY, value: JSON.stringify(progress) });
-    }
+    const log = (await readEpisodeLog()).filter(h => h.animeId !== animeId);
+    await Preferences.set({ key: EPISODE_LOG_KEY, value: JSON.stringify(log) });
     notifyLibraryChanged();
     return filtered;
+  });
+}
+
+// Removes one watched episode from the Library list. If it was the title's
+// "latest" (Continue Watching) entry, the next most recent episode of that
+// title takes its place, or the title leaves Continue Watching.
+export function removeEpisodeFromLibrary(animeId: string, episodeId: string): Promise<WatchHistoryItem[]> {
+  return serialized(async () => {
+    const all = await getEpisodeLog();
+    const remaining = all.filter(h => !(h.animeId === animeId && h.episodeId === episodeId));
+    await Preferences.set({ key: EPISODE_LOG_KEY, value: JSON.stringify(remaining.slice(0, EPISODE_LOG_MAX)) });
+    const latest = (await getWatchHistory()).filter(h => h.animeId !== animeId);
+    const replacement = remaining.find(h => h.animeId === animeId);
+    const history = replacement ? [replacement, ...latest] : latest;
+    history.sort((a, b) => b.updatedAt - a.updatedAt);
+    await Preferences.set({ key: HISTORY_KEY, value: JSON.stringify(history) });
+    notifyLibraryChanged();
+    return remaining;
   });
 }
 

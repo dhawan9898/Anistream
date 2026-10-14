@@ -17,7 +17,7 @@ import {
   subscribeLibraryChanges,
   type WatchHistoryItem
 } from '../services/historyService';
-import { getAnimeDetails, resolveAnime, type AnimeDetails } from '../services/catalogService';
+import { getAnimeDetails, hasDub, resolveAnime, type AnimeDetails } from '../services/catalogService';
 import { PosterCard } from '../components/PosterCard';
 
 interface AnimeDetailScreenProps {
@@ -53,6 +53,11 @@ export const AnimeDetailScreen: React.FC<AnimeDetailScreenProps> = ({
   const [tab, setTab] = useState<DetailTab>('episodes');
   const [history, setHistory] = useState<WatchHistoryItem | null>(null);
   const [expanded, setExpanded] = useState<boolean>(false);
+  // Whether an English dub exists: undefined until known (the option stays
+  // visible meanwhile), false hides it everywhere.
+  const [dubAvailable, setDubAvailable] = useState<boolean | undefined>(
+    anime.dubCount !== undefined ? anime.dubCount > 0 : undefined
+  );
   const [progress, setProgress] = useState<Record<string, EpisodeProgress>>({});
   // The page slides in over the previous one; the heavy lower half (episode
   // grid, posters) is built only once that slide has finished, so the
@@ -117,6 +122,13 @@ export const AnimeDetailScreen: React.FC<AnimeDetailScreenProps> = ({
     };
   }, [resolved]);
 
+  useEffect(() => {
+    if (!resolved) return;
+    let cancelled = false;
+    hasDub(resolved).then(known => { if (!cancelled && known !== undefined) setDubAvailable(known); });
+    return () => { cancelled = true; };
+  }, [resolved]);
+
   // Episodes load on their own so a failure can be retried by itself.
   useEffect(() => {
     if (!resolved) return;
@@ -146,6 +158,12 @@ export const AnimeDetailScreen: React.FC<AnimeDetailScreenProps> = ({
   };
 
   const shown = resolved || anime;
+  // No dub for this title: everything plays subbed, and the option is hidden.
+  const playMode: 'sub' | 'dub' = dubAvailable === false ? 'sub' : mode;
+  // What the player is told about the title (it hides its own dub option too).
+  const playAnime = resolved
+    ? { ...resolved, dubCount: dubAvailable === undefined ? resolved.dubCount : dubAvailable ? (resolved.dubCount || 1) : 0 }
+    : null;
 
   const handleBookmarkToggle = async () => {
     if (!resolved) return;
@@ -161,12 +179,15 @@ export const AnimeDetailScreen: React.FC<AnimeDetailScreenProps> = ({
 
   const handlePlay = () => {
     if (!resolved) return;
+    if (!playAnime) return;
+    const historyMode = dubAvailable === false ? 'sub' : history?.mode;
     if (upNext) {
-      onPlayEpisode(resolved, upNext, history?.mode || mode);
+      onPlayEpisode(playAnime, upNext, historyMode || playMode);
     } else if (history) {
-      onResume(resolved, isEpisodeFinished(history) ? { ...history, currentTime: 0 } : history);
+      const item = { ...history, mode: historyMode || history.mode };
+      onResume(playAnime, isEpisodeFinished(item) ? { ...item, currentTime: 0 } : item);
     } else if (episodes.length > 0) {
-      onPlayEpisode(resolved, episodes[0], mode);
+      onPlayEpisode(playAnime, episodes[0], playMode);
     }
   };
 
@@ -201,7 +222,7 @@ export const AnimeDetailScreen: React.FC<AnimeDetailScreenProps> = ({
   const metaParts = [
     shown.type || 'TV',
     episodes.length > 0 ? `${episodes.length} Episode${episodes.length === 1 ? '' : 's'}` : null,
-    shown.dubCount ? 'Sub | Dub' : 'Sub'
+    dubAvailable === false ? 'Sub' : shown.dubCount || dubAvailable ? 'Sub | Dub' : 'Sub'
   ].filter(Boolean);
 
   return (
@@ -317,15 +338,17 @@ export const AnimeDetailScreen: React.FC<AnimeDetailScreenProps> = ({
               </div>
             )}
 
-            {/* Sub / Dub */}
-            <div className="seg-track" style={{ marginBottom: '14px' }}>
-              <button onClick={() => setMode('sub')} className={`interactive seg-pill ${mode === 'sub' ? 'active' : ''}`}>
-                Subtitled (SUB)
-              </button>
-              <button onClick={() => setMode('dub')} className={`interactive seg-pill ${mode === 'dub' ? 'active' : ''}`}>
-                Dubbed (DUB)
-              </button>
-            </div>
+            {/* Sub / Dub - only when the title actually has a dub */}
+            {dubAvailable !== false && (
+              <div className="seg-track" style={{ marginBottom: '14px' }}>
+                <button onClick={() => setMode('sub')} className={`interactive seg-pill ${playMode === 'sub' ? 'active' : ''}`}>
+                  Subtitled (SUB)
+                </button>
+                <button onClick={() => setMode('dub')} className={`interactive seg-pill ${playMode === 'dub' ? 'active' : ''}`}>
+                  Dubbed (DUB)
+                </button>
+              </div>
+            )}
           </>
         )}
 
@@ -462,7 +485,25 @@ export const AnimeDetailScreen: React.FC<AnimeDetailScreenProps> = ({
                   return (
                     <button
                       key={ep.id}
-                      onClick={() => resolved && onPlayEpisode(resolved, ep, mode)}
+                      onClick={() => {
+                        if (!playAnime) return;
+                        // Half-watched: continue where it was left.
+                        if (entry && watchState === 'partial') {
+                          onResume(playAnime, {
+                            animeId: playAnime.id,
+                            animeTitle: playAnime.title,
+                            poster: playAnime.poster,
+                            episodeId: ep.id,
+                            episodeNumber: ep.number,
+                            currentTime: entry.currentTime,
+                            duration: entry.duration,
+                            updatedAt: Date.now(),
+                            mode: playMode
+                          });
+                        } else {
+                          onPlayEpisode(playAnime, ep, playMode);
+                        }
+                      }}
                       className="interactive glass-panel"
                       style={{
                         padding: '14px 8px',

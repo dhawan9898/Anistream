@@ -76,6 +76,8 @@ export interface ExoPlayerPluginInterface {
     // Playback settings, applied by the player itself.
     autoSkipIntro?: boolean;
     autoPlayNext?: boolean;
+    // False when the title has no English dub (the audio panel then hides it).
+    hasDub?: boolean;
   }): Promise<{ success: boolean }>;
 
   // Same options as play(), for the episode after `afterEpisode`: the

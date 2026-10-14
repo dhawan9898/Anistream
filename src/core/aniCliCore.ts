@@ -269,7 +269,8 @@ export function parseSearchResults(html: string): AnimeItem[] {
       path,
       type: parseTypeBadge(el),
       subCount: subBadge ? parseInt(subBadge, 10) : (epBadge ? parseInt(epBadge, 10) : undefined),
-      dubCount: dubBadge ? parseInt(dubBadge, 10) : undefined
+      // 0 = the site lists no dub for this title; undefined (other sources) = unknown.
+      dubCount: dubBadge ? parseInt(dubBadge, 10) : 0
     });
   });
 
@@ -545,7 +546,9 @@ function pickServerHashes(serversHtml: string, mode: 'sub' | 'dub'): string[] {
     .map(el => el.getAttribute("data-hash") || "")
     .filter(Boolean);
   const preferred = hashesOf(`[data-type="${mode}"][data-hash]`);
-  const list = preferred.length > 0 ? preferred : hashesOf("[data-hash]");
+  // A missing dub must not silently turn into the subbed stream labelled as
+  // dub. Only a sub request may fall back to whatever the episode has.
+  const list = preferred.length > 0 || mode === 'dub' ? preferred : hashesOf("[data-hash]");
   return Array.from(new Set(list)).slice(0, 4);
 }
 

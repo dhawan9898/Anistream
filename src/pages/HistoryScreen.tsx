@@ -2,8 +2,8 @@
 import React, { useState, useEffect } from 'react';
 import { Clock, Bookmark, Trash2, Play, Loader2, X } from 'lucide-react';
 import {
-  getWatchHistory, clearWatchHistory, removeWatchHistoryItem, getBookmarks,
-  subscribeLibraryChanges, type WatchHistoryItem
+  getEpisodeLog, clearWatchHistory, removeEpisodeFromLibrary, getBookmarks,
+  isEpisodeFinished, subscribeLibraryChanges, type WatchHistoryItem
 } from '../services/historyService';
 import type { AnimeItem } from '../core/aniCliCore';
 import { ConfirmModal } from '../components/ConfirmModal';
@@ -12,13 +12,14 @@ import { FadeImage } from '../components/FadeImage';
 interface HistoryScreenProps {
   // True while this tab is the visible one (tabs stay mounted when hidden).
   active: boolean;
-  onResumeEpisode: (history: WatchHistoryItem) => void;
+  // Plays that episode, continuing from where it was left.
+  onPlayHistoryItem: (history: WatchHistoryItem) => void;
   onSelectAnime: (anime: AnimeItem) => void;
 }
 
 export const HistoryScreen: React.FC<HistoryScreenProps> = ({
   active,
-  onResumeEpisode,
+  onPlayHistoryItem,
   onSelectAnime
 }) => {
   const [activeTab, setActiveTab] = useState<'history' | 'bookmarks'>('history');
@@ -33,7 +34,7 @@ export const HistoryScreen: React.FC<HistoryScreenProps> = ({
     if (!active) return;
     let cancelled = false;
     const loadData = async () => {
-      const [history, bookmarks] = await Promise.all([getWatchHistory(), getBookmarks()]);
+      const [history, bookmarks] = await Promise.all([getEpisodeLog(), getBookmarks()]);
       if (cancelled) return;
       setHistoryList(history);
       setBookmarkedAnime(bookmarks);
@@ -53,9 +54,9 @@ export const HistoryScreen: React.FC<HistoryScreenProps> = ({
     setConfirmingClear(false);
   };
 
-  const handleRemoveItem = async (e: React.MouseEvent, animeId: string) => {
-    e.stopPropagation(); // don't trigger onResumeEpisode on the card underneath
-    const updated = await removeWatchHistoryItem(animeId);
+  const handleRemoveItem = async (e: React.MouseEvent, item: WatchHistoryItem) => {
+    e.stopPropagation(); // don't start playback via the card underneath
+    const updated = await removeEpisodeFromLibrary(item.animeId, item.episodeId);
     setHistoryList(updated);
   };
 
@@ -144,10 +145,11 @@ export const HistoryScreen: React.FC<HistoryScreenProps> = ({
             <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
               {historyList.map((item) => {
                 const progressPct = Math.min(100, Math.round((item.currentTime / (item.duration || 1)) * 100));
+                const finished = isEpisodeFinished(item);
                 return (
                   <div
                     key={`${item.animeId}-${item.episodeId}`}
-                    onClick={() => onResumeEpisode(item)}
+                    onClick={() => onPlayHistoryItem(item)}
                     className="interactive glass-panel"
                     style={{
                       borderRadius: 'var(--radius-md)',
@@ -180,12 +182,12 @@ export const HistoryScreen: React.FC<HistoryScreenProps> = ({
                         {item.animeTitle}
                       </h3>
                       <p style={{ fontSize: '12px', color: 'var(--text-secondary)', marginTop: '2px' }}>
-                        Episode {item.episodeNumber} • {progressPct}% watched
+                        Episode {item.episodeNumber} • {finished ? 'Watched' : `${progressPct}% watched`}
                       </p>
                     </div>
 
                     <button
-                      onClick={(e) => handleRemoveItem(e, item.animeId)}
+                      onClick={(e) => handleRemoveItem(e, item)}
                       className="interactive"
                       style={{
                         width: '32px',
@@ -199,7 +201,7 @@ export const HistoryScreen: React.FC<HistoryScreenProps> = ({
                         color: 'var(--text-muted)',
                         flexShrink: 0
                       }}
-                      aria-label={`Remove ${item.animeTitle} from history`}
+                      aria-label={`Remove ${item.animeTitle} episode ${item.episodeNumber} from history`}
                     >
                       <X size={18} />
                     </button>

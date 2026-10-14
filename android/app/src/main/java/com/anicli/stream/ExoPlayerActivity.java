@@ -114,17 +114,25 @@ public class ExoPlayerActivity extends AppCompatActivity {
     private View bufferingSpinner;
     private SeekBar seekBar;
 
-    // Scrub preview (see the SeekBar listener): a second, muted, lowest-
-    // quality decoder that only ever shows the frame at the seek position.
+    // Scrubbing: the video itself seeks live (throttled) while the seek bar
+    // is dragged, with a time bubble over the thumb.
     private View seekPreviewContainer;
-    private View seekPreviewCard;
-    private PlayerView previewView;
-    private View previewSpinner;
     private TextView seekPreviewTime;
-    private ExoPlayer previewPlayer;
-    private long previewTargetMs = -1;
-    private boolean previewSeekQueued = false;
-    private static final long PREVIEW_SEEK_INTERVAL_MS = 90;
+    private long scrubTargetMs = -1;
+    private boolean scrubSeekQueued = false;
+    private boolean scrubWasPlaying = false;
+    private static final long SCRUB_SEEK_INTERVAL_MS = 80;
+
+    // True from the moment a new stream is asked for until it arrives; the
+    // old player (if any) stays on screen, paused, meanwhile.
+    private boolean awaitingStream = false;
+
+    // Whether this title has an English dub (the audio panel offers it only then).
+    private boolean hasDub = true;
+
+    // Text tracks the player actually reports (side-loaded or embedded), by
+    // the label shown in the Subtitles column.
+    private final java.util.List<TextTrackOption> textTracks = new java.util.ArrayList<>();
 
     // Settings (Playback) handed over with each stream.
     private boolean autoSkipIntro = false;
@@ -214,6 +222,18 @@ public class ExoPlayerActivity extends AppCompatActivity {
         QualityOption(String label, String url) {
             this.label = label;
             this.url = url;
+        }
+    }
+
+    private static final class TextTrackOption {
+        final String label;
+        final androidx.media3.common.TrackGroup group;
+        final int index;
+
+        TextTrackOption(String label, androidx.media3.common.TrackGroup group, int index) {
+            this.label = label;
+            this.group = group;
+            this.index = index;
         }
     }
 
@@ -354,6 +374,7 @@ public class ExoPlayerActivity extends AppCompatActivity {
         String qualitiesJson = intent.getStringExtra("qualities");
         String episodesJson = intent.getStringExtra("episodes");
         boolean isFallback = intent.getBooleanExtra("isFallback", false);
+        if (intent.hasExtra("hasDub")) hasDub = intent.getBooleanExtra("hasDub", true);
         if (intent.hasExtra("autoSkipIntro")) autoSkipIntro = intent.getBooleanExtra("autoSkipIntro", false);
         if (intent.hasExtra("autoPlayNext")) autoPlayNext = intent.getBooleanExtra("autoPlayNext", true);
         String title = intent.getStringExtra("title");
@@ -385,6 +406,7 @@ public class ExoPlayerActivity extends AppCompatActivity {
             return;
         }
         handler.removeCallbacks(loadingWatchdog);
+        awaitingStream = false;
 
         // Fresh episode: reset everything that belonged to the previous one.
         errorOverlay.setVisibility(View.GONE);
@@ -443,7 +465,6 @@ public class ExoPlayerActivity extends AppCompatActivity {
     private void releasePlayer() {
         handler.removeCallbacks(progressTicker);
         handler.removeCallbacks(autoRetryRunnable);
-        releasePreviewPlayer();
         if (player != null) {
             player.release();
             player = null;
@@ -454,16 +475,22 @@ public class ExoPlayerActivity extends AppCompatActivity {
     // Black screen + spinner + title while JS resolves a stream - replaces
     // the old full-screen "Resolving..." overlay in the app.
     private void showLoadingState() {
-        releasePlayer();
-        playerView.setPlayer(null);
+        awaitingStream = true;
+        // The old stream (if any) stays on screen, paused, until the new one
+        // replaces it - a switch of audio or episode must not tear the whole
+        // player down to black and back.
+        if (player != null) {
+            player.pause();
+        } else {
+            seekBar.setProgress(0);
+            seekBar.setSecondaryProgress(0);
+            textRemainingTime.setText("");
+            btnPlayPause.setImageResource(R.drawable.ic_play);
+        }
         errorOverlay.setVisibility(View.GONE);
         hidePostPlay();
         btnSkipIntro.setVisibility(View.GONE);
         btnSkipOutro.setVisibility(View.GONE);
-        seekBar.setProgress(0);
-        seekBar.setSecondaryProgress(0);
-        textRemainingTime.setText("");
-        btnPlayPause.setImageResource(R.drawable.ic_play);
         bufferingSpinner.setVisibility(View.VISIBLE);
         setControlsVisible(true);
         handler.removeCallbacks(hideControlsRunnable);
@@ -474,7 +501,7 @@ public class ExoPlayerActivity extends AppCompatActivity {
     // The app never answered the loading state with a stream. Retry asks it
     // for this same episode again (as if it had been picked from the list).
     private void showLoadingStalled() {
-        if (player != null) return; // a stream did arrive
+        if (!awaitingStream) return; // a stream did arrive
         final String episode = episodeNumber;
         bufferingSpinner.setVisibility(View.GONE);
         textErrorMessage.setText("This episode is taking too long to load.");
@@ -506,7 +533,9 @@ public class ExoPlayerActivity extends AppCompatActivity {
     // JS couldn't resolve a stream for the requested episode.
     void showLoadFailure(String message) {
         handler.removeCallbacks(loadingWatchdog);
+        awaitingStream = false;
         releasePlayer();
+        playerView.setPlayer(null);
         bufferingSpinner.setVisibility(View.GONE);
         textErrorMessage.setText(message);
         btnRetry.setText("Go Back");
@@ -548,9 +577,6 @@ public class ExoPlayerActivity extends AppCompatActivity {
         textErrorMessage = findViewById(R.id.text_error_message);
         btnRetry = findViewById(R.id.btn_retry);
         seekPreviewContainer = findViewById(R.id.seek_preview_container);
-        seekPreviewCard = findViewById(R.id.seek_preview_card);
-        previewView = findViewById(R.id.preview_view);
-        previewSpinner = findViewById(R.id.preview_spinner);
         seekPreviewTime = findViewById(R.id.seek_preview_time);
     }
 
@@ -604,15 +630,12 @@ public class ExoPlayerActivity extends AppCompatActivity {
         retryBg.setColor(Color.WHITE);
         btnRetry.setBackground(retryBg);
 
-        GradientDrawable previewBg = new GradientDrawable();
-        previewBg.setCornerRadius(8f * density);
-        previewBg.setColor(Color.BLACK);
-        previewBg.setStroke(Math.round(1.5f * density), Color.argb(200, 255, 255, 255));
-        seekPreviewCard.setBackground(previewBg);
-        seekPreviewCard.setClipToOutline(true);
-        darkPanel(seekPreviewTime, 12f, 0.75f);
+        darkPanel(seekPreviewTime, 18f, 0.8f);
 
         // Captions: white with a black outline reads on any scene.
+        // Keep the last frame on screen while a new stream replaces the player
+        // (audio switch, next episode) instead of flashing black.
+        playerView.setKeepContentOnPlayerReset(true);
         SubtitleView subtitleView = playerView.getSubtitleView();
         if (subtitleView != null) {
             subtitleView.setStyle(new CaptionStyleCompat(Color.WHITE, Color.TRANSPARENT, Color.TRANSPARENT,
@@ -684,152 +707,91 @@ public class ExoPlayerActivity extends AppCompatActivity {
                 if (fromUser && player != null && player.getDuration() > 0) {
                     long target = (long) ((progress / 1000.0) * player.getDuration());
                     textRemainingTime.setText(formatTime(Math.max(player.getDuration() - target, 0)));
-                    updateSeekPreview(progress, target);
+                    updateScrub(progress, target);
                 }
             }
 
             @Override
             public void onStartTrackingTouch(SeekBar sb) {
                 userSeeking = true;
-                handler.removeCallbacks(hideControlsRunnable);
                 showControls();
                 handler.removeCallbacks(hideControlsRunnable);
-                startSeekPreview();
+                startScrub();
             }
 
             @Override
             public void onStopTrackingTouch(SeekBar sb) {
-                if (player != null && player.getDuration() > 0) {
-                    long target = (long) ((sb.getProgress() / 1000.0) * player.getDuration());
-                    player.seekTo(target);
-                    lastKnownPositionMs = target;
-                }
+                endScrub(sb.getProgress());
                 userSeeking = false;
-                endSeekPreview();
                 scheduleAutoHide();
             }
         });
     }
 
-    // ---- Scrub preview ---------------------------------------------------
+    // ---- Scrubbing ---------------------------------------------------------
     //
-    // HLS has no thumbnail sprites to show, so a second ExoPlayer decodes the
-    // frame at the scrub position: lowest rendition only, no audio/text,
-    // muted, paused, a tiny buffer. It is created on the first scrub of an
-    // episode and reused (seeking is cheap) until the episode changes.
+    // While the seek bar is dragged the video seeks along (to the nearest
+    // keyframe, throttled), so the picture behind the thumb is the frame you
+    // would land on; a bubble shows the time. Playback is paused meanwhile
+    // and resumes, exactly positioned, on release.
 
-    private void ensurePreviewPlayer() {
-        if (previewPlayer != null || pendingVideoUrl == null) return;
-        DefaultTrackSelector selector = new DefaultTrackSelector(this);
-        selector.setParameters(selector.buildUponParameters()
-                .setMaxVideoSize(480, 270)
-                .setForceLowestBitrate(true)
-                .setTrackTypeDisabled(C.TRACK_TYPE_AUDIO, true)
-                .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true));
-        DefaultLoadControl loadControl = new DefaultLoadControl.Builder()
-                .setBufferDurationsMs(1_500, 6_000, 250, 500)
-                .build();
-        try {
-            previewPlayer = new ExoPlayer.Builder(this)
-                    .setMediaSourceFactory(new DefaultMediaSourceFactory(buildDataSourceFactory(pendingReferer)))
-                    .setTrackSelector(selector)
-                    .setLoadControl(loadControl)
-                    .build();
-        } catch (Exception e) {
-            Log.w(TAG, "Scrub preview unavailable", e);
-            previewPlayer = null;
-            return;
-        }
-        previewPlayer.setVolume(0f);
-        previewPlayer.setSeekParameters(SeekParameters.CLOSEST_SYNC);
-        previewPlayer.setPlayWhenReady(false);
-        previewView.setPlayer(previewPlayer);
-        previewPlayer.addListener(new Player.Listener() {
-            @Override
-            public void onPlaybackStateChanged(int state) {
-                if (state == Player.STATE_READY) previewSpinner.setVisibility(View.GONE);
-            }
-
-            @Override
-            public void onRenderedFirstFrame() {
-                previewSpinner.setVisibility(View.GONE);
-            }
-
-            @Override
-            public void onPlayerError(androidx.media3.common.PlaybackException error) {
-                // The preview is a nicety - never let it surface as an error.
-                Log.w(TAG, "Scrub preview failed", error);
-                releasePreviewPlayer();
-                previewSpinner.setVisibility(View.GONE);
-            }
-        });
-        previewPlayer.setMediaItem(buildMediaItem(pendingVideoUrl, null));
-        previewPlayer.prepare();
-    }
-
-    private void releasePreviewPlayer() {
-        handler.removeCallbacks(previewSeekRunnable);
-        previewSeekQueued = false;
-        previewTargetMs = -1;
-        if (previewView != null) previewView.setPlayer(null);
-        if (previewPlayer != null) {
-            previewPlayer.release();
-            previewPlayer = null;
-        }
-        if (seekPreviewContainer != null) seekPreviewContainer.setVisibility(View.GONE);
-    }
-
-    private void startSeekPreview() {
+    private void startScrub() {
         if (player == null || player.getDuration() <= 0) return;
-        ensurePreviewPlayer();
-        previewSpinner.setVisibility(previewPlayer != null ? View.VISIBLE : View.GONE);
-        seekPreviewCard.setVisibility(previewPlayer != null ? View.VISIBLE : View.GONE);
-        long target = (long) ((seekBar.getProgress() / 1000.0) * player.getDuration());
+        scrubWasPlaying = player.getPlayWhenReady();
+        player.setPlayWhenReady(false);
+        player.setSeekParameters(SeekParameters.CLOSEST_SYNC);
         seekPreviewContainer.animate().cancel();
         seekPreviewContainer.setAlpha(0f);
         seekPreviewContainer.setVisibility(View.VISIBLE);
-        updateSeekPreview(seekBar.getProgress(), target);
-        seekPreviewContainer.animate().alpha(1f).setDuration(120).start();
+        long target = (long) ((seekBar.getProgress() / 1000.0) * player.getDuration());
+        updateScrub(seekBar.getProgress(), target);
+        seekPreviewContainer.animate().alpha(1f).setDuration(100).start();
     }
 
-    private void updateSeekPreview(int progress, long targetMs) {
+    private void updateScrub(int progress, long targetMs) {
         if (seekPreviewContainer.getVisibility() != View.VISIBLE) return;
         seekPreviewTime.setText(formatTime(Math.max(targetMs, 0)));
 
         // Follow the thumb, kept on screen.
         int[] seekLoc = new int[2];
         int[] rootLoc = new int[2];
+        View root = findViewById(R.id.root_container);
         seekBar.getLocationInWindow(seekLoc);
-        findViewById(R.id.root_container).getLocationInWindow(rootLoc);
+        root.getLocationInWindow(rootLoc);
         int trackWidth = seekBar.getWidth() - seekBar.getPaddingLeft() - seekBar.getPaddingRight();
         float thumbX = seekLoc[0] - rootLoc[0] + seekBar.getPaddingLeft() + trackWidth * (progress / 1000f);
-        int rootWidth = findViewById(R.id.root_container).getWidth();
-        int width = seekPreviewContainer.getWidth() > 0 ? seekPreviewContainer.getWidth() : dp(168);
-        float x = Math.max(dp(8), Math.min(rootWidth - width - dp(8), thumbX - width / 2f));
+        int width = seekPreviewContainer.getWidth() > 0 ? seekPreviewContainer.getWidth() : dp(80);
+        float x = Math.max(dp(8), Math.min(root.getWidth() - width - dp(8), thumbX - width / 2f));
         seekPreviewContainer.setTranslationX(x);
 
-        previewTargetMs = targetMs;
-        if (previewPlayer != null && !previewSeekQueued) {
-            previewSeekQueued = true;
-            handler.postDelayed(previewSeekRunnable, PREVIEW_SEEK_INTERVAL_MS);
+        scrubTargetMs = targetMs;
+        if (player != null && !scrubSeekQueued) {
+            scrubSeekQueued = true;
+            handler.postDelayed(scrubSeekRunnable, SCRUB_SEEK_INTERVAL_MS);
         }
     }
 
     // Seeks are coalesced: while the finger moves quickly only the latest
     // target is decoded, instead of queueing a seek per pixel.
-    private final Runnable previewSeekRunnable = new Runnable() {
+    private final Runnable scrubSeekRunnable = new Runnable() {
         @Override
         public void run() {
-            previewSeekQueued = false;
-            if (previewPlayer != null && previewTargetMs >= 0) {
-                previewPlayer.seekTo(previewTargetMs);
-            }
+            scrubSeekQueued = false;
+            if (player != null && scrubTargetMs >= 0) player.seekTo(scrubTargetMs);
         }
     };
 
-    private void endSeekPreview() {
-        handler.removeCallbacks(previewSeekRunnable);
-        previewSeekQueued = false;
+    private void endScrub(int progress) {
+        handler.removeCallbacks(scrubSeekRunnable);
+        scrubSeekQueued = false;
+        if (player != null && player.getDuration() > 0) {
+            long target = (long) ((progress / 1000.0) * player.getDuration());
+            player.setSeekParameters(SeekParameters.EXACT);
+            player.seekTo(target);
+            lastKnownPositionMs = target;
+            if (scrubWasPlaying) player.setPlayWhenReady(true);
+        }
+        scrubTargetMs = -1;
         seekPreviewContainer.animate().cancel();
         seekPreviewContainer.animate().alpha(0f).setDuration(140)
                 .withEndAction(() -> seekPreviewContainer.setVisibility(View.GONE))
@@ -959,16 +921,23 @@ public class ExoPlayerActivity extends AppCompatActivity {
             if (dialogRef[0] != null) dialogRef[0].dismiss();
             requestModeSwitch();
         }));
-        audioRows.add(new MenuRow("English (Dub)", !isSub, () -> {
-            if (!isSub) return;
-            if (dialogRef[0] != null) dialogRef[0].dismiss();
-            requestModeSwitch();
-        }));
+        if (hasDub || !isSub) {
+            audioRows.add(new MenuRow("English (Dub)", !isSub, () -> {
+                if (!isSub) return;
+                if (dialogRef[0] != null) dialogRef[0].dismiss();
+                requestModeSwitch();
+            }));
+        }
         columns.addView(buildOptionColumn("Audio", audioRows), new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, 1f));
 
         java.util.List<MenuRow> subtitleRows = new java.util.ArrayList<>();
         subtitleRows.add(new MenuRow("Off", currentSubtitleLabel == null, () -> selectSubtitle(null)));
-        for (String label : subtitleLabels) {
+        // The tracks the player really reports win; the labels from the
+        // stream's own list are only used before it has reported any.
+        java.util.List<String> menuLabels = new java.util.ArrayList<>();
+        for (TextTrackOption option : textTracks) menuLabels.add(option.label);
+        if (menuLabels.isEmpty()) menuLabels.addAll(subtitleLabels);
+        for (String label : menuLabels) {
             subtitleRows.add(new MenuRow(label, label.equals(currentSubtitleLabel), () -> selectSubtitle(label)));
         }
         columns.addView(buildOptionColumn("Subtitles", subtitleRows), new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, 1f));
@@ -1136,12 +1105,37 @@ public class ExoPlayerActivity extends AppCompatActivity {
         }
     }
 
-    // Finds the text track group whose Format.id matches currentSubtitleLabel
-    // (parseSubtitles() gives every subtitle config an id equal to its label)
-    // and selects only that one, or disables text tracks entirely when
-    // currentSubtitleLabel is null ("Off").
+    // Lists the text tracks the player reports, each under a unique label:
+    // the one we gave side-loaded tracks, else the track's own label,
+    // language or id.
+    private void refreshTextTracks(Tracks tracks) {
+        textTracks.clear();
+        java.util.Set<String> used = new java.util.HashSet<>();
+        int n = 0;
+        for (Tracks.Group group : tracks.getGroups()) {
+            if (group.getType() != C.TRACK_TYPE_TEXT) continue;
+            for (int i = 0; i < group.length; i++) {
+                Format format = group.getTrackFormat(i);
+                n++;
+                String label = format.label;
+                if (label == null || label.isEmpty()) {
+                    label = format.language != null && !format.language.isEmpty() && !"und".equals(format.language)
+                            ? new java.util.Locale(format.language).getDisplayLanguage() : null;
+                }
+                if (label == null || label.isEmpty()) label = format.id != null ? format.id : "Subtitles " + n;
+                String unique = label;
+                for (int k = 2; used.contains(unique); k++) unique = label + " (" + k + ")";
+                used.add(unique);
+                textTracks.add(new TextTrackOption(unique, group.getMediaTrackGroup(), i));
+            }
+        }
+    }
+
+    // Shows the track labelled currentSubtitleLabel and nothing else, or turns
+    // captions off entirely when it is null ("Off").
     private void applySubtitleSelection(Tracks tracks) {
         if (player == null) return;
+        refreshTextTracks(tracks);
         if (currentSubtitleLabel == null) {
             player.setTrackSelectionParameters(
                     player.getTrackSelectionParameters().buildUpon()
@@ -1151,29 +1145,18 @@ public class ExoPlayerActivity extends AppCompatActivity {
             );
             return;
         }
-        for (Tracks.Group group : tracks.getGroups()) {
-            if (group.getType() != C.TRACK_TYPE_TEXT) continue;
-            for (int i = 0; i < group.length; i++) {
-                Format format = group.getTrackFormat(i);
-                if (currentSubtitleLabel.equals(format.id)) {
-                    // If ExoPlayer itself flags this track as unsupported
-                    // (e.g. a format/codec it can't decode), selecting it
-                    // will never render anything - log it so that's visible
-                    // in logcat instead of silently doing nothing.
-                    if (!group.isTrackSupported(i)) {
-                        Log.w(TAG, "Subtitle track '" + currentSubtitleLabel + "' (mimeType=" + format.sampleMimeType
-                                + ") is reported unsupported by ExoPlayer - it will not render.");
-                    }
-                    player.setTrackSelectionParameters(
-                            player.getTrackSelectionParameters().buildUpon()
-                                    .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false)
-                                    .clearOverridesOfType(C.TRACK_TYPE_TEXT)
-                                    .addOverride(new TrackSelectionOverride(group.getMediaTrackGroup(), i))
-                                    .build()
-                    );
-                    return;
-                }
-            }
+        for (TextTrackOption option : textTracks) {
+            if (!currentSubtitleLabel.equals(option.label)) continue;
+            player.setTrackSelectionParameters(
+                    player.getTrackSelectionParameters().buildUpon()
+                            .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false)
+                            .clearOverridesOfType(C.TRACK_TYPE_TEXT)
+                            .addOverride(new TrackSelectionOverride(option.group, option.index))
+                            .build()
+            );
+            SubtitleView view = playerView.getSubtitleView();
+            if (view != null) view.setVisibility(View.VISIBLE);
+            return;
         }
         Log.w(TAG, "Subtitle track '" + currentSubtitleLabel + "' not found in any text track group yet.");
     }
@@ -1870,7 +1853,7 @@ public class ExoPlayerActivity extends AppCompatActivity {
     }
 
     private void updateProgress() {
-        if (player == null || userSeeking) return;
+        if (player == null || userSeeking || awaitingStream) return;
         long duration = Math.max(player.getDuration(), 0);
         long position = Math.max(player.getCurrentPosition(), 0);
         if (position > 0) lastKnownPositionMs = position;
@@ -2138,7 +2121,6 @@ public class ExoPlayerActivity extends AppCompatActivity {
         super.onStop();
         activityStopped = true;
         reportProgressNow();
-        releasePreviewPlayer();
         if (player != null) {
             player.pause();
         }

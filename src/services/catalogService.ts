@@ -316,6 +316,28 @@ export async function resolveAnime(anime: AnimeItem): Promise<AnimeItem> {
   throw new Error(`"${anime.title}" was not found on the streaming site`);
 }
 
+// ------------------------------------------------------------ dub support
+
+const dubCache = new Map<string, boolean | undefined>();
+
+// Whether a title has an English dub: true/false when known, undefined when
+// it can't be told (the caller then keeps the option available). Entries
+// from the site's own lists carry the answer; others (opened from history,
+// AniList suggestions) are looked up once by title.
+export async function hasDub(anime: AnimeItem): Promise<boolean | undefined> {
+  if (anime.dubCount !== undefined) return anime.dubCount > 0;
+  if (dubCache.has(anime.id)) return dubCache.get(anime.id);
+  try {
+    const results = await searchAnimeLive(anime.title);
+    const match = results.find(r => r.id === anime.id);
+    const known = match && match.dubCount !== undefined ? match.dubCount > 0 : undefined;
+    dubCache.set(anime.id, known);
+    return known;
+  } catch {
+    return undefined;
+  }
+}
+
 // ------------------------------------------------------------ detail page
 
 function posterOf(el: Element | null): string {
