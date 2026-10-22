@@ -228,9 +228,24 @@ async function loadPersisted(
   }
 }
 
+export function decodeHtmlEntities(str: string): string {
+  if (!str) return "";
+  return str
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#039;/g, "'")
+    .replace(/&apos;/g, "'")
+    .replace(/&#x27;/g, "'")
+    .replace(/&#(\d+);/g, (_, code) => String.fromCharCode(Number(code)))
+    .replace(/&#x([0-9a-fA-F]+);/g, (_, hex) => String.fromCharCode(parseInt(hex, 16)));
+}
+
 // Live search only - no curated/mock fallback. Throws on network failure.
 export async function searchAnimeLive(query: string): Promise<AnimeItem[]> {
-  const html = await fetchSiteHtml(`/search?keyword=${encodeURIComponent(query)}`);
+  const cleanKeyword = query.replace(/(^|\s)-+(\w)/g, '$1$2').trim();
+  const html = await fetchSiteHtml(`/search?keyword=${encodeURIComponent(cleanKeyword)}`);
   return parseSearchResults(html);
 }
 
@@ -277,7 +292,8 @@ export function parseSearchResults(html: string): AnimeItem[] {
     const href = titleEl.getAttribute("href") || "";
     const slug = href.split("/").filter(Boolean).pop() || "";
     const path = sitePathOf(href);
-    const title = titleEl.getAttribute("title") || titleEl.textContent?.trim() || "";
+    const rawTitle = titleEl.getAttribute("title") || titleEl.textContent?.trim() || "";
+    const title = decodeHtmlEntities(rawTitle).trim();
     const poster = posterEl?.getAttribute("data-src") || posterEl?.getAttribute("src") || "";
 
     // Some pages mix in non-anime cards (ad slots, "load more" tiles, slider
@@ -288,9 +304,9 @@ export function parseSearchResults(html: string): AnimeItem[] {
     if (!isValid || seenIds.has(slug)) return;
     seenIds.add(slug);
 
-    const subBadge = el.querySelector(".tick-sub")?.textContent?.trim();
-    const dubBadge = el.querySelector(".tick-dub")?.textContent?.trim();
-    const epBadge = el.querySelector(".tick-eps")?.textContent?.trim();
+    const subBadge = (parentCard?.querySelector(".tick-sub") || el.querySelector(".tick-sub"))?.textContent?.trim();
+    const dubBadge = (parentCard?.querySelector(".tick-dub") || el.querySelector(".tick-dub"))?.textContent?.trim();
+    const epBadge = (parentCard?.querySelector(".tick-eps") || el.querySelector(".tick-eps"))?.textContent?.trim();
 
     results.push({
       id: slug,
@@ -461,23 +477,21 @@ export async function getEpisodeStream(
   // 2. Secondary fallback (and primary path on Capacitor Native App): direct scrape
   try {
     let targetEpisodeId = episodeIdOrNumber;
-    // If targetEpisodeId is not a numeric episode ID, resolve from anime episode list
-    if (!/^\d+$/.test(targetEpisodeId)) {
-      let numericAnimeId = (animeId || animeTitleOrId).includes("-") ? (animeId || animeTitleOrId).split("-").pop() : "";
-      if (!numericAnimeId || !/^\d+$/.test(numericAnimeId)) {
-        const found = await searchAnime(animeTitleOrId);
-        if (found.length > 0) {
-          numericAnimeId = found[0].id.split("-").pop() || "";
-        }
+    // Resolve targetEpisodeId if needed (e.g. if it is an episode number like '1' rather than an episode data-id)
+    let numericAnimeId = (animeId || animeTitleOrId).includes("-") ? (animeId || animeTitleOrId).split("-").pop() : "";
+    if (!numericAnimeId || !/^\d+$/.test(numericAnimeId)) {
+      const found = await searchAnime(animeTitleOrId);
+      if (found.length > 0) {
+        numericAnimeId = found[0].id.split("-").pop() || "";
       }
-      if (numericAnimeId && /^\d+$/.test(numericAnimeId)) {
-        const list = await getEpisodes(numericAnimeId);
-        const epNum = episodeIdOrNumber.replace(/^.*-ep-/, '').replace(/[^0-9.]/g, '') || '1';
-        // No match means no such episode - never silently play episode 1 instead.
-        const match = list.find(e => e.number === epNum || e.id === episodeIdOrNumber);
-        if (match && match.id) {
-          targetEpisodeId = match.id;
-        }
+    }
+    if (numericAnimeId && /^\d+$/.test(numericAnimeId)) {
+      const list = await getEpisodes(numericAnimeId);
+      const epNum = episodeIdOrNumber.replace(/^.*-ep-/, '').replace(/[^0-9.]/g, '') || '1';
+      // Match by exact episode ID first; if none matches (e.g. targetEpisodeId was '1'), match by episode number
+      const match = list.find(e => e.id === targetEpisodeId) || list.find(e => e.number === epNum || e.number === episodeIdOrNumber || e.id === episodeIdOrNumber);
+      if (match && match.id) {
+        targetEpisodeId = match.id;
       }
     }
 
@@ -580,9 +594,8 @@ function pickServerHashes(serversHtml: string, mode: 'sub' | 'dub'): string[] {
     .map(el => el.getAttribute("data-hash") || "")
     .filter(Boolean);
   const preferred = hashesOf(`[data-type="${mode}"][data-hash]`);
-  // A missing dub must not silently turn into the subbed stream labelled as
-  // dub. Only a sub request may fall back to whatever the episode has.
-  const list = preferred.length > 0 || mode === 'dub' ? preferred : hashesOf("[data-hash]");
+  // Prefer the requested audio mode; fall back to available servers if requested mode has none
+  const list = preferred.length > 0 ? preferred : hashesOf("[data-hash]");
   return Array.from(new Set(list)).slice(0, 4);
 }
 
@@ -688,12 +701,19 @@ async function resolveEmbed(hash: string, episodeId: string, mode: 'sub' | 'dub'
   return sourceFrom(rawStreamUrl, embedOrigin, tracks, intro, outro, findSpriteVtt(tracks));
 }
 
+function safeAtob(b64: string): string {
+  const clean = b64.replace(/-/g, '+').replace(/_/g, '/');
+  const pad = clean.length % 4;
+  const padded = pad ? clean + '='.repeat(4 - pad) : clean;
+  return atob(padded);
+}
+
 // The inline payload of current embeds: base64 of JSON, XOR-ed with a fixed key.
 export function parseEmbedPayload(html: string): any | null {
   const match = html.match(/window\.__P\s*=\s*"([^"]+)"/);
   if (!match) return null;
   try {
-    const raw = atob(match[1]);
+    const raw = safeAtob(match[1]);
     const key = "otaku-embed-v1";
     const bytes = new Uint8Array(raw.length);
     for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i) ^ key.charCodeAt(i % key.length);

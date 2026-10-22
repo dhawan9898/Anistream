@@ -11,6 +11,7 @@
 // carry an "al-" id and are matched to a real site entry by title
 // (resolveAnime) before they can be played.
 import {
+  decodeHtmlEntities,
   fetchSiteHtml,
   parseSearchResults,
   searchAnimeLive,
@@ -146,7 +147,7 @@ function dedupe(items: AnimeItem[], exclude: Set<string> = new Set()): AnimeItem
 }
 
 function normalizeTitle(title: string): string {
-  return title.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+  return decodeHtmlEntities(title).toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
 }
 
 function titlesMatch(a: string, b: string): boolean {
@@ -329,7 +330,7 @@ export async function hasDub(anime: AnimeItem): Promise<boolean | undefined> {
   if (dubCache.has(anime.id)) return dubCache.get(anime.id);
   try {
     const results = await searchAnimeLive(anime.title);
-    const match = results.find(r => r.id === anime.id);
+    const match = results.find(r => r.id === anime.id) || results.find(r => titlesMatch(r.title, anime.title));
     const known = match && match.dubCount !== undefined ? match.dubCount > 0 : undefined;
     dubCache.set(anime.id, known);
     return known;
@@ -355,7 +356,8 @@ function linkToAnime(a: Element, container: Element, label?: string): AnimeItem 
   const href = a.getAttribute('href') || '';
   const path = sitePathOf(href);
   const id = path.split('/').filter(Boolean).pop() || '';
-  const title = (a.getAttribute('title') || a.getAttribute('data-jname') || a.textContent || '').trim();
+  const rawTitle = a.getAttribute('title') || a.getAttribute('data-jname') || a.textContent || '';
+  const title = decodeHtmlEntities(rawTitle).trim();
   const poster = posterOf(container);
   if (!id || !title || id === 'home' || /^\/genres?\//.test(path)) return null;
   return { id, path, title, poster, seasonLabel: label, type: 'TV' };
@@ -367,6 +369,9 @@ interface ParsedDetailPage {
   seasons: AnimeItem[];
   related: AnimeItem[];
   recommended: AnimeItem[];
+  subCount?: number;
+  dubCount?: number;
+  episodesCount?: number;
 }
 
 export function parseDetailPage(html: string): ParsedDetailPage {
@@ -377,6 +382,13 @@ export function parseDetailPage(html: string): ParsedDetailPage {
     || doc.querySelector('.anisc-detail .film-description')?.textContent
     || ''
   ).trim() || undefined;
+
+  const subBadge = doc.querySelector('.tick-sub')?.textContent?.trim();
+  const dubBadge = doc.querySelector('.tick-dub')?.textContent?.trim();
+  const epBadge = doc.querySelector('.tick-eps')?.textContent?.trim();
+  const subCount = subBadge ? parseInt(subBadge, 10) : undefined;
+  const dubCount = dubBadge ? parseInt(dubBadge, 10) : undefined;
+  const episodesCount = epBadge ? parseInt(epBadge, 10) : undefined;
 
   // Genre links in the title's own info block (never the site-wide menu).
   const infoGenreLinks = doc.querySelectorAll(
@@ -418,7 +430,7 @@ export function parseDetailPage(html: string): ParsedDetailPage {
     }
   });
 
-  return { description, genres, seasons, related: dedupe(related), recommended: dedupe(recommended) };
+  return { description, genres, seasons, related: dedupe(related), recommended: dedupe(recommended), subCount, dubCount, episodesCount };
 }
 
 interface AniListInfo {
@@ -591,6 +603,12 @@ async function loadAnimeDetails(anime: AnimeItem): Promise<AnimeDetails> {
 
   const description = parsed.description || aniList?.description;
   const genres = parsed.genres.length ? parsed.genres : (aniList?.genres.length ? aniList.genres : (anime.genres || []));
+  if (parsed.dubCount !== undefined && anime.dubCount === undefined) {
+    anime.dubCount = parsed.dubCount;
+  }
+  if (parsed.subCount !== undefined && anime.subCount === undefined) {
+    anime.subCount = parsed.subCount;
+  }
 
   // Collection: the site's season switcher / related block (directly
   // playable), else AniList's relations in release order, else other site

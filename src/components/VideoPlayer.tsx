@@ -5,14 +5,19 @@ import {
   Play, Pause, RotateCcw, RotateCw, ArrowLeft, Maximize, Minimize, SkipForward,
   Volume2, VolumeX, Check, Loader2, X, Gauge, Lock, LockOpen, Layers, MessageSquareText
 } from 'lucide-react';
+import { Capacitor } from '@capacitor/core';
 import type { StreamSource, EpisodeItem } from '../core/aniCliCore';
 import { getUserPreferences } from '../services/historyService';
 import { getEpisodeSkipIntervals, type SkipInterval } from '../services/aniSkipService';
 import './VideoPlayer.css';
 
-const resolvePlayableUrl = (url?: string, _referer?: string): string => {
+const resolvePlayableUrl = (url?: string, referer?: string): string => {
   if (!url) return '';
-  // Return direct URL directly so hls.js can load it without requiring a local proxy server
+  // In dev / web mode without native CapacitorHttp, proxy the stream to bypass browser CORS & Referer restrictions
+  if (!Capacitor.isNativePlatform() && !url.startsWith('/stream-proxy') && url.startsWith('http')) {
+    const ref = referer || 'https://zokoanime.video/';
+    return `/stream-proxy?url=${encodeURIComponent(url)}&ref=${encodeURIComponent(ref)}`;
+  }
   return url;
 };
 

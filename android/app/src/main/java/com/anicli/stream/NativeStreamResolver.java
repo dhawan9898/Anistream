@@ -160,7 +160,7 @@ final class NativeStreamResolver {
             Matcher t = TYPE.matcher(tag);
             if (t.find() && mode.equals(t.group(1))) preferred.add(h.group(1));
         }
-        Set<String> chosen = !preferred.isEmpty() || "dub".equals(mode) ? preferred : any;
+        Set<String> chosen = !preferred.isEmpty() ? preferred : any;
         List<String> list = new ArrayList<>(chosen);
         return list.size() > MAX_SERVERS ? list.subList(0, MAX_SERVERS) : list;
     }
@@ -228,7 +228,10 @@ final class NativeStreamResolver {
         Matcher m = INLINE_PAYLOAD.matcher(html);
         if (!m.find()) return null;
         try {
-            byte[] data = Base64.decode(m.group(1), Base64.DEFAULT);
+            String b64 = m.group(1).replace('-', '+').replace('_', '/');
+            int pad = b64.length() % 4;
+            if (pad != 0) b64 = b64 + "====".substring(pad);
+            byte[] data = Base64.decode(b64, Base64.DEFAULT);
             for (int i = 0; i < data.length; i++) data[i] ^= PAYLOAD_KEY[i % PAYLOAD_KEY.length];
             return new JSONObject(new String(data, StandardCharsets.UTF_8));
         } catch (Exception e) {

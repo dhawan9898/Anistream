@@ -40,6 +40,26 @@ function isPublicHttpUrl(url: URL): boolean {
   return true;
 }
 
+function parseInlinePayload(html: string): any | null {
+  const match = html.match(/window\.__P\s*=\s*"([^"]+)"/);
+  if (!match) return null;
+  try {
+    const clean = match[1].replace(/-/g, '+').replace(/_/g, '/');
+    const pad = clean.length % 4;
+    const full = pad ? clean + '='.repeat(4 - pad) : clean;
+    const raw = Buffer.from(full, 'base64').toString('binary');
+    const key = 'otaku-embed-v1';
+    let output = '';
+    for (let i = 0; i < raw.length; i++) {
+      output += String.fromCharCode(raw.charCodeAt(i) ^ key.charCodeAt(i % key.length));
+    }
+    return JSON.parse(output);
+  } catch (err) {
+    console.warn('[ani-cli-bridge] parseInlinePayload error:', err);
+    return null;
+  }
+}
+
 async function resolveStream(query: string, ep: string, mode: string) {
   const REMOTE_HOST = 'https://hianime.at';
   const headers = {
@@ -47,16 +67,18 @@ async function resolveStream(query: string, ep: string, mode: string) {
     'Referer': `${REMOTE_HOST}/`
   };
 
-  // 1. Search anime
-  const searchRes = await fetch(`${REMOTE_HOST}/search?keyword=${encodeURIComponent(query)}`, { headers });
+  // 1. Search anime (clean negative keyword prefix to prevent exclusion)
+  const cleanKeyword = query.replace(/(^|\s)-+(\w)/g, '$1$2').trim();
+  const searchRes = await fetch(`${REMOTE_HOST}/search?keyword=${encodeURIComponent(cleanKeyword)}`, { headers });
   if (!searchRes.ok) throw new Error(`Search failed: HTTP ${searchRes.status}`);
   const searchHtml = await searchRes.text();
 
-  const match = searchHtml.match(/href="https:\/\/hianime\.at\/([^"]+)"[^>]*title="([^"]+)"/i) ||
-                searchHtml.match(/href="\/([^"]+)"[^>]*title="([^"]+)"/i);
+  // Match inside search results card only, never header/nav bar
+  const match = searchHtml.match(/class="film-name"[^>]*>\s*<a\s+href="([^"]+)"[^>]*title="([^"]+)"/i) ||
+                searchHtml.match(/<div class="flw-item"[^>]*>[\s\S]*?<a\s+href="([^"]+)"[^>]*title="([^"]+)"/i);
   let numericAnimeId = '';
   if (match && match[1]) {
-    numericAnimeId = match[1].split('-').pop() || '';
+    numericAnimeId = match[1].split('/').filter(Boolean).pop()?.split('-').pop() || '';
   }
   if (!numericAnimeId) throw new Error(`No anime found for query "${query}"`);
 
@@ -69,7 +91,7 @@ async function resolveStream(query: string, ep: string, mode: string) {
   const epMatches = Array.from((epData.html as string).matchAll(/data-number="([^"]+)"[^>]*data-id="([^"]+)"/g));
   let targetEpId = '';
   for (const m of epMatches) {
-    if (m[1] === ep) {
+    if (m[1] === String(ep) || m[2] === String(ep)) {
       targetEpId = m[2];
       break;
     }
@@ -86,77 +108,117 @@ async function resolveStream(query: string, ep: string, mode: string) {
   if (!serversData.html) throw new Error('Servers returned no HTML');
 
   const htmlStr = serversData.html as string;
-  const hashMatch = htmlStr.match(new RegExp(`data-type="${mode}"[^>]*data-hash="([^"]+)"`, 'i')) ||
-                    htmlStr.match(/data-hash="([^"]+)"/i);
-  if (!hashMatch || !hashMatch[1]) throw new Error('No server embed hash found');
+  const serverRegex = /<div[^>]*class="[^"]*server-item[^"]*"[^>]*data-type="([^"]+)"[^>]*data-server-name="([^"]+)"[^>]*data-hash="([^"]+)"/g;
+  const allServers = Array.from(htmlStr.matchAll(serverRegex)).map(m => ({
+    type: m[1],
+    name: m[2],
+    hash: m[3]
+  }));
 
-  const embedUrl = Buffer.from(hashMatch[1], 'base64').toString('utf8');
+  let targetServers = allServers.filter(s => s.type === mode);
+  // If requested mode has no servers, fall back to any available servers rather than failing outright
+  if (targetServers.length === 0) {
+    targetServers = allServers;
+  }
+  if (targetServers.length === 0) throw new Error('No server embed hash found');
 
-  // 4. Embed page
-  const embedRes = await fetch(embedUrl, {
-    headers: { ...headers, 'Referer': `${REMOTE_HOST}/` }
-  });
-  if (!embedRes.ok) throw new Error(`Embed failed: HTTP ${embedRes.status}`);
-  const embedHtml = await embedRes.text();
+  // 4. Try each candidate server in preference order
+  for (const s of targetServers) {
+    try {
+      const embedUrl = Buffer.from(s.hash, 'base64').toString('utf8');
+      const embedRes = await fetch(embedUrl, {
+        headers: { ...headers, 'Referer': `${REMOTE_HOST}/` }
+      });
+      if (!embedRes.ok) continue;
+      const embedHtml = await embedRes.text();
+      const embedOrigin = new URL(embedUrl).origin;
 
-  const idMatch = embedHtml.match(/data-id="(\d+)"/i);
-  if (!idMatch || !idMatch[1]) throw new Error('No data-id in embed HTML');
-  const dataId = idMatch[1];
+      // 4a. Current embeds: window.__P XOR inline payload
+      const inline = parseInlinePayload(embedHtml);
+      if (inline && inline.src) {
+        const rawVideoLink = inline.src;
+        const subtitles = (inline.subtitles || []).map((sub: any) => {
+          const fileUrl = sub.file || sub.src;
+          const proxiedSub = `/stream-proxy?url=${encodeURIComponent(fileUrl)}&ref=${encodeURIComponent(embedOrigin + '/')}`;
+          return {
+            src: proxiedSub,
+            label: sub.label || sub.lang || 'English',
+            default: sub.default === true
+          };
+        });
+        const proxiedStreamUrl = `/stream-proxy?url=${encodeURIComponent(rawVideoLink)}&ref=${encodeURIComponent(embedOrigin + '/')}`;
+        return {
+          streamUrl: proxiedStreamUrl,
+          rawStreamUrl: rawVideoLink,
+          subtitles,
+          qualities: [{ quality: '1080p', url: proxiedStreamUrl }],
+          referer: `${embedOrigin}/`,
+          intro: inline.skip?.intro,
+          outro: inline.skip?.outro,
+          spriteVtt: inline.sprite_vtt
+        };
+      }
 
-  // 5. getSourcesNew
-  const embedOrigin = new URL(embedUrl).origin;
-  const sourcesUrl = `${embedOrigin}/stream/getSourcesNew?id=${dataId}`;
-  const sourcesRes = await fetch(sourcesUrl, {
-    headers: {
-      ...headers,
-      'Referer': embedUrl,
-      'X-Requested-With': 'XMLHttpRequest'
-    }
-  });
-  if (!sourcesRes.ok) throw new Error(`getSources failed: HTTP ${sourcesRes.status}`);
-  const sourcesJson: any = await sourcesRes.json();
+      // 4b. Older embeds: data-id with /stream/getSourcesNew
+      const idMatch = embedHtml.match(/data-id="(\d+)"/i);
+      if (idMatch) {
+        const dataId = idMatch[1];
+        const sourcesUrl = `${embedOrigin}/stream/getSourcesNew?id=${dataId}`;
+        const sourcesRes = await fetch(sourcesUrl, {
+          headers: {
+            ...headers,
+            'Referer': embedUrl,
+            'X-Requested-With': 'XMLHttpRequest'
+          }
+        });
+        if (sourcesRes.ok) {
+          const sourcesJson: any = await sourcesRes.json();
+          let rawVideoLink = '';
+          let intro = sourcesJson.intro;
+          let outro = sourcesJson.outro;
+          if (sourcesJson.sources && sourcesJson.sources[0]?.file) {
+            rawVideoLink = sourcesJson.sources[0].file;
+          } else if (sourcesJson.enc) {
+            const decStr = decryptToken(sourcesJson.enc);
+            if (decStr) {
+              const dec = JSON.parse(decStr);
+              rawVideoLink = dec.file || dec.src;
+              intro = intro || dec.intro;
+              outro = outro || dec.outro;
+            }
+          }
 
-  let rawVideoLink = '';
-  // Chapter markers (seconds) used for Skip Intro / Skip Outro - forwarded
-  // as-is; the client validates them.
-  let intro = sourcesJson.intro;
-  let outro = sourcesJson.outro;
-  if (sourcesJson.sources && sourcesJson.sources[0]?.file) {
-    rawVideoLink = sourcesJson.sources[0].file;
-  } else if (sourcesJson.enc) {
-    const decStr = decryptToken(sourcesJson.enc);
-    if (decStr) {
-      const dec = JSON.parse(decStr);
-      rawVideoLink = dec.file || dec.src;
-      intro = intro || dec.intro;
-      outro = outro || dec.outro;
+          if (rawVideoLink) {
+            const subtitles = (sourcesJson.tracks || [])
+              .filter((t: any) => t.kind === 'captions' || t.file)
+              .map((sub: any) => {
+                const fileUrl = sub.file || sub.src;
+                const proxiedSub = `/stream-proxy?url=${encodeURIComponent(fileUrl)}&ref=${encodeURIComponent(embedOrigin + '/')}`;
+                return {
+                  src: proxiedSub,
+                  label: sub.label || sub.lang || 'English',
+                  default: sub.default === true
+                };
+              });
+            const proxiedStreamUrl = `/stream-proxy?url=${encodeURIComponent(rawVideoLink)}&ref=${encodeURIComponent(embedOrigin + '/')}`;
+            return {
+              streamUrl: proxiedStreamUrl,
+              rawStreamUrl: rawVideoLink,
+              subtitles,
+              qualities: [{ quality: '1080p', url: proxiedStreamUrl }],
+              referer: `${embedOrigin}/`,
+              intro,
+              outro
+            };
+          }
+        }
+      }
+    } catch (serverErr) {
+      console.warn(`[ani-cli-bridge] Server ${s.name} error:`, serverErr);
     }
   }
 
-  if (!rawVideoLink) throw new Error('Could not extract video link from sources payload');
-
-  const subtitles = (sourcesJson.tracks || [])
-    .filter((t: any) => t.kind === 'captions' || t.file)
-    .map((s: any) => {
-      const proxiedSub = `/stream-proxy?url=${encodeURIComponent(s.file || s.src)}&ref=${encodeURIComponent(embedOrigin + '/')}`;
-      return {
-        src: proxiedSub,
-        label: s.label || s.lang || 'English',
-        default: s.default === true
-      };
-    });
-
-  const proxiedStreamUrl = `/stream-proxy?url=${encodeURIComponent(rawVideoLink)}&ref=${encodeURIComponent(embedOrigin + '/')}`;
-
-  return {
-    streamUrl: proxiedStreamUrl,
-    rawStreamUrl: rawVideoLink,
-    subtitles,
-    qualities: [{ quality: '1080p', url: proxiedStreamUrl }],
-    referer: `${embedOrigin}/`,
-    intro,
-    outro
-  };
+  throw new Error(`All servers failed to resolve stream for ${query} ep ${ep}`);
 }
 
 export function aniCliBridgePlugin(): Plugin {

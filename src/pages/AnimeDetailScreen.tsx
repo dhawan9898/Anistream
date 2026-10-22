@@ -114,7 +114,12 @@ export const AnimeDetailScreen: React.FC<AnimeDetailScreenProps> = ({
     const unsubscribe = subscribeLibraryChanges(loadLibrary);
 
     getAnimeDetails(resolved).then(d => {
-      if (!cancelled) setDetails(d);
+      if (!cancelled) {
+        setDetails(d);
+        if (resolved.dubCount !== undefined) {
+          setDubAvailable(resolved.dubCount > 0);
+        }
+      }
     });
     return () => {
       cancelled = true;
