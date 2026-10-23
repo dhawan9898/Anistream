@@ -341,7 +341,7 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({
                     <span style={{
                       fontSize: '10px',
                       fontWeight: 700,
-                      backgroundColor: 'rgba(99, 102, 241, 0.2)',
+                      backgroundColor: 'rgba(229, 9, 20, 0.2)',
                       color: 'var(--accent-primary)',
                       padding: '2px 6px',
                       borderRadius: '4px'

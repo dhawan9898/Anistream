@@ -775,8 +775,9 @@ export const App: React.FC = () => {
       )}
 
       {/* Floating dock (slides away while a title page or the player is
-          open). A solid pane with a sliding indicator behind the active tab -
-          no backdrop blur, which would be re-rendered under every scroll frame. */}
+          open). A liquid-glass pane with a sliding indicator behind the active
+          tab. It is the only blurred element over scrolling content, and it is
+          small and fixed, so the blur stays cheap. */}
       <div
         className={dockHidden ? 'dock-wrap hidden' : 'dock-wrap'}
         style={{ bottom: 'calc(16px + var(--safe-bottom))' }}

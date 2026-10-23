@@ -38,7 +38,7 @@ const ToggleRow: React.FC<ToggleRowProps> = ({ icon, label, description, value, 
       width: '38px',
       height: '38px',
       borderRadius: 'var(--radius-sm)',
-      background: 'rgba(99, 102, 241, 0.14)',
+      background: 'rgba(229, 9, 20, 0.14)',
       display: 'flex',
       alignItems: 'center',
       justifyContent: 'center',
@@ -318,7 +318,7 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({ active, theme, o
           <div style={{ display: 'flex', alignItems: 'center', gap: '14px', padding: '14px 16px' }}>
             <div style={{
               width: '38px', height: '38px', borderRadius: 'var(--radius-sm)',
-              background: 'rgba(99, 102, 241, 0.14)', display: 'flex', alignItems: 'center',
+              background: 'rgba(229, 9, 20, 0.14)', display: 'flex', alignItems: 'center',
               justifyContent: 'center', color: 'var(--accent-primary)', flexShrink: 0
             }}>
               <PlayCircle size={18} />
@@ -332,7 +332,7 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({ active, theme, o
           <div style={{ display: 'flex', alignItems: 'center', gap: '14px', padding: '14px 16px' }}>
             <div style={{
               width: '38px', height: '38px', borderRadius: 'var(--radius-sm)',
-              background: 'rgba(99, 102, 241, 0.14)', display: 'flex', alignItems: 'center',
+              background: 'rgba(229, 9, 20, 0.14)', display: 'flex', alignItems: 'center',
               justifyContent: 'center', color: 'var(--accent-primary)', flexShrink: 0
             }}>
               <Terminal size={18} />
@@ -346,7 +346,7 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({ active, theme, o
           <div style={{ display: 'flex', alignItems: 'center', gap: '14px', padding: '14px 16px' }}>
             <div style={{
               width: '38px', height: '38px', borderRadius: 'var(--radius-sm)',
-              background: 'rgba(99, 102, 241, 0.14)', display: 'flex', alignItems: 'center',
+              background: 'rgba(229, 9, 20, 0.14)', display: 'flex', alignItems: 'center',
               justifyContent: 'center', color: 'var(--accent-primary)', flexShrink: 0
             }}>
               <Info size={18} />

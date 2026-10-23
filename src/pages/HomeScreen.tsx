@@ -154,30 +154,16 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
           zIndex: 40,
           // Gradient only, no blur: a blurred sticky bar re-renders the whole
           // feed under it on every scroll frame.
-          background: 'linear-gradient(180deg, rgba(8,9,14,0.85) 0%, rgba(8,9,14,0.55) 65%, transparent 100%)',
+          background: 'linear-gradient(180deg, rgba(11,11,13,0.85) 0%, rgba(11,11,13,0.5) 65%, transparent 100%)',
           padding: 'calc(var(--safe-top) + 12px) 20px 12px 20px',
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'space-between'
         }}
       >
-        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-          <div style={{
-            width: '32px',
-            height: '32px',
-            borderRadius: '10px',
-            background: 'var(--accent-gradient)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            boxShadow: '0 0 16px rgba(99, 102, 241, 0.4)'
-          }}>
-            <Play size={16} color="#fff" fill="#fff" style={{ marginLeft: '2px' }} />
-          </div>
-          <div>
-            <span style={{ fontSize: '19px', fontWeight: 800, letterSpacing: '-0.5px', color: '#fff' }}>Ani</span>
-            <span style={{ fontSize: '19px', fontWeight: 800, background: 'var(--accent-gradient)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>Stream</span>
-          </div>
+        <div style={{ display: 'flex', alignItems: 'baseline' }}>
+          <span style={{ fontSize: '24px', fontWeight: 900, letterSpacing: '-0.8px', color: 'var(--accent-primary)', textShadow: '0 2px 12px rgba(0,0,0,0.6)' }}>ANI</span>
+          <span style={{ fontSize: '24px', fontWeight: 900, letterSpacing: '-0.8px', color: '#fff', textShadow: '0 2px 12px rgba(0,0,0,0.6)' }}>STREAM</span>
         </div>
 
         {/* Sits on the hero banner image, so it keeps the dark-glass look
