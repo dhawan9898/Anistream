@@ -300,6 +300,84 @@
                 </LinearLayout>
             </LinearLayout>
         </LinearLayout>
+
+        <!-- Brightness slider: appears with the chrome (tap the screen). The
+             SeekBar is laid out wide and rotated, so it reads bottom-to-top. -->
+        <LinearLayout
+            android:id="@+id/panel_brightness"
+            android:layout_width="44dp"
+            android:layout_height="wrap_content"
+            android:layout_gravity="start|center_vertical"
+            android:layout_marginStart="28dp"
+            android:layout_marginBottom="30dp"
+            android:gravity="center_horizontal"
+            android:orientation="vertical">
+
+            <FrameLayout
+                android:layout_width="44dp"
+                android:layout_height="140dp">
+
+                <SeekBar
+                    android:id="@+id/slider_brightness"
+                    android:layout_width="140dp"
+                    android:layout_height="44dp"
+                    android:layout_gravity="center"
+                    android:contentDescription="Brightness"
+                    android:max="100"
+                    android:paddingStart="16dp"
+                    android:paddingEnd="16dp"
+                    android:progressBackgroundTint="#66FFFFFF"
+                    android:progressTint="#FFFFFF"
+                    android:rotation="270"
+                    android:thumbTint="#FFFFFF" />
+            </FrameLayout>
+
+            <ImageView
+                android:layout_width="24dp"
+                android:layout_height="24dp"
+                android:layout_marginTop="6dp"
+                android:importantForAccessibility="no"
+                android:src="@drawable/ic_brightness" />
+        </LinearLayout>
+
+        <!-- Volume slider: appears with the chrome (tap the screen). The
+             SeekBar is laid out wide and rotated, so it reads bottom-to-top. -->
+        <LinearLayout
+            android:id="@+id/panel_volume"
+            android:layout_width="44dp"
+            android:layout_height="wrap_content"
+            android:layout_gravity="end|center_vertical"
+            android:layout_marginEnd="28dp"
+            android:layout_marginBottom="30dp"
+            android:gravity="center_horizontal"
+            android:orientation="vertical">
+
+            <FrameLayout
+                android:layout_width="44dp"
+                android:layout_height="140dp">
+
+                <SeekBar
+                    android:id="@+id/slider_volume"
+                    android:layout_width="140dp"
+                    android:layout_height="44dp"
+                    android:layout_gravity="center"
+                    android:contentDescription="Volume"
+                    android:max="100"
+                    android:paddingStart="16dp"
+                    android:paddingEnd="16dp"
+                    android:progressBackgroundTint="#66FFFFFF"
+                    android:progressTint="#FFFFFF"
+                    android:rotation="270"
+                    android:thumbTint="#FFFFFF" />
+            </FrameLayout>
+
+            <ImageView
+                android:layout_width="24dp"
+                android:layout_height="24dp"
+                android:layout_marginTop="6dp"
+                android:importantForAccessibility="no"
+                android:src="@drawable/ic_volume" />
+        </LinearLayout>
     </FrameLayout>
 
     <!-- Scrub bubble: the time being seeked to, floating above the seek bar

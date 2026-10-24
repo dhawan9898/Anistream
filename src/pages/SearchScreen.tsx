@@ -1,43 +1,30 @@
 // SearchScreen.tsx - Rapid anime search powered by ani-cli scraper
 import React, { useState, useEffect, useRef } from 'react';
-import { Search as SearchIcon, X, Loader2, ArrowLeft } from 'lucide-react';
-import { searchAnimeLive, type AnimeItem } from '../core/aniCliCore';
-import { getGenres, type Genre } from '../services/catalogService';
+import { Search as SearchIcon, X, Loader2, ArrowLeft, Play } from 'lucide-react';
+import { getTrendingAnime, searchAnimeLive, type AnimeItem } from '../core/aniCliCore';
 import { FadeImage } from '../components/FadeImage';
-
-// Tile colors for the "Browse by genre" grid, cycled in order.
-const GENRE_TILE_COLORS = ['#b91c1c', '#7c3aed', '#0e7490', '#b45309', '#be185d', '#15803d', '#1d4ed8', '#9f1239'];
+import { PosterCard } from '../components/PosterCard';
 
 interface SearchScreenProps {
   // True while this tab is the visible one (tabs stay mounted when hidden).
   active: boolean;
   onBack: () => void;
   onSelectAnime: (anime: AnimeItem) => void;
-  onSelectGenre: (genre: Genre) => void;
 }
-
-const POPULAR_TAGS = [
-  "Solo Leveling",
-  "One Piece",
-  "Jujutsu Kaisen",
-  "Demon Slayer",
-  "Bleach",
-  "Naruto",
-  "Cyberpunk",
-  "Frieren"
-];
 
 export const SearchScreen: React.FC<SearchScreenProps> = ({
   active,
   onBack,
-  onSelectAnime,
-  onSelectGenre
+  onSelectAnime
 }) => {
-  const [genres, setGenres] = useState<Genre[]>([]);
+  // Shown while the box is empty, like Netflix's "Top Searches".
+  const [topSearches, setTopSearches] = useState<AnimeItem[]>([]);
 
   useEffect(() => {
     let cancelled = false;
-    getGenres().then(list => { if (!cancelled) setGenres(list); });
+    getTrendingAnime()
+      .then(list => { if (!cancelled) setTopSearches(list.slice(0, 12)); })
+      .catch(() => { /* the empty state simply stays blank */ });
     return () => { cancelled = true; };
   }, []);
 
@@ -159,7 +146,7 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({
             ref={inputRef}
             type="text"
             value={query}
-            placeholder="Search titles, genres…"
+            placeholder="Search for a show, movie, genre…"
             aria-label="Search anime"
             enterKeyHint="search"
             onChange={(e) => handleSearch(e.target.value, false)}
@@ -185,70 +172,34 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({
         </div>
       </div>
 
-      {/* Suggested Quick Tags */}
-      <div className="rail" style={{ padding: '14px 20px', gap: '8px' }}>
-        {POPULAR_TAGS.map((tag) => {
-          const active = query.toLowerCase() === tag.toLowerCase();
-          return (
-            <button
-              key={tag}
-              onClick={() => handleSearch(tag)}
-              className={`interactive glass-pill chip ${active ? 'active' : ''}`}
-              style={{
-                padding: '6px 14px',
-                borderRadius: 'var(--radius-full)',
-                color: active ? undefined : 'var(--text-secondary)',
-                fontSize: '12px',
-                fontWeight: 600,
-                whiteSpace: 'nowrap'
-              }}
-            >
-              {tag}
-            </button>
-          );
-        })}
-      </div>
-
-      {/* Results Header - only once there's an actual search to summarize */}
-      {query && !loading && results.length > 0 && (
-        <div style={{ padding: '0 20px 12px 20px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-          <span style={{ fontSize: '14px', fontWeight: 700, color: 'var(--text-primary)' }}>
-            Results for "{query}"
-          </span>
-          <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>{results.length} results</span>
-        </div>
-      )}
-
-      {/* Loading, empty prompt, no-results, or the results grid */}
       {loading ? (
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '60px 0', gap: '10px', color: 'var(--text-secondary)' }}>
           <Loader2 size={24} className="animate-spin" />
           <span style={{ fontSize: '14px' }}>Searching…</span>
         </div>
       ) : !query ? (
-        <div style={{ padding: '4px 20px 0 20px' }}>
-          <h2 style={{ fontSize: '16px', fontWeight: 800, color: 'var(--text-primary)', marginBottom: '12px' }}>Browse by Genre</h2>
-          <div className="grid-genres">
-            {genres.map((genre, i) => (
+        <div style={{ padding: '18px 20px 0 20px' }}>
+          <h2 style={{ fontSize: '19px', fontWeight: 800, color: 'var(--text-primary)', marginBottom: '12px' }}>Top Searches</h2>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+            {topSearches.length === 0 && Array.from({ length: 6 }).map((_, i) => (
+              <div key={i} className="skeleton" style={{ height: '68px', borderRadius: '6px' }} />
+            ))}
+            {topSearches.map(anime => (
               <button
-                key={genre.slug}
-                onClick={() => onSelectGenre(genre)}
+                key={anime.id}
+                onClick={() => onSelectAnime(anime)}
                 className="interactive"
-                style={{
-                  height: '64px',
-                  borderRadius: 'var(--radius-md)',
-                  border: 'none',
-                  padding: '0 14px',
-                  display: 'flex',
-                  alignItems: 'center',
-                  background: `linear-gradient(135deg, ${GENRE_TILE_COLORS[i % GENRE_TILE_COLORS.length]} 0%, rgba(0,0,0,0.55) 140%)`,
-                  color: '#fff',
-                  fontSize: '15px',
-                  fontWeight: 800,
-                  textAlign: 'left'
-                }}
+                style={{ display: 'flex', alignItems: 'center', gap: '14px', background: 'var(--bg-surface)', border: 'none', borderRadius: '6px', padding: 0, overflow: 'hidden', textAlign: 'left', color: 'var(--text-primary)' }}
               >
-                {genre.name}
+                <div style={{ position: 'relative', width: '120px', height: '68px', flexShrink: 0, backgroundColor: 'rgba(127,127,127,0.15)' }}>
+                  <FadeImage src={anime.banner || anime.poster} alt="" loading="lazy" style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }} />
+                </div>
+                <span style={{ flex: 1, minWidth: 0, fontSize: '14px', fontWeight: 700, lineHeight: 1.3, display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
+                  {anime.title}
+                </span>
+                <span style={{ width: '34px', height: '34px', margin: '0 14px 0 4px', borderRadius: '50%', border: '2px solid rgba(255,255,255,0.8)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                  <Play size={14} fill="#fff" color="#fff" style={{ marginLeft: '2px' }} />
+                </span>
               </button>
             ))}
           </div>
@@ -266,105 +217,18 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({
           </button>
         </div>
       ) : results.length === 0 ? (
-        <div style={{ textAlign: 'center', padding: '60px 20px', color: 'var(--text-secondary)' }}>
-          <p style={{ fontSize: '16px', fontWeight: 600, marginBottom: '6px', color: 'var(--text-primary)' }}>No anime found</p>
-          <p style={{ fontSize: '13px' }}>Try searching with a different title or keyword.</p>
+        <div style={{ textAlign: 'center', padding: '60px 28px', color: 'var(--text-secondary)' }}>
+          <p style={{ fontSize: '16px', fontWeight: 600, marginBottom: '6px', color: 'var(--text-primary)' }}>No results for "{query}"</p>
+          <p style={{ fontSize: '13px' }}>Try searching for another title or keyword.</p>
         </div>
       ) : (
-        <div className="grid-posters" style={{ padding: '0 20px' }}>
-          {results.map((anime) => (
-            <div
-              key={anime.id}
-              onClick={() => onSelectAnime(anime)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' || e.key === ' ') {
-                  e.preventDefault();
-                  onSelectAnime(anime);
-                }
-              }}
-              role="button"
-              tabIndex={0}
-              aria-label={anime.title}
-              className="interactive glass-panel"
-              style={{
-                borderRadius: 'var(--radius-md)',
-                overflow: 'hidden',
-                display: 'flex',
-                flexDirection: 'column'
-              }}
-            >
-              <div style={{ position: 'relative', width: '100%', paddingTop: '140%', overflow: 'hidden' }}>
-                <FadeImage
-                  src={anime.poster}
-                  alt={anime.title}
-                  loading="lazy"
-                  style={{
-                    position: 'absolute',
-                    top: 0,
-                    left: 0,
-                    width: '100%',
-                    height: '100%',
-                    objectFit: 'cover'
-                  }}
-                />
-                <div style={{
-                  position: 'absolute',
-                  top: '8px',
-                  right: '8px',
-                  backgroundColor: 'rgba(0,0,0,0.72)',
-                  padding: '2px 7px',
-                  borderRadius: '4px',
-                  fontSize: '11px',
-                  fontWeight: 700,
-                  color: '#e2e8f0'
-                }}>
-                  {anime.type || 'TV'}
-                </div>
-              </div>
-
-              <div style={{ padding: '10px', flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
-                <h3 style={{
-                  fontSize: '14px',
-                  fontWeight: 700,
-                  color: 'var(--text-primary)',
-                  lineHeight: '1.3',
-                  display: '-webkit-box',
-                  WebkitLineClamp: 2,
-                  WebkitBoxOrient: 'vertical',
-                  overflow: 'hidden',
-                  marginBottom: '6px'
-                }}>
-                  {anime.title}
-                </h3>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                  {!!anime.subCount && (
-                    <span style={{
-                      fontSize: '10px',
-                      fontWeight: 700,
-                      backgroundColor: 'rgba(229, 9, 20, 0.2)',
-                      color: 'var(--accent-primary)',
-                      padding: '2px 6px',
-                      borderRadius: '4px'
-                    }}>
-                      SUB {anime.subCount}
-                    </span>
-                  )}
-                  {!!anime.dubCount && (
-                    <span style={{
-                      fontSize: '10px',
-                      fontWeight: 700,
-                      backgroundColor: 'rgba(168, 85, 247, 0.2)',
-                      color: '#c084fc',
-                      padding: '2px 6px',
-                      borderRadius: '4px'
-                    }}>
-                      DUB {anime.dubCount}
-                    </span>
-                  )}
-                </div>
-              </div>
-            </div>
-          ))}
+        <div style={{ padding: '16px 16px 0 16px' }}>
+          <h2 style={{ fontSize: '19px', fontWeight: 800, color: 'var(--text-primary)', marginBottom: '12px' }}>Anime</h2>
+          <div className="grid-collection">
+            {results.map(anime => (
+              <PosterCard key={anime.id} anime={anime} onClick={() => onSelectAnime(anime)} />
+            ))}
+          </div>
         </div>
       )}
     </div>

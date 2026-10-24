@@ -563,8 +563,9 @@ button { font-family: inherit; }
   transform: translateX(19px);
 }
 
-/* Input reset */
-input {
+/* Input reset (the global :focus-visible ring would otherwise box the field) */
+input,
+input:focus-visible {
   font-family: inherit;
   outline: none;
   user-select: text;

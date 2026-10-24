@@ -113,6 +113,8 @@ public class ExoPlayerActivity extends AppCompatActivity {
     private TextView gestureIndicator;
     private View bufferingSpinner;
     private SeekBar seekBar;
+    private SeekBar sliderBrightness;
+    private SeekBar sliderVolume;
 
     // Scrubbing: the video itself seeks live (throttled) while the seek bar
     // is dragged, with a time bubble over the thumb.
@@ -339,6 +341,7 @@ public class ExoPlayerActivity extends AppCompatActivity {
         readInitialBrightness();
         setupGestures();
         setupControlListeners();
+        setupLevelSliders();
 
         currentActivity = new java.lang.ref.WeakReference<>(this);
 
@@ -690,6 +693,8 @@ public class ExoPlayerActivity extends AppCompatActivity {
         gestureIndicator = findViewById(R.id.gesture_indicator);
         bufferingSpinner = findViewById(R.id.buffering_spinner);
         seekBar = findViewById(R.id.seek_bar);
+        sliderBrightness = findViewById(R.id.slider_brightness);
+        sliderVolume = findViewById(R.id.slider_volume);
         errorOverlay = findViewById(R.id.error_overlay);
         textErrorMessage = findViewById(R.id.text_error_message);
         btnRetry = findViewById(R.id.btn_retry);
@@ -2180,6 +2185,7 @@ public class ExoPlayerActivity extends AppCompatActivity {
     private void setControlsVisible(boolean visible) {
         if (visible && screenLocked) return;
         chromeVisible = visible;
+        if (visible) syncLevelSliders();
         controlsRoot.animate().cancel();
         if (visible) {
             controlsRoot.setVisibility(View.VISIBLE);
@@ -2267,6 +2273,7 @@ public class ExoPlayerActivity extends AppCompatActivity {
         audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, next, 0);
         int percent = max > 0 ? Math.round((next * 100f) / max) : 0;
         showGestureIndicator("🔊 " + percent + "%");
+        syncLevelSliders();
     }
 
     private void adjustBrightness(float fraction) {
@@ -2276,6 +2283,54 @@ public class ExoPlayerActivity extends AppCompatActivity {
         getWindow().setAttributes(params);
         int percent = Math.round(currentBrightness * 100);
         showGestureIndicator("☀ " + percent + "%");
+        syncLevelSliders();
+    }
+
+    // Brightness (left) and volume (right) sliders shown with the controls.
+    // They drive the same values as the swipe gestures, and both stay in step.
+    private void setupLevelSliders() {
+        sliderBrightness.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+            @Override
+            public void onProgressChanged(SeekBar bar, int progress, boolean fromUser) {
+                if (!fromUser) return;
+                currentBrightness = Math.max(0.02f, progress / 100f);
+                WindowManager.LayoutParams params = getWindow().getAttributes();
+                params.screenBrightness = currentBrightness;
+                getWindow().setAttributes(params);
+                scheduleAutoHide();
+            }
+
+            @Override
+            public void onStartTrackingTouch(SeekBar bar) { }
+
+            @Override
+            public void onStopTrackingTouch(SeekBar bar) { scheduleAutoHide(); }
+        });
+        sliderVolume.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+            @Override
+            public void onProgressChanged(SeekBar bar, int progress, boolean fromUser) {
+                if (!fromUser || audioManager == null) return;
+                int max = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC);
+                audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, Math.round(progress * max / 100f), 0);
+                scheduleAutoHide();
+            }
+
+            @Override
+            public void onStartTrackingTouch(SeekBar bar) { }
+
+            @Override
+            public void onStopTrackingTouch(SeekBar bar) { scheduleAutoHide(); }
+        });
+        syncLevelSliders();
+    }
+
+    private void syncLevelSliders() {
+        if (sliderBrightness != null) sliderBrightness.setProgress(Math.round(currentBrightness * 100));
+        if (sliderVolume != null && audioManager != null) {
+            int max = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC);
+            int current = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC);
+            sliderVolume.setProgress(max > 0 ? Math.round(current * 100f / max) : 0);
+        }
     }
 
     private void showGestureIndicator(String text) {

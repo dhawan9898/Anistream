@@ -722,7 +722,6 @@ export const App: React.FC = () => {
             active={currentTab === 'search' && !covered}
             onBack={() => switchTab('home')}
             onSelectAnime={pushAnime}
-            onSelectGenre={openGenre}
           />
         ))}
         {tabPane('library', (
