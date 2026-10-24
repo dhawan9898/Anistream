@@ -1,4 +1,4 @@
-name: Build AniStream v8.4 APK
+name: Build AniStream v9.0 APK
 
 on:
   push:
@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
     inputs:
       release_tag:
-        description: 'Tag to publish this build under (e.g. v8.4) - leave empty to just build, no release'
+        description: 'Tag to publish this build under (e.g. v9.0) - leave empty to just build, no release'
         required: false
         default: ''
 
@@ -72,26 +72,26 @@ jobs:
       - name: Package APK for Release
         run: |
           mkdir -p build-output
-          cp android/app/build/outputs/apk/release/app-release.apk build-output/AniStream-v8.4.apk
-          ls -lh build-output/AniStream-v8.4.apk
+          cp android/app/build/outputs/apk/release/app-release.apk build-output/AniStream-v9.0.apk
+          ls -lh build-output/AniStream-v9.0.apk
 
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: AniStream-v8.4-APK
-          path: build-output/AniStream-v8.4.apk
+          name: AniStream-v9.0-APK
+          path: build-output/AniStream-v9.0.apk
           retention-days: 30
 
       # R8 mapping - needed to de-obfuscate stack traces from this build.
       - name: Upload R8 Mapping
         uses: actions/upload-artifact@v4
         with:
-          name: AniStream-v8.4-mapping
+          name: AniStream-v9.0-mapping
           path: android/app/build/outputs/mapping/release/mapping.txt
           retention-days: 90
           if-no-files-found: warn
 
-      # A manual run republishing an existing tag (e.g. rebuilding v8.4)
+      # A manual run republishing an existing tag (e.g. rebuilding v9.0)
       # replaces that release and its tag, so the tag always points at the
       # commit this APK was built from. Tag pushes are never touched.
       - name: Replace Existing Release (manual runs only)
@@ -109,25 +109,26 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch' && inputs.release_tag != '')
         uses: softprops/action-gh-release@v2
         with:
-          files: build-output/AniStream-v8.4.apk
+          files: build-output/AniStream-v9.0.apk
           tag_name: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || inputs.release_tag }}
           # Without this a new tag is created on the default branch, not on
           # the commit that was actually built.
           target_commitish: ${{ github.sha }}
           name: AniStream ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || inputs.release_tag }} Release
           body: |
-            ## AniStream v8.4 - Android Anime Streaming App (Powered by ani-cli)
+            ## AniStream v9.0 - Android Anime Streaming App (Powered by ani-cli)
 
-            v8.4 is a design release: AniStream now shares one Netflix-style liquid-glass look with CineStream, with smoother and lighter motion.
+            v9.0 builds on the new Netflix look with a better player and a Netflix-style search.
 
-            ### 🚀 What's new in v8.4:
+            ### 🚀 What's new in v9.0:
 
-            - **Netflix look**: near-black surfaces, Netflix red accent (replacing indigo) and an ANISTREAM wordmark header.
-            - **Liquid-glass dock and popovers**: a frosted floating dock with a sliding selection pane, and glass player popovers. Blur is limited to these small fixed elements, so scrolling stays smooth.
-            - **One motion language**: a single easing curve and three durations across the app; only transform and opacity animate.
+            - **Brightness and volume sliders in the player**: tap the screen to show the controls, then use the sliders on the left (brightness) and right (volume). Swiping on the screen no longer changes volume or brightness, so an accidental swipe can't change them.
+            - **Netflix-style search**: an empty search shows *Top Searches* (trending titles with a thumbnail and play button); typing shows a poster grid. Genres are still under **Categories** on Home.
+            - **Netflix design**: near-black surfaces, Netflix red accent, ANISTREAM wordmark, a frosted glass dock and glass player popovers, with one shared motion style.
+            - **Cleaner search box**: the stray red outline around the text field is gone.
             - Streaming, scraping and providers are unchanged.
 
             ### 📦 Download:
-            Download **`AniStream-v8.4.apk`** below and install or update on any Android device running Android 8.0 or later - it updates previous versions in place and keeps your history and My List.
+            Download **`AniStream-v9.0.apk`** below and install or update on any Android device running Android 8.0 or later - it updates previous versions in place and keeps your history and My List.
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

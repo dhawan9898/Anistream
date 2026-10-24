@@ -276,9 +276,6 @@ public class ExoPlayerActivity extends AppCompatActivity {
     private AudioManager audioManager;
     private float currentBrightness = 0.5f;
     private GestureDetector gestureDetector;
-    private float dragStartY;
-    private boolean draggingVolume = false;
-    private boolean draggingBrightness = false;
 
     private final Runnable progressTicker = new Runnable() {
         @Override
@@ -2232,58 +2229,8 @@ public class ExoPlayerActivity extends AppCompatActivity {
         View overlay = findViewById(R.id.gesture_overlay);
         overlay.setOnTouchListener((v, event) -> {
             gestureDetector.onTouchEvent(event);
-            handleVerticalDrag(v, event);
             return true;
         });
-    }
-
-    private void handleVerticalDrag(View v, MotionEvent event) {
-        switch (event.getAction()) {
-            case MotionEvent.ACTION_DOWN:
-                dragStartY = event.getY();
-                draggingVolume = !screenLocked && event.getX() > v.getWidth() / 2f;
-                draggingBrightness = !screenLocked && !draggingVolume;
-                break;
-            case MotionEvent.ACTION_MOVE:
-                float deltaY = dragStartY - event.getY();
-                if (Math.abs(deltaY) < 12) return;
-                dragStartY = event.getY();
-                float fraction = deltaY / v.getHeight();
-                if (draggingVolume) {
-                    adjustVolume(fraction);
-                } else if (draggingBrightness) {
-                    adjustBrightness(fraction);
-                }
-                break;
-            case MotionEvent.ACTION_UP:
-            case MotionEvent.ACTION_CANCEL:
-                draggingVolume = false;
-                draggingBrightness = false;
-                handler.postDelayed(() -> gestureIndicator.setVisibility(View.GONE), 700);
-                break;
-        }
-    }
-
-    private void adjustVolume(float fraction) {
-        if (audioManager == null) return;
-        int max = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC);
-        int current = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC);
-        int delta = Math.round(fraction * max * 2.5f);
-        int next = Math.max(0, Math.min(max, current + delta));
-        audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, next, 0);
-        int percent = max > 0 ? Math.round((next * 100f) / max) : 0;
-        showGestureIndicator("🔊 " + percent + "%");
-        syncLevelSliders();
-    }
-
-    private void adjustBrightness(float fraction) {
-        currentBrightness = Math.max(0.02f, Math.min(1f, currentBrightness + fraction * 2.5f));
-        WindowManager.LayoutParams params = getWindow().getAttributes();
-        params.screenBrightness = currentBrightness;
-        getWindow().setAttributes(params);
-        int percent = Math.round(currentBrightness * 100);
-        showGestureIndicator("☀ " + percent + "%");
-        syncLevelSliders();
     }
 
     // Brightness (left) and volume (right) sliders shown with the controls.
