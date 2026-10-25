@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Play, Flame, Clock, ChevronRight, ChevronDown, Search as SearchIcon } from 'lucide-react';
+import { Play, ChevronRight, ChevronDown, Search as SearchIcon } from 'lucide-react';
 import { getTrendingAnime, type AnimeItem } from '../core/aniCliCore';
 import { getWatchHistory, isEpisodeFinished, subscribeLibraryChanges, type WatchHistoryItem } from '../services/historyService';
 import { FadeImage } from '../components/FadeImage';
@@ -50,11 +50,11 @@ const GenreRow: React.FC<{
   return (
     <div ref={rootRef} style={{ padding: '18px 0 4px 0' }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 20px', marginBottom: '10px' }}>
-        <h2 style={{ fontSize: '17px', fontWeight: 800, color: 'var(--text-primary)' }}>{genre.name} Anime</h2>
+        <h2 style={{ fontSize: '17px', fontWeight: 700, color: 'var(--text-primary)' }}>{genre.name} Anime</h2>
         <button
           onClick={onSeeAll}
           className="interactive"
-          style={{ background: 'none', border: 'none', color: 'var(--accent-primary)', fontSize: '13px', fontWeight: 600, display: 'flex', alignItems: 'center' }}
+          style={{ background: 'none', border: 'none', color: 'var(--text-secondary)', fontSize: '13px', fontWeight: 600, display: 'flex', alignItems: 'center' }}
         >
           <span>See all</span>
           <ChevronRight size={16} />
@@ -66,7 +66,7 @@ const GenreRow: React.FC<{
               <PosterCard key={anime.id} anime={anime} width={112} onClick={() => onSelectAnime(anime)} />
             ))
           : Array.from({ length: 5 }).map((_, i) => (
-              <div key={i} className="skeleton" style={{ flex: '0 0 112px', height: '162px', borderRadius: '6px' }} />
+              <div key={i} className="skeleton" style={{ flex: '0 0 112px', height: '162px', borderRadius: '4px' }} />
             ))}
       </div>
     </div>
@@ -145,7 +145,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
   }, [paused]);
 
   return (
-    <div className="screen-scroll" style={{ paddingBottom: '110px', position: 'relative' }}>
+    <div className="screen-scroll" style={{ paddingBottom: '108px', position: 'relative' }}>
       {/* Top Mobile Bar */}
       <div 
         style={{
@@ -161,21 +161,17 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
           justifyContent: 'space-between'
         }}
       >
-        <div style={{ display: 'flex', alignItems: 'baseline' }}>
-          <span style={{ fontSize: '24px', fontWeight: 900, letterSpacing: '-0.8px', color: 'var(--accent-primary)', textShadow: '0 2px 12px rgba(0,0,0,0.6)' }}>ANI</span>
-          <span style={{ fontSize: '24px', fontWeight: 900, letterSpacing: '-0.8px', color: '#fff', textShadow: '0 2px 12px rgba(0,0,0,0.6)' }}>STREAM</span>
-        </div>
+        <span style={{ fontSize: '24px', fontWeight: 900, letterSpacing: '-0.8px', color: 'var(--accent-primary)', textShadow: '0 2px 12px rgba(0,0,0,0.6)' }}>ANISTREAM</span>
 
-        {/* Sits on the hero banner image, so it keeps the dark-glass look
-            regardless of app theme (same reasoning as the hero text below). */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+        {/* Sits on the hero banner image, so it keeps the dark look regardless
+            of app theme (same reasoning as the hero text below). */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
           <button
             onClick={() => setPickerOpen(true)}
             className="interactive glass-pill-dark"
             style={{
-              padding: '7px 12px',
-              borderRadius: 'var(--radius-full)',
-              border: 'none',
+              padding: '7px 10px 7px 12px',
+              borderRadius: '4px',
               display: 'flex',
               alignItems: 'center',
               gap: '4px',
@@ -189,20 +185,21 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
           </button>
           <button
             onClick={onOpenSearch}
-            className="interactive glass-pill-dark"
+            className="interactive"
             aria-label="Search"
             style={{
-              width: '36px',
-              height: '36px',
-              borderRadius: '50%',
+              width: '40px',
+              height: '40px',
+              background: 'none',
               border: 'none',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
-              color: '#fff'
+              color: '#fff',
+              filter: 'drop-shadow(0 1px 6px rgba(0,0,0,0.7))'
             }}
           >
-            <SearchIcon size={18} />
+            <SearchIcon size={22} />
           </button>
         </div>
       </div>
@@ -223,10 +220,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
       {history.length > 0 && (
         <div style={{ padding: '24px 20px 8px 20px' }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '14px' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-              <Clock size={18} color="var(--accent-primary)" />
-              <h2 style={{ fontSize: '17px', fontWeight: 700, color: 'var(--text-primary)' }}>Continue Watching</h2>
-            </div>
+            <h2 style={{ fontSize: '17px', fontWeight: 700, color: 'var(--text-primary)' }}>Continue Watching</h2>
             <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>{history.length} {history.length === 1 ? 'title' : 'titles'}</span>
           </div>
 
@@ -279,7 +273,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
 
                   {/* Progress bar */}
                   <div style={{ width: '100%', height: '3px', backgroundColor: 'rgba(255,255,255,0.2)' }}>
-                    <div style={{ width: `${progressPct}%`, height: '100%', background: 'var(--accent-gradient)' }} />
+                    <div style={{ width: `${progressPct}%`, height: '100%', background: 'var(--accent-primary)' }} />
                   </div>
 
                   <div style={{ padding: '10px' }}>
@@ -311,14 +305,11 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
       {(loadingTrending || trending.length > 0) && (
         <div style={{ padding: '18px 0 4px 0' }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 20px', marginBottom: '10px' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-              <Flame size={18} color="#f43f5e" />
-              <h2 style={{ fontSize: '17px', fontWeight: 800, color: 'var(--text-primary)' }}>Popular Anime</h2>
-            </div>
+            <h2 style={{ fontSize: '17px', fontWeight: 700, color: 'var(--text-primary)' }}>Popular Anime</h2>
             <button
               onClick={onOpenSearch}
               className="interactive"
-              style={{ background: 'none', border: 'none', color: 'var(--accent-primary)', fontSize: '13px', fontWeight: 600, display: 'flex', alignItems: 'center' }}
+              style={{ background: 'none', border: 'none', color: 'var(--text-secondary)', fontSize: '13px', fontWeight: 600, display: 'flex', alignItems: 'center' }}
             >
               <span>See all</span>
               <ChevronRight size={16} />
@@ -327,7 +318,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
           <div className="rail" style={{ gap: '10px', padding: '0 20px 6px 20px' }}>
             {loadingTrending
               ? Array.from({ length: 5 }).map((_, i) => (
-                  <div key={i} className="skeleton" style={{ flex: '0 0 112px', height: '162px', borderRadius: '6px' }} />
+                  <div key={i} className="skeleton" style={{ flex: '0 0 112px', height: '162px', borderRadius: '4px' }} />
                 ))
               : trending.map(anime => (
                   <PosterCard key={anime.id} anime={anime} width={112} onClick={() => onSelectAnime(anime)} />

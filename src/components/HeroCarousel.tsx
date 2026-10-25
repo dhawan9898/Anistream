@@ -118,11 +118,11 @@ export const HeroCarousel: React.FC<HeroCarouselProps> = ({ items, onSelect, pau
               <div className="hero-overlay">
                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
                   <span className="hero-rank">#{i + 1} in Trending</span>
-                  <span className="glass-pill-dark" style={{ fontSize: '11px', fontWeight: 600, padding: '3px 8px', borderRadius: '6px', color: '#cbd5e1' }}>
+                  <span className="glass-pill-dark" style={{ fontSize: '11px', fontWeight: 600, padding: '3px 8px', borderRadius: '4px', color: '#cbd5e1' }}>
                     {anime.type || 'TV'}
                   </span>
                   {!!anime.subCount && (
-                    <span className="glass-pill-dark" style={{ fontSize: '11px', fontWeight: 600, padding: '3px 8px', borderRadius: '6px', color: '#cbd5e1' }}>
+                    <span className="glass-pill-dark" style={{ fontSize: '11px', fontWeight: 600, padding: '3px 8px', borderRadius: '4px', color: '#cbd5e1' }}>
                       {anime.subCount} eps
                     </span>
                   )}

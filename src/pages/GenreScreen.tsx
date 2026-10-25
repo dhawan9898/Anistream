@@ -62,7 +62,7 @@ export const GenreScreen: React.FC<GenreScreenProps> = ({ genre, onBack, onSelec
   };
 
   return (
-    <div onScroll={handleScroll} className="screen-scroll" style={{ paddingBottom: '110px' }}>
+    <div onScroll={handleScroll} className="screen-scroll" style={{ paddingBottom: '108px' }}>
       <div style={{
         position: 'sticky',
         top: 0,
@@ -75,12 +75,13 @@ export const GenreScreen: React.FC<GenreScreenProps> = ({ genre, onBack, onSelec
       }}>
         <button
           onClick={onBack}
-          className="interactive glass-pill"
+          className="interactive"
           aria-label="Back"
           style={{
             width: '40px',
             height: '40px',
-            borderRadius: '50%',
+            margin: '0 -8px',
+            background: 'none',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
@@ -97,7 +98,7 @@ export const GenreScreen: React.FC<GenreScreenProps> = ({ genre, onBack, onSelec
           className="interactive glass-pill"
           style={{
             padding: '7px 12px',
-            borderRadius: 'var(--radius-full)',
+            borderRadius: '4px',
             border: 'none',
             display: 'flex',
             alignItems: 'center',
@@ -117,7 +118,7 @@ export const GenreScreen: React.FC<GenreScreenProps> = ({ genre, onBack, onSelec
           <PosterCard key={anime.id} anime={anime} onClick={() => onSelectAnime(anime)} />
         ))}
         {page === 0 && loading && Array.from({ length: 9 }).map((_, i) => (
-          <div key={i} className="skeleton" style={{ borderRadius: '6px', paddingTop: '145%' }} />
+          <div key={i} className="skeleton" style={{ borderRadius: '4px', paddingTop: '145%' }} />
         ))}
       </div>
 

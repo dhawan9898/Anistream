@@ -1,7 +1,7 @@
 // SettingsScreen.tsx - Appearance, playback preferences, data management, and app info
 import React, { useEffect, useState } from 'react';
 import {
-  Settings as SettingsIcon, PlayCircle, SkipForward, Rewind, Trash2,
+  PlayCircle, SkipForward, Rewind, Trash2,
   Info, Terminal, Bookmark, Clock, Sun, Moon, Loader2
 } from 'lucide-react';
 import {
@@ -114,7 +114,7 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({ active, theme, o
   }
 
   return (
-    <div className="screen-scroll" style={{ paddingBottom: '110px' }}>
+    <div className="screen-scroll" style={{ paddingBottom: '108px' }}>
       {/* Header */}
       <div style={{
         position: 'sticky',
@@ -125,18 +125,6 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({ active, theme, o
         borderBottom: '1px solid var(--border-subtle)'
       }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-          <div style={{
-            width: '36px',
-            height: '36px',
-            borderRadius: 'var(--radius-sm)',
-            background: 'var(--accent-gradient)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            boxShadow: 'var(--shadow-glow)'
-          }}>
-            <SettingsIcon size={18} color="#fff" />
-          </div>
           <h1 style={{ fontSize: '22px', fontWeight: 800, color: 'var(--text-primary)' }}>Settings</h1>
         </div>
       </div>
@@ -200,7 +188,7 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({ active, theme, o
                   className={`interactive glass-pill chip ${prefs.defaultQuality === q ? 'active' : ''}`}
                   style={{
                     padding: '7px 16px',
-                    borderRadius: 'var(--radius-full)',
+                    borderRadius: '4px',
                     color: prefs.defaultQuality === q ? undefined : 'var(--text-secondary)',
                     fontSize: '12px',
                     fontWeight: 700

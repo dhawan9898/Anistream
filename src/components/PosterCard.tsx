@@ -41,7 +41,7 @@ export const PosterCard: React.FC<PosterCardProps> = ({ anime, onClick, width, c
       position: 'relative',
       width: '100%',
       paddingTop: '145%',
-      borderRadius: '6px',
+      borderRadius: '4px',
       overflow: 'hidden',
       backgroundColor: 'rgba(127, 127, 127, 0.15)',
       boxShadow: highlighted ? '0 0 0 2px #fff' : 'none'

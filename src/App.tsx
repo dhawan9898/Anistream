@@ -156,6 +156,17 @@ export const App: React.FC = () => {
     startClosing({ key: genreKey(genre), genre });
     updateGenre(null);
   };
+  // Floating bar: finger-down magnifies it and the selection lens follows the
+  // finger across tabs; lifting selects the tab under it.
+  const dockRef = useRef<HTMLElement | null>(null);
+  const [pressIdx, setPressIdx] = useState<number | null>(null);
+  const tabIndexAt = (clientX: number) => {
+    const rect = dockRef.current?.getBoundingClientRect();
+    if (!rect) return 0;
+    const ratio = (clientX - rect.left - 6) / Math.max(1, rect.width - 12);
+    return Math.max(0, Math.min(TABS.length - 1, Math.floor(ratio * TABS.length)));
+  };
+
   const switchTab = (tab: Tab) => {
     updateStack([]);
     updateGenre(null);
@@ -773,33 +784,55 @@ export const App: React.FC = () => {
         </Suspense>
       )}
 
-      {/* Floating dock (slides away while a title page or the player is
-          open). A liquid-glass pane with a sliding indicator behind the active
-          tab. It is the only blurred element over scrolling content, and it is
-          small and fixed, so the blur stays cheap. */}
+      {/* Bottom bar (slides away while a title page or the player is open).
+          A liquid-glass surface with a sliding indicator behind the active
+          tab. It is the only blurred element over scrolling content, and it
+          is fixed, so the blur stays cheap. */}
       <div
         className={dockHidden ? 'dock-wrap hidden' : 'dock-wrap'}
-        style={{ bottom: 'calc(16px + var(--safe-bottom))' }}
         aria-hidden={dockHidden}
       >
-        <nav className="glass-dock" aria-label="Main">
+        <nav
+          ref={dockRef}
+          className="glass-dock"
+          aria-label="Main"
+          data-pressed={pressIdx !== null}
+          onPointerDown={(e) => {
+            e.currentTarget.setPointerCapture(e.pointerId);
+            setPressIdx(tabIndexAt(e.clientX));
+          }}
+          onPointerMove={(e) => {
+            if (pressIdx !== null) setPressIdx(tabIndexAt(e.clientX));
+          }}
+          onPointerUp={() => {
+            if (pressIdx === null) return;
+            const tab = TABS[pressIdx];
+            setPressIdx(null);
+            if (tab.id !== currentTab || animeStack.length || selectedGenre) switchTab(tab.id);
+          }}
+          onPointerCancel={() => setPressIdx(null)}
+        >
           <div
             className="dock-indicator"
             style={{
-              width: `${100 / TABS.length}%`,
-              transform: `translateX(${TABS.findIndex(t => t.id === currentTab) * 100}%)`
+              width: `calc((100% - 12px) / ${TABS.length})`,
+              transform: `translateX(${(pressIdx ?? TABS.findIndex(t => t.id === currentTab)) * 100}%)`
             }}
           />
-          {TABS.map((tab) => {
+          {TABS.map((tab, i) => {
             const Icon = tab.icon;
-            const active = currentTab === tab.id;
+            const active = (pressIdx ?? TABS.findIndex(t => t.id === currentTab)) === i;
             return (
               <button
                 key={tab.id}
-                onClick={() => { if (!active || animeStack.length || selectedGenre) switchTab(tab.id); }}
-                className={`interactive dock-item ${active ? 'active' : ''}`}
+                onClick={(e) => {
+                  // Touch and mouse are handled on pointer up; a click with no
+                  // pointer (detail 0) is keyboard or screen-reader activation.
+                  if (e.detail === 0 && (tab.id !== currentTab || animeStack.length || selectedGenre)) switchTab(tab.id);
+                }}
+                className={`dock-item ${active ? 'active' : ''}`}
                 aria-label={tab.label}
-                aria-current={active ? 'page' : undefined}
+                aria-current={currentTab === tab.id ? 'page' : undefined}
               >
                 <Icon size={20} />
                 <span>{tab.label}</span>

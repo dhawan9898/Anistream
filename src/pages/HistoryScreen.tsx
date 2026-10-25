@@ -61,7 +61,7 @@ export const HistoryScreen: React.FC<HistoryScreenProps> = ({
   };
 
   return (
-    <div className="screen-scroll" style={{ paddingBottom: '110px' }}>
+    <div className="screen-scroll" style={{ paddingBottom: '108px' }}>
       {/* Top Header */}
       <div style={{
         position: 'sticky',
@@ -173,7 +173,7 @@ export const HistoryScreen: React.FC<HistoryScreenProps> = ({
                         <Play size={16} fill="#fff" color="#fff" />
                       </div>
                       <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, height: '3px', backgroundColor: 'rgba(255,255,255,0.2)' }}>
-                        <div style={{ width: `${progressPct}%`, height: '100%', background: 'var(--accent-gradient)' }} />
+                        <div style={{ width: `${progressPct}%`, height: '100%', background: 'var(--accent-primary)' }} />
                       </div>
                     </div>
 

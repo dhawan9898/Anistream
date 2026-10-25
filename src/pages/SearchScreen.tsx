@@ -96,7 +96,7 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({
   };
 
   return (
-    <div className="screen-scroll" style={{ paddingBottom: '110px', display: 'flex', flexDirection: 'column' }}>
+    <div className="screen-scroll" style={{ paddingBottom: '108px', display: 'flex', flexDirection: 'column' }}>
       {/* Sticky Header with Search Bar */}
       <div 
         style={{
@@ -114,11 +114,12 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({
         <button
           onClick={onBack}
           aria-label="Back to Home"
-          className="interactive glass-pill"
+          className="interactive"
           style={{
             width: '40px',
             height: '40px',
-            borderRadius: '50%',
+            margin: '0 -8px',
+            background: 'none',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
@@ -138,7 +139,7 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({
             alignItems: 'center',
             gap: '10px',
             padding: '10px 14px',
-            borderRadius: 'var(--radius-full)'
+            borderRadius: '4px'
           }}
         >
           <SearchIcon size={18} color="var(--text-muted)" />
@@ -182,14 +183,14 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({
           <h2 style={{ fontSize: '19px', fontWeight: 800, color: 'var(--text-primary)', marginBottom: '12px' }}>Top Searches</h2>
           <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
             {topSearches.length === 0 && Array.from({ length: 6 }).map((_, i) => (
-              <div key={i} className="skeleton" style={{ height: '68px', borderRadius: '6px' }} />
+              <div key={i} className="skeleton" style={{ height: '68px', borderRadius: '4px' }} />
             ))}
             {topSearches.map(anime => (
               <button
                 key={anime.id}
                 onClick={() => onSelectAnime(anime)}
                 className="interactive"
-                style={{ display: 'flex', alignItems: 'center', gap: '14px', background: 'var(--bg-surface)', border: 'none', borderRadius: '6px', padding: 0, overflow: 'hidden', textAlign: 'left', color: 'var(--text-primary)' }}
+                style={{ display: 'flex', alignItems: 'center', gap: '14px', background: 'var(--bg-surface)', border: 'none', borderRadius: '4px', padding: 0, overflow: 'hidden', textAlign: 'left', color: 'var(--text-primary)' }}
               >
                 <div style={{ position: 'relative', width: '120px', height: '68px', flexShrink: 0, backgroundColor: 'rgba(127,127,127,0.15)' }}>
                   <FadeImage src={anime.banner || anime.poster} alt="" loading="lazy" style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }} />
@@ -211,7 +212,7 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({
           <button
             onClick={() => handleSearch(query)}
             className="interactive glass-pill chip active"
-            style={{ padding: '10px 22px', borderRadius: 'var(--radius-full)', fontSize: '13px', fontWeight: 700 }}
+            style={{ padding: '10px 22px', borderRadius: '4px', fontSize: '13px', fontWeight: 700 }}
           >
             Retry
           </button>

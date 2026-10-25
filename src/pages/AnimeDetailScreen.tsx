@@ -259,7 +259,7 @@ export const AnimeDetailScreen: React.FC<AnimeDetailScreenProps> = ({
             style={{
               width: '40px',
               height: '40px',
-              borderRadius: '50%',
+              borderRadius: '8px',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center'
@@ -280,7 +280,7 @@ export const AnimeDetailScreen: React.FC<AnimeDetailScreenProps> = ({
               width: '104px',
               height: '150px',
               objectFit: 'cover',
-              borderRadius: '6px',
+              borderRadius: '4px',
               boxShadow: '0 8px 24px rgba(0,0,0,0.7)',
               flexShrink: 0
             }}
@@ -309,7 +309,7 @@ export const AnimeDetailScreen: React.FC<AnimeDetailScreenProps> = ({
               style={{
                 width: '100%',
                 padding: '12px',
-                borderRadius: '6px',
+                borderRadius: '4px',
                 background: '#fff',
                 border: 'none',
                 display: 'flex',
@@ -457,7 +457,7 @@ export const AnimeDetailScreen: React.FC<AnimeDetailScreenProps> = ({
                       className={`interactive glass-pill chip ${activeRange === i ? 'active' : ''}`}
                       style={{
                         padding: '6px 14px',
-                        borderRadius: 'var(--radius-full)',
+                        borderRadius: '4px',
                         color: activeRange === i ? undefined : 'var(--text-secondary)',
                         fontSize: '12px',
                         fontWeight: 700,
@@ -569,7 +569,7 @@ export const AnimeDetailScreen: React.FC<AnimeDetailScreenProps> = ({
           details === null ? (
             <div className="grid-collection">
               {Array.from({ length: 6 }).map((_, i) => (
-                <div key={i} className="skeleton" style={{ borderRadius: '6px', paddingTop: '145%' }} />
+                <div key={i} className="skeleton" style={{ borderRadius: '4px', paddingTop: '145%' }} />
               ))}
             </div>
           ) : suggestions.length === 0 ? (

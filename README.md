@@ -41,7 +41,7 @@ Requires Android 8.0 (API 26) or newer.
 
 ## 2. Using the app
 
-The floating dock at the bottom switches between the four main tabs.
+The bottom bar switches between the four main tabs.
 
 | Tab | What it does |
 |-----|--------------|

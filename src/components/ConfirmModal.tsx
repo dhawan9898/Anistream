@@ -86,7 +86,7 @@ export const ConfirmModal: React.FC<ConfirmModalProps> = ({
               padding: '11px',
               borderRadius: 'var(--radius-md)',
               border: 'none',
-              background: danger ? 'var(--accent-danger)' : 'var(--accent-gradient)',
+              background: danger ? 'var(--accent-danger)' : 'var(--accent-primary)',
               color: '#fff',
               fontSize: '14px',
               fontWeight: 700

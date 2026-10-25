@@ -28,8 +28,6 @@
   --accent-amber: #f59e0b;
   --accent-danger: #fb7185;
   --accent-danger-bg: rgba(244, 63, 94, 0.14);
-  --accent-gradient: linear-gradient(135deg, #e50914 0%, #ff2a36 100%);
-  --accent-gradient-glow: linear-gradient(135deg, rgba(229,9,20,0.4) 0%, rgba(255,42,54,0.25) 100%);
   --surface-gradient: linear-gradient(180deg, rgba(255, 255, 255, 0.04) 0%, rgba(255, 255, 255, 0.01) 100%);
 
   --text-primary: #ffffff;
@@ -46,6 +44,7 @@
   /* Motion: one curve + three durations across both apps. */
   --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
   --ease-spring: cubic-bezier(0.34, 1.4, 0.64, 1);
+  --ease-liquid: cubic-bezier(0.3, 1.25, 0.5, 1);
   --dur-fast: 0.15s;
   --dur-base: 0.25s;
   --dur-slow: 0.35s;
@@ -58,10 +57,9 @@
   --shadow-dock: 0 16px 40px rgba(0, 0, 0, 0.6), 0 4px 14px rgba(0, 0, 0, 0.4);
   --bg-dock: rgba(24, 24, 28, 0.66);
 
-  --radius-sm: 6px;
-  --radius-md: 10px;
-  --radius-lg: 16px;
-  --radius-full: 9999px;
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 10px;
 
   --shadow-sm: 0 4px 12px rgba(0, 0, 0, 0.4);
   --shadow-lg: 0 12px 36px rgba(0, 0, 0, 0.6);
@@ -90,8 +88,6 @@
   --accent-amber: #d97706;
   --accent-danger: #e11d48;
   --accent-danger-bg: rgba(225, 29, 72, 0.1);
-  --accent-gradient: linear-gradient(135deg, #e50914 0%, #ff2a36 100%);
-  --accent-gradient-glow: linear-gradient(135deg, rgba(229,9,20,0.25) 0%, rgba(255,42,54,0.15) 100%);
 
   --glass-blur: blur(18px) saturate(160%);
   --glass-fill: rgba(255, 255, 255, 0.66);
@@ -99,6 +95,7 @@
   --glass-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.9), 0 10px 28px rgba(15, 23, 42, 0.14);
   --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
   --ease-spring: cubic-bezier(0.34, 1.4, 0.64, 1);
+  --ease-liquid: cubic-bezier(0.3, 1.25, 0.5, 1);
   --dur-fast: 0.15s;
   --dur-base: 0.25s;
   --dur-slow: 0.35s;
@@ -116,10 +113,9 @@
   --shadow-dock: 0 16px 36px rgba(15, 23, 42, 0.16), 0 4px 12px rgba(15, 23, 42, 0.08);
   --bg-dock: rgba(255, 255, 255, 0.96);
 
-  --radius-sm: 8px;
-  --radius-md: 14px;
-  --radius-lg: 20px;
-  --radius-full: 9999px;
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 10px;
 
   --shadow-sm: 0 4px 12px rgba(15, 23, 42, 0.08);
   --shadow-lg: 0 12px 32px rgba(15, 23, 42, 0.14);
@@ -155,6 +151,11 @@ body {
 }
 
 button { font-family: inherit; }
+
+::selection {
+  background: var(--accent-primary);
+  color: #fff;
+}
 
 /* Keyboard / D-pad focus ring (touch taps never show it). */
 :focus-visible {
@@ -309,38 +310,48 @@ button { font-family: inherit; }
   transition: background-color 0.4s ease, border-color 0.4s ease;
 }
 
-/* Floating Apple-TV style dock: detached from the screen edge, fully
-   rounded, and lifted with a deep ambient shadow so it reads as a physical
-   pane hovering above the content rather than a docked bar. */
+/* Floating bottom bar: a detached liquid-glass pill lifted off the screen
+   edge. Blur, saturation, hairline border and a
+   top specular highlight give the glass; pressing it magnifies the bar and
+   the selection lens with a spring. It is the only blurred element over
+   scrolling content and it is fixed, so the blur stays cheap. */
 .dock-wrap {
   position: fixed;
-  left: 20px;
-  right: 20px;
+  left: 16px;
+  right: 16px;
+  bottom: calc(12px + var(--safe-bottom));
   z-index: 50;
   display: flex;
   justify-content: center;
+  pointer-events: none;
   transition: transform var(--dur-slow) var(--ease-out), opacity var(--dur-base) ease;
 }
 .dock-wrap.hidden {
-  transform: translate3d(0, 140%, 0);
+  transform: translate3d(0, 160%, 0);
   opacity: 0;
-  pointer-events: none;
 }
 
 .glass-dock {
   position: relative;
   width: 100%;
-  max-width: 360px;
+  max-width: 380px;
   height: 64px;
+  padding: 0 6px;
   display: flex;
   align-items: stretch;
+  pointer-events: auto;
+  touch-action: none;
   background: var(--bg-dock);
   -webkit-backdrop-filter: var(--glass-blur);
   backdrop-filter: var(--glass-blur);
   border: 1px solid var(--glass-border);
-  border-radius: var(--radius-full);
+  border-radius: 9999px;
   box-shadow: var(--glass-shadow), var(--shadow-dock);
-  transition: background-color 0.4s ease, border-color 0.4s ease, box-shadow 0.4s ease;
+  transition: scale 0.5s var(--ease-liquid), background-color 0.4s ease, border-color 0.4s ease, box-shadow 0.4s ease;
+}
+.dock-wrap.hidden .glass-dock { pointer-events: none; }
+.glass-dock[data-pressed="true"] {
+  scale: 1.06;
 }
 
 .glass-pill {
@@ -460,6 +471,7 @@ button { font-family: inherit; }
   flex: 1;
   background: none;
   border: none;
+  border-radius: 9999px;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -469,23 +481,28 @@ button { font-family: inherit; }
   transition: transform 0.35s cubic-bezier(0.34, 1.56, 0.64, 1), color 0.25s ease;
 }
 .dock-item span { font-size: 10px; font-weight: 500; }
-.dock-item.active { color: var(--select-text); transform: translateY(-2px); }
+.dock-item.active { color: var(--select-text); }
+.dock-item svg { transition: scale 0.45s var(--ease-liquid); }
+.glass-dock[data-pressed="true"] .dock-item.active svg { scale: 1.25; }
 .dock-item.active span { font-weight: 700; }
 
-/* Sliding liquid indicator that glides behind the active dock icon. A frosted,
-   lifted pane of glass - not a brand-colored fill - so "selected" reads as
-   glass catching light, matching the rest of the liquid-glass language. */
+/* Sliding liquid lens behind the active tab: a frosted, lifted pane of glass
+   rather than a brand-colored fill. It overshoots slightly and settles, and
+   grows while the bar is pressed so it reads as a magnifying lens. */
 .dock-indicator {
   position: absolute;
   top: 6px;
   bottom: 6px;
-  border-radius: var(--radius-full);
-  left: 0;
+  left: 6px;
+  border-radius: 9999px;
   background: var(--select-bg);
   border: 1px solid var(--select-border);
   box-shadow: var(--select-shadow);
-  transition: transform 0.38s cubic-bezier(0.22, 1, 0.36, 1);
+  transition: transform 0.55s var(--ease-liquid), scale 0.45s var(--ease-liquid);
   z-index: 0;
+}
+.glass-dock[data-pressed="true"] .dock-indicator {
+  scale: 1.18 1.12;
 }
 
 /* Segmented control (e.g. Sub/Dub, History/Saved): a frosted track with a
@@ -494,14 +511,14 @@ button { font-family: inherit; }
 .seg-track {
   display: flex;
   background-color: var(--track-bg);
-  border-radius: var(--radius-full);
+  border-radius: 8px;
   padding: 4px;
   transition: background-color 0.4s ease;
 }
 .seg-pill {
   flex: 1;
   padding: 8px;
-  border-radius: var(--radius-full);
+  border-radius: 6px;
   border: none;
   background: transparent;
   color: var(--text-secondary);
@@ -536,7 +553,7 @@ button { font-family: inherit; }
   position: relative;
   width: 46px;
   height: 27px;
-  border-radius: var(--radius-full);
+  border-radius: 8px;
   border: none;
   flex-shrink: 0;
   background: var(--track-bg);
@@ -554,7 +571,7 @@ button { font-family: inherit; }
   left: 3px;
   width: 21px;
   height: 21px;
-  border-radius: 50%;
+  border-radius: 5px;
   background: #ffffff;
   box-shadow: 0 2px 6px rgba(0, 0, 0, 0.4);
   transition: transform 0.35s cubic-bezier(0.34, 1.56, 0.64, 1);
@@ -639,7 +656,7 @@ input:focus-visible {
   font-size: 11px;
   font-weight: 800;
   padding: 3px 8px;
-  border-radius: 4px;
+  border-radius: 2px;
   letter-spacing: 0.3px;
 }
 .hero-title {
@@ -667,7 +684,7 @@ input:focus-visible {
   justify-content: center;
   gap: 8px;
   height: 44px;
-  border-radius: 6px;
+  border-radius: 4px;
   border: none;
   font-size: 15px;
   font-weight: 700;
@@ -690,11 +707,11 @@ input:focus-visible {
   height: 6px;
   padding: 0;
   border: none;
-  border-radius: 3px;
+  border-radius: 50%;
   background: rgba(255,255,255,0.35);
-  transition: width 0.25s ease, background-color 0.25s ease;
+  transition: background-color 0.25s ease, transform 0.35s var(--ease-liquid);
 }
-.hero-dot.active { width: 18px; background: #fff; }
+.hero-dot.active { background: #fff; transform: scale(1.25); }
 
 
 /* Poster/banner images fade in once decoded instead of popping. */
