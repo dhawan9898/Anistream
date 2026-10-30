@@ -305,6 +305,9 @@ public class ExoPlayerActivity extends AppCompatActivity {
     // automatic re-resolve of the same episode per episode/audio, the same
     // thing closing and reopening the episode does. Key = "episode|mode".
     private String reloadAttemptedKey;
+    // Position of the last automatic re-resolve: a later failure well past it
+    // (an expired link on a long episode) gets another one.
+    private long reloadedAtMs;
 
     // Next episode's stream, resolved ahead of time by JS (setNextEpisode).
     // Valid only while the episode/audio it was resolved after is playing.
@@ -1877,7 +1880,9 @@ public class ExoPlayerActivity extends AppCompatActivity {
                 // lookup of the episode (that's why closing and reopening it
                 // works) - do that once automatically, resuming here.
                 String key = episodeNumber + "|" + currentMode;
-                if (failedUri != null && !key.equals(reloadAttemptedKey)) {
+                if (failedUri != null
+                        && (!key.equals(reloadAttemptedKey) || lastKnownPositionMs - reloadedAtMs > 30_000)) {
+                    reloadedAtMs = lastKnownPositionMs;
                     Log.w(TAG, "HTTP error, re-resolving episode " + key + " once: " + failedUri);
                     final long resumeAt = lastKnownPositionMs;
                     final String number = episodeNumber;
@@ -1917,6 +1922,18 @@ public class ExoPlayerActivity extends AppCompatActivity {
     private DefaultHttpDataSource.Factory buildDataSourceFactory(String referer) {
         Map<String, String> headers = new HashMap<>();
         headers.put("Referer", referer != null ? referer : "https://zokoanime.video/");
+        // Browsers send Origin on HLS segment fetches and the CDN rejects
+        // (403) requests without it, even though the provider's own player works.
+        String ref = referer != null ? referer : "https://zokoanime.video/";
+        try {
+            Uri u = Uri.parse(ref);
+            if (u.getScheme() != null && u.getHost() != null) {
+                headers.put("Origin", u.getScheme() + "://" + u.getHost() + (u.getPort() > 0 ? ":" + u.getPort() : ""));
+            }
+        } catch (Exception ignored) {
+        }
+        headers.put("Accept", "*/*");
+        headers.put("Accept-Language", "en-US,en;q=0.9");
         headers.put("User-Agent", "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36");
         return new DefaultHttpDataSource.Factory()
                 .setDefaultRequestProperties(headers)

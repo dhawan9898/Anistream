@@ -451,7 +451,7 @@
 
         <FrameLayout
             android:id="@+id/btn_next_episode"
-            android:layout_width="wrap_content"
+            android:layout_width="148dp"
             android:layout_height="36dp"
             android:layout_marginStart="8dp"
             android:visibility="gone">
@@ -469,7 +469,7 @@
                  phones, which made this button look oversized. -->
             <TextView
                 android:id="@+id/next_episode_label"
-                android:layout_width="wrap_content"
+                android:layout_width="match_parent"
                 android:layout_height="match_parent"
                 android:drawablePadding="6dp"
                 android:gravity="center"

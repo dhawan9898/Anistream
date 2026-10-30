@@ -45,7 +45,9 @@ final class NativeStreamResolver {
     private static final String HOST = "https://hianime.at";
     private static final String UA =
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
-    private static final int TIMEOUT_MS = 10_000;
+    private static final int TIMEOUT_MS = 8_000;
+    private static final long HEDGE_MS = 2_500;
+    private static final ExecutorService HEDGE_POOL = Executors.newFixedThreadPool(4);
     private static final int MAX_SERVERS = 4;
     // Same constants as aniCliCore.decryptToken (key is 16 chars zero-padded to 32 bytes).
     private static final String KEY = "i?LMTAx0Q6,:}50U";
@@ -121,19 +123,40 @@ final class NativeStreamResolver {
         List<String> hashes = pickServerHashes(html, mode);
         if (hashes.isEmpty()) throw new IOException("no " + mode + " servers for episode " + episodeId);
 
+        // Hedged: the next server starts when the previous one fails or has
+        // taken HEDGE_MS, so one slow server no longer stalls loading for
+        // its whole timeout. The first stream found wins.
+        final java.util.concurrent.ExecutorCompletionService<Result> ecs =
+                new java.util.concurrent.ExecutorCompletionService<>(HEDGE_POOL);
+        final List<java.util.concurrent.Future<Result>> futures = new ArrayList<>();
         Exception last = null;
-        for (String hash : hashes) {
-            try {
-                Result result = resolveEmbed(hash);
-                if (result != null) {
-                    cache.put(key, result);
-                    if (cache.size() > 12) cache.clear();
-                    return result;
+        int launched = 0, finished = 0;
+        try {
+            while (finished < hashes.size()) {
+                if (launched < hashes.size() && true) {
+                    final String hash = hashes.get(launched++);
+                    futures.add(ecs.submit(() -> resolveEmbed(hash)));
                 }
-            } catch (Exception e) {
-                last = e;
-                Log.w(TAG, "server failed: " + e);
+                java.util.concurrent.Future<Result> done = launched < hashes.size()
+                        ? ecs.poll(HEDGE_MS, java.util.concurrent.TimeUnit.MILLISECONDS)
+                        : ecs.take();
+                if (done == null) continue;
+                finished++;
+                try {
+                    Result result = done.get();
+                    if (result != null) {
+                        cache.put(key, result);
+                        if (cache.size() > 12) cache.clear();
+                        return result;
+                    }
+                } catch (ExecutionException e) {
+                    Throwable c = e.getCause();
+                    last = c instanceof Exception ? (Exception) c : e;
+                    Log.w(TAG, "server failed: " + last);
+                }
             }
+        } finally {
+            for (java.util.concurrent.Future<Result> f : futures) f.cancel(true);
         }
         throw last != null ? last : new IOException("no server produced a stream");
     }
