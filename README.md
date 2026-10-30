@@ -1,6 +1,6 @@
 # AniStream — Android Anime Streaming App (powered by `ani-cli`)
 
-[![Version](https://img.shields.io/badge/Version-v9.1-E50914?style=for-the-badge&logo=android)](https://github.com/dhawan9898/Anistream/releases)
+[![Version](https://img.shields.io/badge/Version-v9.2-E50914?style=for-the-badge&logo=android)](https://github.com/dhawan9898/Anistream/releases)
 [![Android](https://img.shields.io/badge/Android-8.0%2B-green?style=for-the-badge&logo=android)](https://github.com/dhawan9898/Anistream/releases)
 [![License](https://img.shields.io/badge/License-GPLv3-blue?style=for-the-badge)](https://www.gnu.org/licenses/gpl-3.0)
 
@@ -30,8 +30,8 @@ steps as [`ani-cli`](https://github.com/pystardust/ani-cli).
 
 ## 1. Install the APK
 
-1. Open the **[Releases page](https://github.com/dhawan9898/Anistream/releases)** and pick the latest release (**v9.1**).
-2. Under **Assets**, download **`AniStream-v9.1.apk`**.
+1. Open the **[Releases page](https://github.com/dhawan9898/Anistream/releases)** and pick the latest release (**v9.2**).
+2. Under **Assets**, download **`AniStream-v9.2.apk`**.
 3. Open the file on your phone. If Android asks, enable **Install unknown apps** for your browser or file manager.
 4. Tap **Install**. If you already have AniStream, the new version installs over it and keeps your history and My List, because every release is signed with the same key.
 
@@ -159,9 +159,9 @@ Use the browser's device toolbar (Ctrl+Shift+M in Chrome) to preview phone and t
 
 | Trigger | Result |
 |---------|--------|
-| Push to `main` / `master` | APK uploaded as a workflow artifact (`AniStream-v9.1-APK`, kept 30 days), plus the R8 mapping (`AniStream-v9.1-mapping`) |
-| Push a tag `v*` (e.g. `git tag v9.1 && git push origin v9.1`) | Artifact plus a GitHub Release under that tag with the APK attached |
-| **Actions ▸ Build AniStream v9.1 APK ▸ Run workflow** | Builds any branch. Fill in `release_tag` (e.g. `v9.1`) to also publish a release. If that release already exists, it and its tag are replaced so the tag points at the built commit. Leave it empty to only build. |
+| Push to `main` / `master` | APK uploaded as a workflow artifact (`AniStream-v9.2-APK`, kept 30 days), plus the R8 mapping (`AniStream-v9.2-mapping`) |
+| Push a tag `v*` (e.g. `git tag v9.2 && git push origin v9.2`) | Artifact plus a GitHub Release under that tag with the APK attached |
+| **Actions ▸ Build AniStream v9.2 APK ▸ Run workflow** | Builds any branch. Fill in `release_tag` (e.g. `v9.2`) to also publish a release. If that release already exists, it and its tag are replaced so the tag points at the built commit. Leave it empty to only build. |
 
 ---
 
@@ -218,6 +218,13 @@ Network requests to the site go through a small in-memory cache (5 min for pages
 ---
 
 ## 10. What's new
+
+### v9.2
+
+- **Fewer HTTP 403 playback errors**: video segment requests now carry `Origin`/`Accept` headers like a browser, and an expired stream link is re-resolved again later in the same episode (previously only once per episode).
+- **Faster loading**: the native stream lookup tries servers in parallel (next one after 2.5 s or on failure) with 8 s request timeouts.
+- **Next Episode button** has a fixed compact width.
+- `aniCliCore` shares `fetchTimed` with `core/http.ts`; a failing servers endpoint now reports its HTTP status.
 
 ### v9.1
 

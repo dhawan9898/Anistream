@@ -1,4 +1,4 @@
-name: Build AniStream v9.1 APK
+name: Build AniStream v9.2 APK
 
 on:
   push:
@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
     inputs:
       release_tag:
-        description: 'Tag to publish this build under (e.g. v9.1) - leave empty to just build, no release'
+        description: 'Tag to publish this build under (e.g. v9.2) - leave empty to just build, no release'
         required: false
         default: ''
 
@@ -72,26 +72,26 @@ jobs:
       - name: Package APK for Release
         run: |
           mkdir -p build-output
-          cp android/app/build/outputs/apk/release/app-release.apk build-output/AniStream-v9.1.apk
-          ls -lh build-output/AniStream-v9.1.apk
+          cp android/app/build/outputs/apk/release/app-release.apk build-output/AniStream-v9.2.apk
+          ls -lh build-output/AniStream-v9.2.apk
 
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: AniStream-v9.1-APK
-          path: build-output/AniStream-v9.1.apk
+          name: AniStream-v9.2-APK
+          path: build-output/AniStream-v9.2.apk
           retention-days: 30
 
       # R8 mapping - needed to de-obfuscate stack traces from this build.
       - name: Upload R8 Mapping
         uses: actions/upload-artifact@v4
         with:
-          name: AniStream-v9.1-mapping
+          name: AniStream-v9.2-mapping
           path: android/app/build/outputs/mapping/release/mapping.txt
           retention-days: 90
           if-no-files-found: warn
 
-      # A manual run republishing an existing tag (e.g. rebuilding v9.1)
+      # A manual run republishing an existing tag (e.g. rebuilding v9.2)
       # replaces that release and its tag, so the tag always points at the
       # commit this APK was built from. Tag pushes are never touched.
       - name: Replace Existing Release (manual runs only)
@@ -109,25 +109,25 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch' && inputs.release_tag != '')
         uses: softprops/action-gh-release@v2
         with:
-          files: build-output/AniStream-v9.1.apk
+          files: build-output/AniStream-v9.2.apk
           tag_name: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || inputs.release_tag }}
           # Without this a new tag is created on the default branch, not on
           # the commit that was actually built.
           target_commitish: ${{ github.sha }}
           name: AniStream ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || inputs.release_tag }} Release
           body: |
-            ## AniStream v9.1 - Android Anime Streaming App (Powered by ani-cli)
+            ## AniStream v9.2 - Android Anime Streaming App (Powered by ani-cli)
 
-            v9.1 refines the Netflix look with a floating liquid-glass bar.
+            v9.2 is a playback stability release.
 
-            ### What's new in v9.1:
+            ### What's new in v9.2:
 
-            - **Floating bottom bar**: a detached glass pill that magnifies when you touch it. Keep your finger down and slide across the tabs, then lift to open the one under it.
-            - **Cleaner controls**: rectangular buttons, chips, search field and switches instead of pills, flat Netflix red progress bars, and plain row titles.
-            - **New icon**: a red A replaces the default template favicon.
-            - Streaming, scraping and providers are unchanged.
+            - **Fewer "HTTP 403" playback errors**: the player now sends the same Origin and Accept headers a browser does when fetching video segments, and an expired stream link is re-fetched again later in the same episode instead of only once.
+            - **Faster loading**: video servers are tried in parallel (the next one starts after 2.5 s or when one fails) and requests time out after 8 s instead of 10 s.
+            - **Next Episode button** has a fixed, compact size instead of stretching across the screen.
+            - Clearer error when the servers list can't be loaded.
 
             ### Download:
-            Download **`AniStream-v9.1.apk`** below and install or update on any Android device running Android 8.0 or later. It updates previous versions in place and keeps your history and My List.
+            Download **`AniStream-v9.2.apk`** below and install or update on any Android device running Android 8.0 or later. It updates previous versions in place and keeps your history and My List.
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
