@@ -1,5 +1,6 @@
 // aniCliCore.ts - Port of ani-cli scraping & deobfuscation logic
 import { Capacitor } from '@capacitor/core';
+import { fetchTimed } from './http.ts';
 import { MAX_STALE_MS, readPersisted, writePersisted } from './persistentCache.ts';
 
 export interface AnimeItem {
@@ -108,26 +109,8 @@ export function getApiBase(): string {
   return Capacitor.isNativePlatform() ? REMOTE_HOST : "/api-hianime";
 }
 
-// Every network step of stream resolution goes through this so one hung
-// request can't leave the player spinning forever. The timeout is enforced
-// with Promise.race because the native (CapacitorHttp) fetch ignores
-// signals; on the web the AbortController additionally cancels the
-// underlying request so a timed-out download doesn't keep eating bandwidth.
-const FETCH_TIMEOUT_MS = 15000;
-
-function fetchTimed(input: string, init?: RequestInit, ms = FETCH_TIMEOUT_MS): Promise<Response> {
-  const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
-  let timer: ReturnType<typeof setTimeout>;
-  const timeout = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => {
-      controller?.abort();
-      reject(new Error(`request timed out after ${ms}ms: ${input}`));
-    }, ms);
-  });
-  return Promise.race([fetch(input, { ...init, signal: controller?.signal }), timeout])
-    .finally(() => clearTimeout(timer));
-}
-
+// Every network step of stream resolution goes through fetchTimed (see
+// http.ts) so one hung request can't leave the player spinning forever.
 // Idempotent GETs against the site get one retry after a short backoff when
 // the failure looks transient (network error, 429, 5xx) - a single flaky
 // response shouldn't fall straight through to curated/demo fallbacks.
@@ -498,7 +481,7 @@ export async function getEpisodeStream(
     const endpoint = `${getApiBase()}/api/theme/episode/servers?episodeId=${targetEpisodeId}`;
     const res = await fetchWithRetry(endpoint, { headers: UPSTREAM_HEADERS });
     if (!res.ok) {
-      console.warn(`[aniCliCore] Direct scrape: servers endpoint returned HTTP ${res.status} for episodeId=${targetEpisodeId}`);
+      throw new Error(`servers endpoint returned HTTP ${res.status} for episodeId=${targetEpisodeId}`);
     }
     const data = await res.json();
 

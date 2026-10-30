@@ -79,12 +79,18 @@ function backoffDelay(attempt: number, retryAfter: string | null): number {
   return exp / 2 + Math.random() * (exp / 2);
 }
 
-function fetchTimed(url: string, init: RequestInit | undefined, ms: number): Promise<Response> {
+// Aborts the underlying request on the web as well; the native fetch ignores signals.
+export function fetchTimed(url: string, init?: RequestInit, ms = DEFAULT_TIMEOUT_MS): Promise<Response> {
+  const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
   let timer: ReturnType<typeof setTimeout> | undefined;
   const timeout = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => reject(new Error(`request timed out after ${ms}ms: ${url}`)), ms);
+    timer = setTimeout(() => {
+      controller?.abort();
+      reject(new Error(`request timed out after ${ms}ms: ${url}`));
+    }, ms);
   });
-  return Promise.race([fetch(url, init), timeout]).finally(() => clearTimeout(timer));
+  return Promise.race([fetch(url, { ...init, signal: init?.signal ?? controller?.signal }), timeout])
+    .finally(() => clearTimeout(timer));
 }
 
 // Resolves with an ok Response or throws (HttpError for a non-ok status).
