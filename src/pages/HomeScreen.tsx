@@ -2,12 +2,12 @@ import React, { useState, useEffect, useRef } from 'react';
 import { Play, ChevronRight, ChevronDown, Search as SearchIcon } from 'lucide-react';
 import { getTrendingAnime, type AnimeItem } from '../core/aniCliCore';
 import { getWatchHistory, isEpisodeFinished, subscribeLibraryChanges, type WatchHistoryItem } from '../services/historyService';
-import { FadeImage } from '../components/FadeImage';
+import { FadeImage } from 'streamkit/ui/FadeImage.tsx';
 import { getAnimeByGenre, getGenres, type Genre } from '../services/catalogService';
 import { PosterCard } from '../components/PosterCard';
 import { GenrePicker } from '../components/GenrePicker';
 import { HeroCarousel } from '../components/HeroCarousel';
-import { ErrorState } from '../components/ErrorState';
+import { ErrorState } from 'streamkit/ui/ErrorState.tsx';
 
 // Genres that get their own rail on the home screen, Netflix-style.
 const HOME_ROW_GENRES = ['action', 'romance', 'comedy', 'fantasy', 'isekai'];

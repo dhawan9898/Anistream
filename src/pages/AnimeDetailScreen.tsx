@@ -2,8 +2,8 @@
 // sub/dub selector, synopsis, then Episodes / Collection / More Like This tabs.
 import React, { useState, useEffect } from 'react';
 import { ArrowLeft, Play, Plus, Check, Loader2 } from 'lucide-react';
-import { FadeImage } from '../components/FadeImage';
-import { ErrorState } from '../components/ErrorState';
+import { FadeImage } from 'streamkit/ui/FadeImage.tsx';
+import { ErrorState } from 'streamkit/ui/ErrorState.tsx';
 import { getEpisodes, type AnimeItem, type EpisodeItem } from '../core/aniCliCore';
 import {
   toggleBookmark,

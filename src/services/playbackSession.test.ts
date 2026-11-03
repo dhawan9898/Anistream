@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { applyPreferredQuality } from './playbackSession.ts';
-import { formatTime } from '../components/player/playerUtils.ts';
+import { formatTime } from 'streamkit/player/playerUtils.ts';
 import type { StreamSource } from '../core/aniCliCore.ts';
 import { DEFAULT_PREFERENCES } from './historyService.ts';
 

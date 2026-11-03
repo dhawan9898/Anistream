@@ -4,7 +4,7 @@ import React, { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { X } from 'lucide-react';
 import { getGenres, type Genre } from '../services/catalogService';
-import { useBackHandler } from '../services/backStack';
+import { useBackHandler } from 'streamkit/core/backStack.ts';
 
 interface GenrePickerProps {
   open: boolean;

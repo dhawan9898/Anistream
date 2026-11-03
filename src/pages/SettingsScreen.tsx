@@ -11,7 +11,7 @@ import {
 } from '../services/historyService';
 import type { ThemeMode } from '../services/themeService';
 import { Preferences } from '@capacitor/preferences';
-import { ConfirmModal } from '../components/ConfirmModal';
+import { ConfirmModal } from 'streamkit/ui/ConfirmModal.tsx';
 
 const QUALITIES = ['480p', '720p', '1080p', 'Auto'];
 

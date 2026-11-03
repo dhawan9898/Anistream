@@ -11,9 +11,9 @@ import { getEpisodeSkipIntervals, type SkipInterval } from '../services/aniSkipS
 import {
   resolvePlayableUrl, createHls, defaultSubtitleLabel, formatTime,
   NEXT_EPISODE_COUNTDOWN_SECS, POST_PLAY_THRESHOLD_SECS, NETFLIX_RED
-} from './player/playerUtils';
-import { SpeedPanel, AudioPanel, EpisodePanel } from './player/PlayerPanels';
-import { useWakeLock, useFullscreenState } from './player/playerHooks';
+} from 'streamkit/player/playerUtils.ts';
+import { SpeedPanel, AudioPanel, EpisodePanel } from 'streamkit/player/PlayerPanels.tsx';
+import { useWakeLock, useFullscreenState } from 'streamkit/player/playerHooks.ts';
 import './VideoPlayer.css';
 
 // Fatal hls.js network errors are retried this many times with exponential
@@ -22,6 +22,9 @@ const MAX_NETWORK_RETRIES = 3;
 // How often playback position is persisted while playing (it's also saved
 // on pause, on episode change and when the player closes).
 const PROGRESS_SAVE_INTERVAL_MS = 5000;
+
+// Referer the dev-server stream proxy uses when a stream carries none of its own.
+const DEV_FALLBACK_REFERER = 'https://zokoanime.video/';
 
 interface VideoPlayerProps {
   streamSource: StreamSource;
@@ -243,7 +246,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
       hlsRef.current = null;
     }
 
-    const streamUrl = resolvePlayableUrl(streamSource.streamUrl, streamSource.referer);
+    const streamUrl = resolvePlayableUrl(streamSource.streamUrl, streamSource.referer, DEV_FALLBACK_REFERER);
     const referer = streamSource.referer || 'https://zokoanime.video/';
     // A Retry resumes where playback stopped rather than at initialTime.
     const startAt = resumeAtRef.current ?? initialTime;
@@ -516,7 +519,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
 
     const prevTime = video.currentTime;
     const wasPlaying = !video.paused;
-    const newUrl = resolvePlayableUrl(item.url, streamSource.referer);
+    const newUrl = resolvePlayableUrl(item.url, streamSource.referer, DEV_FALLBACK_REFERER);
     const isNewMp4 = newUrl.includes('.mp4') || !newUrl.includes('.m3u8');
 
     const resume = () => {
@@ -831,7 +834,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
             key={i}
             kind="subtitles"
             label={track.label}
-            src={resolvePlayableUrl(track.src, streamSource.referer)}
+            src={resolvePlayableUrl(track.src, streamSource.referer, DEV_FALLBACK_REFERER)}
             default={track.default}
           />
         ))}

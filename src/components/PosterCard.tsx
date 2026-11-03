@@ -2,7 +2,7 @@
 // (genre rows, Collection) and poster grids (genre pages, More Like This).
 import React, { memo } from 'react';
 import type { AnimeItem } from '../core/aniCliCore';
-import { FadeImage } from './FadeImage';
+import { FadeImage } from 'streamkit/ui/FadeImage.tsx';
 
 interface PosterCardProps {
   anime: AnimeItem;

@@ -6,8 +6,8 @@ import {
   isEpisodeFinished, subscribeLibraryChanges, type WatchHistoryItem
 } from '../services/historyService';
 import type { AnimeItem } from '../core/aniCliCore';
-import { ConfirmModal } from '../components/ConfirmModal';
-import { FadeImage } from '../components/FadeImage';
+import { ConfirmModal } from 'streamkit/ui/ConfirmModal.tsx';
+import { FadeImage } from 'streamkit/ui/FadeImage.tsx';
 
 interface HistoryScreenProps {
   // True while this tab is the visible one (tabs stay mounted when hidden).

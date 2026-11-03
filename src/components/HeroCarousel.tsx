@@ -5,7 +5,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Play, Plus, Check } from 'lucide-react';
 import type { AnimeItem } from '../core/aniCliCore';
-import { FadeImage } from './FadeImage';
+import { FadeImage } from 'streamkit/ui/FadeImage.tsx';
 import { getBookmarks, subscribeLibraryChanges, toggleBookmark } from '../services/historyService';
 
 const MAX_SLIDES = 8;

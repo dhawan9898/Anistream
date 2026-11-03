@@ -2,7 +2,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Search as SearchIcon, X, Loader2, ArrowLeft, Play } from 'lucide-react';
 import { getTrendingAnime, searchAnimeLive, type AnimeItem } from '../core/aniCliCore';
-import { FadeImage } from '../components/FadeImage';
+import { FadeImage } from 'streamkit/ui/FadeImage.tsx';
 import { PosterCard } from '../components/PosterCard';
 
 interface SearchScreenProps {

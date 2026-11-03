@@ -19,7 +19,7 @@ import {
   REMOTE_HOST,
   type AnimeItem
 } from '../core/aniCliCore';
-import { request } from '../core/http';
+import { request } from 'streamkit/core/http.ts';
 
 export interface Genre {
   slug: string;
