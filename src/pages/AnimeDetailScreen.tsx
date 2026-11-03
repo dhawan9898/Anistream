@@ -4,7 +4,7 @@ import React, { useState, useEffect } from 'react';
 import { ArrowLeft, Play, Plus, Check, Loader2 } from 'lucide-react';
 import { FadeImage } from 'streamkit/ui/FadeImage.tsx';
 import { ErrorState } from 'streamkit/ui/ErrorState.tsx';
-import { getEpisodes, type AnimeItem, type EpisodeItem } from '../core/aniCliCore';
+import { getEpisodes, type AnimeItem, type EpisodeItem } from '../providers/aniCliCore';
 import {
   toggleBookmark,
   getBookmarks,
@@ -17,7 +17,7 @@ import {
   subscribeLibraryChanges,
   type WatchHistoryItem
 } from '../services/historyService';
-import { getAnimeDetails, hasDub, resolveAnime, type AnimeDetails } from '../services/catalogService';
+import { getAnimeDetails, hasDub, resolveAnime, type AnimeDetails } from '../providers/catalogService';
 import { PosterCard } from '../components/PosterCard';
 
 interface AnimeDetailScreenProps {

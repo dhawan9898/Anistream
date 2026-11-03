@@ -7,7 +7,7 @@
 // finished, the request must join the one already in flight instead of
 // starting over - restarting doubled the wait and was a big part of the
 // "stuck on loading" reports.
-import { getEpisodeStream, type AnimeItem, type EpisodeItem, type StreamSource } from '../core/aniCliCore';
+import { getEpisodeStream, type AnimeItem, type EpisodeItem, type StreamSource } from './aniCliCore';
 
 // Stream links are time-limited; a resolved one is only reused briefly.
 const REUSE_MS = 4 * 60 * 1000;

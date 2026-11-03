@@ -3,7 +3,7 @@ import React, { useState, useEffect, useRef, useMemo, useCallback, Suspense, laz
 import { Capacitor } from '@capacitor/core';
 import { ExoPlayerPlugin } from './plugins/exoPlayerPlugin';
 import { HomeScreen } from './pages/HomeScreen';
-import type { Genre } from './services/catalogService';
+import type { Genre } from './providers/catalogService';
 import { ConfirmModal } from 'streamkit/ui/ConfirmModal.tsx';
 import { Home as HomeIcon, Search as SearchIcon, Library, Settings as SettingsIcon } from 'lucide-react';
 import { Dock, type DockTab } from 'streamkit/ui/Dock.tsx';
@@ -14,8 +14,8 @@ import {
   type AnimeItem,
   type EpisodeItem,
   type StreamSource
-} from './core/aniCliCore';
-import { resolveStream } from './services/streamResolver';
+} from './providers/aniCliCore';
+import { resolveStream } from './providers/streamResolver';
 import { handleLayerBack } from 'streamkit/core/backStack.ts';
 import {
   getUserPreferences,

@@ -2,7 +2,7 @@
 import { Capacitor } from '@capacitor/core';
 import { fetchTimed } from 'streamkit/core/http.ts';
 import { resolveHedged } from 'streamkit/providers/hedged.ts';
-import { MAX_STALE_MS, readPersisted, writePersisted } from './persistentCache.ts';
+import { MAX_STALE_MS, readPersisted, writePersisted } from '../services/persistentCache.ts';
 
 export interface AnimeItem {
   id: string;          // e.g. "solo-leveling-season-2-arise-from-the-shadow-19413"

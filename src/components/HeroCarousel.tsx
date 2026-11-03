@@ -2,7 +2,7 @@
 // carousel and keeps the "My List" state in sync with the library.
 import React, { useEffect, useMemo, useState } from 'react';
 import { HeroCarousel as SharedHeroCarousel, type HeroSlide } from 'streamkit/ui/HeroCarousel.tsx';
-import type { AnimeItem } from '../core/aniCliCore';
+import type { AnimeItem } from '../providers/aniCliCore';
 import { getBookmarks, subscribeLibraryChanges, toggleBookmark } from '../services/historyService';
 
 const MAX_SLIDES = 8;

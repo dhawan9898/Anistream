@@ -2,7 +2,7 @@
 // shared category picker.
 import React, { useEffect, useMemo, useState } from 'react';
 import { CategoryPicker } from 'streamkit/ui/CategoryPicker.tsx';
-import { getGenres, type Genre } from '../services/catalogService';
+import { getGenres, type Genre } from '../providers/catalogService';
 
 interface GenrePickerProps {
   open: boolean;

@@ -1,6 +1,6 @@
 // historyService.ts - Watch history, bookmarks, and preferences management
 import { Preferences } from '@capacitor/preferences';
-import type { AnimeItem } from '../core/aniCliCore';
+import type { AnimeItem } from '../providers/aniCliCore';
 import { createSerialQueue, createChangeNotifier, parseValidatedList } from 'streamkit/core/library.ts';
 
 export interface WatchHistoryItem {

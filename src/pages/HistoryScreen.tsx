@@ -5,7 +5,7 @@ import {
   getEpisodeLog, clearWatchHistory, removeEpisodeFromLibrary, getBookmarks,
   isEpisodeFinished, subscribeLibraryChanges, type WatchHistoryItem
 } from '../services/historyService';
-import type { AnimeItem } from '../core/aniCliCore';
+import type { AnimeItem } from '../providers/aniCliCore';
 import { ConfirmModal } from 'streamkit/ui/ConfirmModal.tsx';
 import { FadeImage } from 'streamkit/ui/FadeImage.tsx';
 

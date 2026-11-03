@@ -18,7 +18,7 @@ import {
   sitePathOf,
   REMOTE_HOST,
   type AnimeItem
-} from '../core/aniCliCore';
+} from './aniCliCore';
 import { request } from 'streamkit/core/http.ts';
 
 export interface Genre {

@@ -5,9 +5,9 @@ import {
   Play, Pause, RotateCcw, RotateCw, ArrowLeft, Maximize, Minimize, SkipForward,
   Volume2, VolumeX, Loader2, Gauge, Lock, LockOpen, Layers, MessageSquareText
 } from 'lucide-react';
-import type { StreamSource, EpisodeItem } from '../core/aniCliCore';
+import type { StreamSource, EpisodeItem } from '../providers/aniCliCore';
 import { getUserPreferences } from '../services/historyService';
-import { getEpisodeSkipIntervals, type SkipInterval } from '../services/aniSkipService';
+import { getEpisodeSkipIntervals, type SkipInterval } from '../providers/aniSkipService';
 import {
   resolvePlayableUrl, createHls, defaultSubtitleLabel, formatTime,
   NEXT_EPISODE_COUNTDOWN_SECS, POST_PLAY_THRESHOLD_SECS, NETFLIX_RED
