@@ -1,6 +1,7 @@
 // historyService.ts - Watch history, bookmarks, and preferences management
 import { Preferences } from '@capacitor/preferences';
 import type { AnimeItem } from '../core/aniCliCore';
+import { createSerialQueue, createChangeNotifier, parseValidatedList } from 'streamkit/core/library.ts';
 
 export interface WatchHistoryItem {
   animeId: string;
@@ -49,70 +50,20 @@ export const DEFAULT_PREFERENCES: UserPreferences = {
   prefsVersion: PREFS_VERSION
 };
 
-// Read-modify-write updates of the same storage key must not interleave, or
-// a slower write can clobber a newer one (progress ticks arrive every second
-// while the user may also bookmark or remove items). All mutations run
-// through this queue, one at a time.
-let writeQueue: Promise<unknown> = Promise.resolve();
-function serialized<T>(task: () => Promise<T>): Promise<T> {
-  const run = writeQueue.then(task, task);
-  writeQueue = run.catch(() => undefined);
-  return run;
-}
+// All mutations run through one serial queue (see streamkit/core/library):
+// read-modify-write updates of the same key must not interleave.
+const serialized = createSerialQueue();
 
 // Screens that show history/bookmarks (Home's Continue Watching, the title
 // page's Resume button, the Library) stay mounted underneath the player, so
 // they subscribe here instead of only reading storage once on mount - which
 // left "Resume E3" showing after the user had already watched E4.
-type Listener = () => void;
-const listeners = new Set<Listener>();
+const library = createChangeNotifier(err => console.error('Library change listener failed:', err));
 
-export function subscribeLibraryChanges(listener: Listener): () => void {
-  listeners.add(listener);
-  return () => { listeners.delete(listener); };
-}
-
-// While an episode plays, progress is saved every few seconds. Screens
-// underneath the player must not re-render for each of those saves, so the
-// notification is held back and delivered once playback is over.
-let playbackActive = false;
-let notifyPending = false;
-
-export function setPlaybackActive(active: boolean): void {
-  playbackActive = active;
-  if (!active && notifyPending) {
-    notifyPending = false;
-    notifyLibraryChanged();
-  }
-}
-
-function notifyLibraryChanged(force = true): void {
-  if (playbackActive && !force) {
-    notifyPending = true;
-    return;
-  }
-  listeners.forEach(listener => {
-    try {
-      listener();
-    } catch (err) {
-      console.error('Library change listener failed:', err);
-    }
-  });
-}
-
-function parseList<T>(value: string | null, isValid: (item: unknown) => boolean): T[] {
-  if (!value) return [];
-  try {
-    const parsed = JSON.parse(value);
-    // Entries that don't have the expected shape are dropped one by one
-    // rather than crashing whichever screen renders them.
-    return Array.isArray(parsed) ? (parsed.filter(isValid) as T[]) : [];
-  } catch {
-    // Corrupt entry (e.g. an interrupted write) - start over rather than
-    // throwing on every read and bricking the Library screen.
-    return [];
-  }
-}
+export const subscribeLibraryChanges = library.subscribe;
+export const setPlaybackActive = library.setPlaybackActive;
+const notifyLibraryChanged = library.notify;
+const parseList = parseValidatedList;
 
 // Real episode ids are numeric. Older builds saved "<slug>-ep-N" ids for
 // made-up placeholder episodes (they only ever played a demo clip), which
@@ -135,7 +86,7 @@ let pendingProgress: WatchHistoryItem | null = null;
 export function saveWatchProgress(item: WatchHistoryItem): Promise<void> {
   const alreadyQueued = pendingProgress !== null;
   pendingProgress = item;
-  if (alreadyQueued) return writeQueue.then(() => undefined);
+  if (alreadyQueued) return serialized(async () => undefined); // resolves once the in-flight write has finished
   return serialized(async () => {
     const latest = pendingProgress;
     pendingProgress = null;
