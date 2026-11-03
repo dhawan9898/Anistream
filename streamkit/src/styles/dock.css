@@ -1,0 +1,92 @@
+/* dock.css - The floating liquid-glass bottom bar shared by both apps.
+   Needs these design tokens from the host app: --bg-dock, --glass-blur,
+   --glass-border, --glass-shadow, --shadow-dock, --select-bg, --select-border,
+   --select-shadow, --select-text, --text-muted, --safe-bottom, --dur-slow,
+   --dur-base, --ease-out. */
+:root { --ease-liquid: cubic-bezier(0.34, 1.56, 0.64, 1); }
+
+/* Floating bottom bar: a detached liquid-glass pill lifted off the screen
+   edge. Blur, saturation, hairline border and a
+   top specular highlight give the glass; pressing it magnifies the bar and
+   the selection lens with a spring. It is the only blurred element over
+   scrolling content and it is fixed, so the blur stays cheap. */
+.dock-wrap {
+  position: fixed;
+  left: 16px;
+  right: 16px;
+  bottom: calc(12px + var(--safe-bottom));
+  z-index: 50;
+  display: flex;
+  justify-content: center;
+  pointer-events: none;
+  transition: transform var(--dur-slow) var(--ease-out), opacity var(--dur-base) ease;
+}
+.dock-wrap.hidden {
+  transform: translate3d(0, 160%, 0);
+  opacity: 0;
+}
+
+.glass-dock {
+  position: relative;
+  width: 100%;
+  max-width: 380px;
+  height: 64px;
+  padding: 0 6px;
+  display: flex;
+  align-items: stretch;
+  pointer-events: auto;
+  touch-action: none;
+  background: var(--bg-dock);
+  -webkit-backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-blur);
+  border: 1px solid var(--glass-border);
+  border-radius: 9999px;
+  box-shadow: var(--glass-shadow), var(--shadow-dock);
+  transition: scale 0.5s var(--ease-liquid), background-color 0.4s ease, border-color 0.4s ease, box-shadow 0.4s ease;
+}
+.dock-wrap.hidden .glass-dock { pointer-events: none; }
+.glass-dock[data-pressed="true"] {
+  scale: 1.06;
+}
+
+/* Floating dock nav item: the active tab's icon lifts and glows, echoing the
+   Apple TV focus engine's "floating" affordance. */
+.dock-item {
+  position: relative;
+  z-index: 1;
+  flex: 1;
+  background: none;
+  border: none;
+  border-radius: 9999px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  color: var(--text-muted);
+  transition: transform 0.35s cubic-bezier(0.34, 1.56, 0.64, 1), color 0.25s ease;
+}
+.dock-item span { font-size: 10px; font-weight: 500; }
+.dock-item.active { color: var(--select-text); }
+.dock-item svg { transition: scale 0.45s var(--ease-liquid); }
+.glass-dock[data-pressed="true"] .dock-item.active svg { scale: 1.25; }
+.dock-item.active span { font-weight: 700; }
+
+/* Sliding liquid lens behind the active tab: a frosted, lifted pane of glass
+   rather than a brand-colored fill. It overshoots slightly and settles, and
+   grows while the bar is pressed so it reads as a magnifying lens. */
+.dock-indicator {
+  position: absolute;
+  top: 6px;
+  bottom: 6px;
+  left: 6px;
+  border-radius: 9999px;
+  background: var(--select-bg);
+  border: 1px solid var(--select-border);
+  box-shadow: var(--select-shadow);
+  transition: transform 0.55s var(--ease-liquid), scale 0.45s var(--ease-liquid);
+  z-index: 0;
+}
+.glass-dock[data-pressed="true"] .dock-indicator {
+  scale: 1.18 1.12;
+}

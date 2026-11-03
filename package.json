@@ -21,7 +21,7 @@
     "lucide-react": "^1.46.0",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
-    "streamkit": "file:../streamkit"
+    "streamkit": "file:./streamkit"
   },
   "devDependencies": {
     "@types/node": "^24.13.3",
