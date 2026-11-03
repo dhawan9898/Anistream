@@ -24,6 +24,7 @@ import java.util.regex.Pattern;
  */
 final class ThumbnailSprites {
     private static final String TAG = "ThumbnailSprites";
+    private static final java.util.concurrent.ExecutorService EXECUTOR = java.util.concurrent.Executors.newCachedThreadPool();
     private static final String UA =
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
     private static final Pattern TIME = Pattern.compile("(?:(\\d+):)?(\\d+):(\\d+)[.,](\\d+)");
@@ -50,7 +51,7 @@ final class ThumbnailSprites {
     // thread) once the cue list is known.
     static ThumbnailSprites load(String vttUrl, String referer) {
         ThumbnailSprites sprites = new ThumbnailSprites(referer);
-        NativeStreamResolver.runAsync(() -> sprites.parse(vttUrl));
+        EXECUTOR.execute(() -> sprites.parse(vttUrl));
         return sprites;
     }
 
@@ -141,7 +142,7 @@ final class ThumbnailSprites {
         synchronized (loading) {
             if (!loading.add(url)) return;
         }
-        NativeStreamResolver.runAsync(() -> {
+        EXECUTOR.execute(() -> {
             try {
                 HttpURLConnection c = (HttpURLConnection) new URL(url).openConnection();
                 c.setConnectTimeout(8000);

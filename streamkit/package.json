@@ -6,11 +6,13 @@
   "type": "module",
   "exports": {
     "./*": "./src/*",
-    "./assets/*": "./assets/*"
+    "./assets/*": "./assets/*",
+    "./android/*": "./android/*"
   },
   "files": [
     "src",
-    "assets"
+    "assets",
+    "android"
   ],
   "scripts": {
     "typecheck": "tsc -p tsconfig.json",

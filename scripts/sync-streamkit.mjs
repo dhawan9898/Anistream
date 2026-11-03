@@ -7,7 +7,7 @@ import { execSync } from 'node:child_process';
 const source = resolve(process.argv[2] ?? '../streamkit');
 if (!existsSync(join(source, 'package.json'))) throw new Error(`No streamkit package at ${source}`);
 
-for (const part of ['src', 'assets', 'package.json', 'README.md']) {
+for (const part of ['src', 'assets', 'android', 'package.json', 'README.md']) {
   rmSync(join('streamkit', part), { recursive: true, force: true });
   cpSync(join(source, part), join('streamkit', part), { recursive: true });
 }

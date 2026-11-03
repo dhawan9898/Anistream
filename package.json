@@ -9,7 +9,9 @@
     "lint": "oxlint",
     "preview": "vite preview",
     "test": "node --experimental-strip-types --test src/**/*.test.ts",
-    "check-version": "node scripts/check-version.mjs"
+    "check-version": "node scripts/check-version.mjs",
+    "sync-native": "node streamkit/android/sync-native.mjs --package com.anicli.stream --java android/app/src/main/java/com/anicli/stream --res android/app/src/main/res",
+    "check-native": "node streamkit/android/sync-native.mjs --package com.anicli.stream --java android/app/src/main/java/com/anicli/stream --res android/app/src/main/res --check true"
   },
   "dependencies": {
     "@capacitor/android": "^8.5.2",
