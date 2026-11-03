@@ -4,6 +4,7 @@ import { createRoot } from 'react-dom/client'
 // render-blocking request to a font CDN.
 import 'streamkit/styles/fonts.css'
 import 'streamkit/styles/dock.css'
+import 'streamkit/styles/shared.css'
 import './index.css'
 import App from './App.tsx'
 import { ErrorBoundary } from 'streamkit/ui/ErrorBoundary.tsx'
