@@ -70,9 +70,10 @@ export interface StreamSource {
 // The sources payload carries chapter markers as { start, end } (seconds);
 // some mirrors send [start, end] or numeric strings instead. Untagged
 // episodes come back as { start: 0, end: 0 } - treat that as "no data".
-export function parseSkipRange(raw: any): SkipRange | undefined {
-  if (!raw) return undefined;
-  const pair = Array.isArray(raw) ? raw : [raw.start ?? raw.startTime, raw.end ?? raw.endTime];
+export function parseSkipRange(raw: unknown): SkipRange | undefined {
+  if (!raw || typeof raw !== 'object') return undefined;
+  const obj = raw as { start?: unknown; startTime?: unknown; end?: unknown; endTime?: unknown };
+  const pair: unknown[] = Array.isArray(raw) ? raw : [obj.start ?? obj.startTime, obj.end ?? obj.endTime];
   const start = Number(pair[0]);
   const end = Number(pair[1]);
   if (!isFinite(start) || !isFinite(end) || start < 0 || end <= start) return undefined;
@@ -103,7 +104,9 @@ export function deobfuscateBlob(base64Blob: string): string {
 // must hit the real host directly - CapacitorHttp (enabled in
 // capacitor.config.ts) routes fetch() through native networking, which
 // isn't subject to the browser's CORS / forbidden-header restrictions.
-const REMOTE_HOST = "https://hianime.at";
+// The single place the JS side names the streaming site. (The native Java
+// resolver and the dev proxy in vite.config.ts carry their own copy.)
+export const REMOTE_HOST = "https://hianime.at";
 
 export function getApiBase(): string {
   return Capacitor.isNativePlatform() ? REMOTE_HOST : "/api-hianime";
@@ -411,7 +414,7 @@ export async function decryptToken(enc: string): Promise<string> {
       ivBuf[i] = ivStr.charCodeAt(i);
     }
 
-    const cryptoObj = typeof window !== 'undefined' && window.crypto ? window.crypto : (globalThis as any).crypto;
+    const cryptoObj = typeof window !== 'undefined' && window.crypto ? window.crypto : globalThis.crypto;
     const key = await cryptoObj.subtle.importKey('raw', keyBuf, { name: 'AES-CBC' }, false, ['decrypt']);
     const decryptedBuf = await cryptoObj.subtle.decrypt({ name: 'AES-CBC', iv: ivBuf }, key, encryptedBuf);
     return new TextDecoder().decode(decryptedBuf);
@@ -444,7 +447,7 @@ export async function getEpisodeStream(
             streamUrl: data.streamUrl,
             quality: data.qualities?.[0]?.quality || "1080p",
             subtitles: parseSubtitleTracks(data.subtitles),
-            referer: data.referer || 'https://hianime.at/',
+            referer: data.referer || `${REMOTE_HOST}/`,
             masterUrl: data.streamUrl,
             qualities: data.qualities || [{ quality: "1080p", url: data.streamUrl }],
             intro: parseSkipRange(data.intro),
@@ -595,11 +598,31 @@ function decodeEmbedUrl(hash: string): string | null {
 
 // Subtitle tracks from a sources payload. Players also list a "thumbnails"
 // sprite VTT in the same array, which must never show up as a caption.
-function parseSubtitleTracks(tracks: any): SubtitleTrack[] {
+// A track entry as it appears in a sources payload (field names vary by mirror).
+interface RawTrack { file?: string; src?: string; kind?: string; label?: string; lang?: string; default?: boolean }
+
+// Shape of the inline `window.__P` embed payload (only what we read).
+export interface EmbedPayload {
+  src?: unknown;
+  subtitles?: RawTrack[];
+  skip?: { intro?: unknown; outro?: unknown };
+  sprite_vtt?: unknown;
+}
+
+// Shape of the legacy getSourcesNew response (only what we read).
+interface SourcesJson {
+  intro?: unknown;
+  outro?: unknown;
+  tracks?: unknown;
+  sources?: { file?: string }[];
+  enc?: string;
+}
+
+function parseSubtitleTracks(tracks: unknown): SubtitleTrack[] {
   if (!Array.isArray(tracks)) return [];
   const seen = new Set<string>();
   const out: SubtitleTrack[] = [];
-  for (const t of tracks) {
+  for (const t of tracks as RawTrack[]) {
     const src = t?.file || t?.src;
     const kind = String(t?.kind || "captions").toLowerCase();
     if (!src || typeof src !== "string" || (kind !== "captions" && kind !== "subtitles")) continue;
@@ -635,7 +658,7 @@ async function resolveEmbed(hash: string, episodeId: string, mode: 'sub' | 'dub'
     return sourceFrom(
       src,
       embedOrigin,
-      (Array.isArray(inline.subtitles) ? inline.subtitles : []).map((t: any) => ({ ...t, file: t.src, kind: 'captions' })),
+      (Array.isArray(inline.subtitles) ? inline.subtitles : []).map(t => ({ ...t, file: t.src, kind: 'captions' })),
       parseSkipRange(inline.skip?.intro),
       parseSkipRange(inline.skip?.outro),
       typeof inline.sprite_vtt === 'string' ? inline.sprite_vtt : undefined
@@ -654,20 +677,20 @@ async function resolveEmbed(hash: string, episodeId: string, mode: 'sub' | 'dub'
     }
   });
   if (!sourcesRes.ok) return null;
-  const sourcesJson = await sourcesRes.json();
+  const sourcesJson = (await sourcesRes.json()) as SourcesJson;
 
   let rawStreamUrl = "";
   let intro = parseSkipRange(sourcesJson.intro);
   let outro = parseSkipRange(sourcesJson.outro);
-  let tracks = sourcesJson.tracks;
+  let tracks: unknown = sourcesJson.tracks;
   if (sourcesJson.sources && sourcesJson.sources[0]?.file) {
     rawStreamUrl = sourcesJson.sources[0].file;
   } else if (sourcesJson.enc) {
     const decStr = await decryptToken(sourcesJson.enc);
     if (decStr) {
       try {
-        const dec = JSON.parse(decStr);
-        rawStreamUrl = dec.file || dec.src;
+        const dec = JSON.parse(decStr) as { file?: string; src?: string; intro?: unknown; outro?: unknown; tracks?: unknown };
+        rawStreamUrl = dec.file || dec.src || '';
         intro = intro || parseSkipRange(dec.intro);
         outro = outro || parseSkipRange(dec.outro);
         tracks = tracks || dec.tracks;
@@ -692,7 +715,7 @@ function safeAtob(b64: string): string {
 }
 
 // The inline payload of current embeds: base64 of JSON, XOR-ed with a fixed key.
-export function parseEmbedPayload(html: string): any | null {
+export function parseEmbedPayload(html: string): EmbedPayload | null {
   const match = html.match(/window\.__P\s*=\s*"([^"]+)"/);
   if (!match) return null;
   try {
@@ -700,7 +723,7 @@ export function parseEmbedPayload(html: string): any | null {
     const key = "otaku-embed-v1";
     const bytes = new Uint8Array(raw.length);
     for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i) ^ key.charCodeAt(i % key.length);
-    return JSON.parse(new TextDecoder().decode(bytes));
+    return JSON.parse(new TextDecoder().decode(bytes)) as EmbedPayload;
   } catch (err) {
     console.warn("[aniCliCore] embed payload could not be decoded:", err);
     return null;
@@ -708,16 +731,16 @@ export function parseEmbedPayload(html: string): any | null {
 }
 
 // The thumbnails sprite VTT listed among a sources payload's tracks.
-function findSpriteVtt(tracks: any): string | undefined {
+function findSpriteVtt(tracks: unknown): string | undefined {
   if (!Array.isArray(tracks)) return undefined;
-  const t = tracks.find((x: any) => String(x?.kind || '').toLowerCase() === 'thumbnails' && (x?.file || x?.src));
+  const t = (tracks as RawTrack[]).find(x => String(x?.kind || '').toLowerCase() === 'thumbnails' && (x?.file || x?.src));
   return t ? String(t.file || t.src) : undefined;
 }
 
 function sourceFrom(
   rawStreamUrl: string,
   embedOrigin: string,
-  tracks: any,
+  tracks: unknown,
   intro: SkipRange | undefined,
   outro: SkipRange | undefined,
   spriteVtt: string | undefined

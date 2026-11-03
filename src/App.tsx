@@ -1,16 +1,12 @@
 // App.tsx - Main Android Application Controller for AniStream
 import React, { useState, useEffect, useRef, useMemo, Suspense, lazy } from 'react';
-import { Home as HomeIcon, Search as SearchIcon, Library, Settings as SettingsIcon } from 'lucide-react';
 import { Capacitor } from '@capacitor/core';
 import { ExoPlayerPlugin } from './plugins/exoPlayerPlugin';
 import { HomeScreen } from './pages/HomeScreen';
-import { SearchScreen } from './pages/SearchScreen';
-import { AnimeDetailScreen } from './pages/AnimeDetailScreen';
-import { HistoryScreen } from './pages/HistoryScreen';
-import { GenreScreen } from './pages/GenreScreen';
 import type { Genre } from './services/catalogService';
-import { SettingsScreen } from './pages/SettingsScreen';
 import { ConfirmModal } from './components/ConfirmModal';
+import { Dock, type Tab } from './components/Dock';
+import { saveSessionProgress, applyPreferredQuality, type PlaybackSession } from './services/playbackSession';
 import {
   getEpisodes,
   SourceUnavailableError,
@@ -21,7 +17,6 @@ import {
 import { resolveStream } from './services/streamResolver';
 import { handleLayerBack } from './services/backStack';
 import {
-  saveWatchProgress,
   getUserPreferences,
   setPlaybackActive,
   isEpisodeFinished,
@@ -34,52 +29,22 @@ import { getTheme, getStoredThemeSync, setTheme as persistTheme, type ThemeMode 
 // The web player (and hls.js, the largest dependency) is only needed once
 // something actually plays in the browser - on Android the native
 // ExoPlayer is used - so it's split out of the startup bundle.
+// Everything except Home is split out of the startup bundle and fetched in the
+// background once the first screen is up (see the idle preload below), so the
+// first paint parses less JavaScript but opening a tab never waits on the network.
+const loaders = {
+  search: () => import('./pages/SearchScreen'),
+  detail: () => import('./pages/AnimeDetailScreen'),
+  library: () => import('./pages/HistoryScreen'),
+  genre: () => import('./pages/GenreScreen'),
+  settings: () => import('./pages/SettingsScreen')
+};
+const SearchScreen = lazy(() => loaders.search().then(m => ({ default: m.SearchScreen })));
+const AnimeDetailScreen = lazy(() => loaders.detail().then(m => ({ default: m.AnimeDetailScreen })));
+const HistoryScreen = lazy(() => loaders.library().then(m => ({ default: m.HistoryScreen })));
+const GenreScreen = lazy(() => loaders.genre().then(m => ({ default: m.GenreScreen })));
+const SettingsScreen = lazy(() => loaders.settings().then(m => ({ default: m.SettingsScreen })));
 const VideoPlayer = lazy(() => import('./components/VideoPlayer').then(m => ({ default: m.VideoPlayer })));
-
-type Tab = 'home' | 'search' | 'library' | 'settings';
-
-interface PlaybackSession {
-  anime: AnimeItem;
-  episode: EpisodeItem;
-  mode: 'sub' | 'dub';
-  source: StreamSource;
-  startTime: number;
-}
-
-// Persists a position report for a committed session. The demo fallback
-// clip is never the real episode, so its "progress" must not overwrite the
-// user's real resume point.
-function saveSessionProgress(session: PlaybackSession, currentTime: number, duration: number) {
-  if (session.source.isFallback || !(duration > 0)) return;
-  saveWatchProgress({
-    animeId: session.anime.id,
-    animeTitle: session.anime.title,
-    poster: session.anime.poster,
-    episodeId: session.episode.id,
-    episodeNumber: session.episode.number,
-    currentTime,
-    duration,
-    updatedAt: Date.now(),
-    mode: session.mode
-  });
-}
-
-// Applies the "Default Quality" preference when the stream actually offers
-// more than one distinct rendition to choose from.
-function applyPreferredQuality(source: StreamSource, prefs: UserPreferences): StreamSource {
-  const preferred = source.qualities?.find(q => q.quality === prefs.defaultQuality);
-  if (preferred && preferred.url !== source.streamUrl) {
-    return { ...source, streamUrl: preferred.url, quality: preferred.quality };
-  }
-  return source;
-}
-
-const TABS: { id: Tab; label: string; icon: React.ComponentType<{ size?: number }> }[] = [
-  { id: 'home', label: 'Home', icon: HomeIcon },
-  { id: 'search', label: 'Search', icon: SearchIcon },
-  { id: 'library', label: 'Library', icon: Library },
-  { id: 'settings', label: 'Settings', icon: SettingsIcon }
-];
 
 // How long a closing screen keeps sliding out before it is removed.
 const OVERLAY_EXIT_MS = 240;
@@ -156,17 +121,6 @@ export const App: React.FC = () => {
     startClosing({ key: genreKey(genre), genre });
     updateGenre(null);
   };
-  // Floating bar: finger-down magnifies it and the selection lens follows the
-  // finger across tabs; lifting selects the tab under it.
-  const dockRef = useRef<HTMLElement | null>(null);
-  const [pressIdx, setPressIdx] = useState<number | null>(null);
-  const tabIndexAt = (clientX: number) => {
-    const rect = dockRef.current?.getBoundingClientRect();
-    if (!rect) return 0;
-    const ratio = (clientX - rect.left - 6) / Math.max(1, rect.width - 12);
-    return Math.max(0, Math.min(TABS.length - 1, Math.floor(ratio * TABS.length)));
-  };
-
   const switchTab = (tab: Tab) => {
     updateStack([]);
     updateGenre(null);
@@ -194,6 +148,15 @@ export const App: React.FC = () => {
     setThemeState(next);
     persistTheme(next);
   };
+
+  // Warm the split screens once the app is idle (they are local files, so this
+  // is just a parse), so the first tap on a tab or poster is instant.
+  useEffect(() => {
+    const warm = () => Object.values(loaders).forEach(load => { load().catch(() => undefined); });
+    const idle = (window as Window & { requestIdleCallback?: (cb: () => void) => number }).requestIdleCallback;
+    const handle = idle ? idle(warm) : window.setTimeout(warm, 1500);
+    return () => { if (!idle) window.clearTimeout(handle); };
+  }, []);
 
   // Active player state
   const [isPlaying, setIsPlaying] = useState<boolean>(false);
@@ -653,7 +616,7 @@ export const App: React.FC = () => {
   const renderOverlays = () => {
     const nodes: React.ReactNode[] = [];
     const push = (key: string, leaving: boolean, node: React.ReactNode) => {
-      nodes.push(<div key={key} className={leaving ? 'overlay leaving' : 'overlay'}>{node}</div>);
+      nodes.push(<div key={key} className={leaving ? 'overlay leaving' : 'overlay'}><Suspense fallback={null}>{node}</Suspense></div>);
     };
 
     // Genre page (open, or sliding out)
@@ -703,7 +666,7 @@ export const App: React.FC = () => {
   const tabPane = (tab: Tab, node: React.ReactNode) => (
     mountedTabs[tab] ? (
       <div key={tab} className="tab-pane" data-active={currentTab === tab}>
-        {node}
+        <Suspense fallback={null}>{node}</Suspense>
       </div>
     ) : null
   );
@@ -784,63 +747,13 @@ export const App: React.FC = () => {
         </Suspense>
       )}
 
-      {/* Bottom bar (slides away while a title page or the player is open).
-          A liquid-glass surface with a sliding indicator behind the active
-          tab. It is the only blurred element over scrolling content, and it
-          is fixed, so the blur stays cheap. */}
-      <div
-        className={dockHidden ? 'dock-wrap hidden' : 'dock-wrap'}
-        aria-hidden={dockHidden}
-      >
-        <nav
-          ref={dockRef}
-          className="glass-dock"
-          aria-label="Main"
-          data-pressed={pressIdx !== null}
-          onPointerDown={(e) => {
-            e.currentTarget.setPointerCapture(e.pointerId);
-            setPressIdx(tabIndexAt(e.clientX));
-          }}
-          onPointerMove={(e) => {
-            if (pressIdx !== null) setPressIdx(tabIndexAt(e.clientX));
-          }}
-          onPointerUp={() => {
-            if (pressIdx === null) return;
-            const tab = TABS[pressIdx];
-            setPressIdx(null);
-            if (tab.id !== currentTab || animeStack.length || selectedGenre) switchTab(tab.id);
-          }}
-          onPointerCancel={() => setPressIdx(null)}
-        >
-          <div
-            className="dock-indicator"
-            style={{
-              width: `calc((100% - 12px) / ${TABS.length})`,
-              transform: `translateX(${(pressIdx ?? TABS.findIndex(t => t.id === currentTab)) * 100}%)`
-            }}
-          />
-          {TABS.map((tab, i) => {
-            const Icon = tab.icon;
-            const active = (pressIdx ?? TABS.findIndex(t => t.id === currentTab)) === i;
-            return (
-              <button
-                key={tab.id}
-                onClick={(e) => {
-                  // Touch and mouse are handled on pointer up; a click with no
-                  // pointer (detail 0) is keyboard or screen-reader activation.
-                  if (e.detail === 0 && (tab.id !== currentTab || animeStack.length || selectedGenre)) switchTab(tab.id);
-                }}
-                className={`dock-item ${active ? 'active' : ''}`}
-                aria-label={tab.label}
-                aria-current={currentTab === tab.id ? 'page' : undefined}
-              >
-                <Icon size={20} />
-                <span>{tab.label}</span>
-              </button>
-            );
-          })}
-        </nav>
-      </div>
+      {/* Bottom bar (slides away while a title page or the player is open). */}
+      <Dock
+        currentTab={currentTab}
+        hidden={dockHidden}
+        hasOverlay={animeStack.length > 0 || !!selectedGenre}
+        onSelect={switchTab}
+      />
     </div>
   );
 };

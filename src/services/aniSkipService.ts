@@ -53,8 +53,12 @@ export interface EpisodeSkipIntervals {
   ending: SkipInterval | null;
 }
 
-function extractInterval(data: any, skipType: 'op' | 'ed'): SkipInterval | null {
-  const result = (data?.results || []).find((r: any) => r?.skipType === skipType);
+interface AniSkipResponse {
+  results?: { skipType?: string; interval?: { startTime?: unknown; endTime?: unknown } }[];
+}
+
+function extractInterval(data: AniSkipResponse | null | undefined, skipType: 'op' | 'ed'): SkipInterval | null {
+  const result = (data?.results || []).find(r => r?.skipType === skipType);
   const interval = result?.interval;
   if (!interval || typeof interval.startTime !== 'number' || typeof interval.endTime !== 'number' || interval.endTime <= interval.startTime) {
     return null;

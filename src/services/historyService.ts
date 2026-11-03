@@ -100,13 +100,13 @@ function notifyLibraryChanged(force = true): void {
   });
 }
 
-function parseList<T>(value: string | null, isValid: (item: any) => boolean): T[] {
+function parseList<T>(value: string | null, isValid: (item: unknown) => boolean): T[] {
   if (!value) return [];
   try {
     const parsed = JSON.parse(value);
     // Entries that don't have the expected shape are dropped one by one
     // rather than crashing whichever screen renders them.
-    return Array.isArray(parsed) ? parsed.filter(isValid) : [];
+    return Array.isArray(parsed) ? (parsed.filter(isValid) as T[]) : [];
   } catch {
     // Corrupt entry (e.g. an interrupted write) - start over rather than
     // throwing on every read and bricking the Library screen.
@@ -117,11 +117,16 @@ function parseList<T>(value: string | null, isValid: (item: any) => boolean): T[
 // Real episode ids are numeric. Older builds saved "<slug>-ep-N" ids for
 // made-up placeholder episodes (they only ever played a demo clip), which
 // can't be resumed - those entries are dropped.
-const isHistoryItem = (h: any): boolean =>
-  !!h && typeof h.animeId === 'string' && typeof h.episodeId === 'string' &&
-  /^\d+$/.test(h.episodeId) && typeof h.currentTime === 'number' && isFinite(h.currentTime);
+const isHistoryItem = (value: unknown): boolean => {
+  const h = value as Partial<WatchHistoryItem> | null;
+  return !!h && typeof h.animeId === 'string' && typeof h.episodeId === 'string' &&
+    /^\d+$/.test(h.episodeId) && typeof h.currentTime === 'number' && isFinite(h.currentTime);
+};
 
-const isAnimeItem = (a: any): boolean => !!a && typeof a.id === 'string' && typeof a.title === 'string';
+const isAnimeItem = (value: unknown): boolean => {
+  const a = value as Partial<AnimeItem> | null;
+  return !!a && typeof a.id === 'string' && typeof a.title === 'string';
+};
 
 // Progress ticks are coalesced: while a write is in flight only the newest
 // pending tick is kept, instead of queueing one full rewrite per second.

@@ -3,60 +3,18 @@ import React, { useEffect, useLayoutEffect, useRef, useState, useCallback } from
 import Hls from 'hls.js';
 import {
   Play, Pause, RotateCcw, RotateCw, ArrowLeft, Maximize, Minimize, SkipForward,
-  Volume2, VolumeX, Check, Loader2, X, Gauge, Lock, LockOpen, Layers, MessageSquareText
+  Volume2, VolumeX, Loader2, Gauge, Lock, LockOpen, Layers, MessageSquareText
 } from 'lucide-react';
-import { Capacitor } from '@capacitor/core';
 import type { StreamSource, EpisodeItem } from '../core/aniCliCore';
 import { getUserPreferences } from '../services/historyService';
 import { getEpisodeSkipIntervals, type SkipInterval } from '../services/aniSkipService';
+import {
+  resolvePlayableUrl, createHls, defaultSubtitleLabel, formatTime,
+  NEXT_EPISODE_COUNTDOWN_SECS, POST_PLAY_THRESHOLD_SECS, NETFLIX_RED
+} from './player/playerUtils';
+import { SpeedPanel, AudioPanel, EpisodePanel } from './player/PlayerPanels';
+import { useWakeLock, useFullscreenState } from './player/playerHooks';
 import './VideoPlayer.css';
-
-const resolvePlayableUrl = (url?: string, referer?: string): string => {
-  if (!url) return '';
-  // In dev / web mode without native CapacitorHttp, proxy the stream to bypass browser CORS & Referer restrictions
-  if (!Capacitor.isNativePlatform() && !url.startsWith('/stream-proxy') && url.startsWith('http')) {
-    const ref = referer || 'https://zokoanime.video/';
-    return `/stream-proxy?url=${encodeURIComponent(url)}&ref=${encodeURIComponent(ref)}`;
-  }
-  return url;
-};
-
-// VOD episodes, not a live broadcast - lowLatencyMode trims buffers to chase
-// the live edge, which only makes stalls more likely here. A bigger forward
-// buffer instead gives real cushion against network hiccups, while the back
-// buffer is capped so a long binge doesn't keep hundreds of MB of already-
-// watched segments in memory.
-function createHls(referer: string): Hls {
-  return new Hls({
-    enableWorker: false,
-    backBufferLength: 30,
-    maxBufferLength: 60,
-    maxMaxBufferLength: 120,
-    maxBufferSize: 120 * 1000 * 1000,
-    // Loader-level retries for manifests/segments before a fatal error is
-    // even raised - covers the common single dropped request.
-    fragLoadPolicy: {
-      default: {
-        maxTimeToFirstByteMs: 10000,
-        maxLoadTimeMs: 60000,
-        timeoutRetry: { maxNumRetry: 3, retryDelayMs: 0, maxRetryDelayMs: 0 },
-        errorRetry: { maxNumRetry: 4, retryDelayMs: 1000, maxRetryDelayMs: 8000 }
-      }
-    },
-    xhrSetup: (xhr) => {
-      // CapacitorHttp intercepts this and allows setting custom headers like Referer
-      xhr.setRequestHeader('Referer', referer);
-    }
-  });
-}
-
-// Subtitles start on for sub and off for dub: a dub server's caption files
-// are usually the subbed release's, timed to the Japanese dialogue, so they
-// never line up with the English audio (they can still be turned on).
-function defaultSubtitleLabel(subtitles: StreamSource['subtitles'], mode: 'sub' | 'dub'): string | null {
-  if (mode === 'dub') return null;
-  return subtitles.find(s => s.default)?.label ?? subtitles[0]?.label ?? null;
-}
 
 // Fatal hls.js network errors are retried this many times with exponential
 // backoff (1s, 2s, 4s) before the stream is declared dead.
@@ -85,14 +43,6 @@ interface VideoPlayerProps {
   // positionSec: where the current audio is, so the other one continues there.
   onSwitchMode?: (mode: 'sub' | 'dub', positionSec: number) => void;
 }
-
-const PLAYBACK_SPEEDS = [0.5, 0.75, 1, 1.25, 1.5];
-// Netflix-style post-play: the "Next Episode" button fills up over this many
-// seconds of playback, then advances (when autoplay is on).
-const NEXT_EPISODE_COUNTDOWN_SECS = 10;
-// Without an outro marker, post-play appears this close to the end.
-const POST_PLAY_THRESHOLD_SECS = 20;
-const NETFLIX_RED = '#e50914';
 
 export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   streamSource,
@@ -198,42 +148,8 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     };
   }, []);
 
-  // Keep the screen awake while playing (Screen Wake Lock API, where the
-  // browser/WebView has it). The lock is dropped automatically when the
-  // page is hidden, so it's re-requested when the page becomes visible.
-  useEffect(() => {
-    type WakeLockSentinelLike = { release: () => Promise<void> };
-    const wakeLock = (navigator as Navigator & {
-      wakeLock?: { request: (type: 'screen') => Promise<WakeLockSentinelLike> };
-    }).wakeLock;
-    if (!isPlaying || !wakeLock) return;
-    let sentinel: WakeLockSentinelLike | null = null;
-    let active = true;
-    const acquire = () => {
-      if (document.visibilityState !== 'visible') return;
-      wakeLock.request('screen')
-        .then(lock => {
-          if (active) sentinel = lock;
-          else lock.release().catch(() => undefined);
-        })
-        .catch(() => undefined);
-    };
-    acquire();
-    document.addEventListener('visibilitychange', acquire);
-    return () => {
-      active = false;
-      document.removeEventListener('visibilitychange', acquire);
-      sentinel?.release().catch(() => undefined);
-    };
-  }, [isPlaying]);
-
-  // The fullscreen state must follow the browser: the system back gesture
-  // or Esc leaves fullscreen without going through our toggle.
-  useEffect(() => {
-    const onChange = () => setIsFullscreen(!!document.fullscreenElement);
-    document.addEventListener('fullscreenchange', onChange);
-    return () => document.removeEventListener('fullscreenchange', onChange);
-  }, []);
+  useWakeLock(isPlaying);
+  useFullscreenState(setIsFullscreen);
 
   const reportProgress = useCallback((force: boolean) => {
     const url = loadedUrlRef.current;
@@ -835,15 +751,6 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     }
   };
 
-  const formatTime = (secs: number) => {
-    if (!isFinite(secs) || secs < 0) secs = 0;
-    const h = Math.floor(secs / 3600);
-    const m = Math.floor((secs % 3600) / 60);
-    const s = Math.floor(secs % 60);
-    const mm = h > 0 ? m.toString().padStart(2, '0') : m.toString();
-    return `${h > 0 ? `${h}:` : ''}${mm}:${s.toString().padStart(2, '0')}`;
-  };
-
   // Quality choices only when the scraper gave genuinely different URLs -
   // the same URL under several labels is not a real choice.
   const qualityOptions = streamSource.qualities || [];
@@ -1138,151 +1045,41 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
 
       {/* ---------- Playback speed panel ---------- */}
       {showSpeedPanel && (
-        <div
-          className="nf-panel"
-          onClick={(e) => { e.stopPropagation(); setShowSpeedPanel(false); }}
-          onTouchStart={(e) => e.stopPropagation()}
-          onTouchMove={(e) => e.stopPropagation()}
-        >
-          <button onClick={() => setShowSpeedPanel(false)} className="interactive nf-panel-close" aria-label="Close">
-            <X size={28} />
-          </button>
-          <div className="nf-speed" onClick={(e) => e.stopPropagation()}>
-            <h3>Playback Speed</h3>
-            <div className="nf-speed-line">
-              <div className="nf-speed-rail" />
-              {PLAYBACK_SPEEDS.map(rate => (
-                <button
-                  key={rate}
-                  onClick={() => changeSpeed(rate)}
-                  className={`nf-speed-stop ${rate === playbackRate ? 'active' : ''}`}
-                >
-                  <span className="nf-speed-dot" />
-                  <span className="nf-speed-label">{rate}x{rate === 1 ? ' (Normal)' : ''}</span>
-                </button>
-              ))}
-            </div>
-          </div>
-        </div>
+        <SpeedPanel playbackRate={playbackRate} onChange={changeSpeed} onClose={() => setShowSpeedPanel(false)} />
       )}
 
       {/* ---------- Audio & Subtitles panel ---------- */}
       {showAudioPanel && (
-        <div
-          className="nf-panel"
-          onClick={(e) => e.stopPropagation()}
-          onTouchStart={(e) => e.stopPropagation()}
-          onTouchMove={(e) => e.stopPropagation()}
-        >
-          <button onClick={() => setShowAudioPanel(false)} className="interactive nf-panel-close" aria-label="Close">
-            <X size={28} />
-          </button>
-          <div className="nf-columns">
-            <div className="nf-column">
-              <h3>Audio</h3>
-              {(['sub', 'dub'] as const).map(m => {
-                const active = m === mode;
-                const disabled = !active && !onSwitchMode;
-                return (
-                  <button
-                    key={m}
-                    disabled={disabled}
-                    onClick={() => {
-                      if (active || !onSwitchMode) return;
-                      setShowAudioPanel(false);
-                      onSwitchMode(m, videoRef.current?.currentTime || 0);
-                    }}
-                    className={`nf-option ${active ? 'active' : ''}`}
-                  >
-                    <span className="nf-check">{active && <Check size={18} />}</span>
-                    {m === 'sub' ? 'Japanese [Original]' : 'English (Dub)'}
-                  </button>
-                );
-              })}
-            </div>
-            <div className="nf-column">
-              <h3>Subtitles</h3>
-              <button
-                onClick={() => setActiveSubtitle(null)}
-                className={`nf-option ${activeSubtitle === null ? 'active' : ''}`}
-              >
-                <span className="nf-check">{activeSubtitle === null && <Check size={18} />}</span>
-                Off
-              </button>
-              {streamSource.subtitles.map((track) => (
-                <button
-                  key={track.label}
-                  onClick={() => setActiveSubtitle(track.label)}
-                  className={`nf-option ${activeSubtitle === track.label ? 'active' : ''}`}
-                >
-                  <span className="nf-check">{activeSubtitle === track.label && <Check size={18} />}</span>
-                  {track.label}
-                </button>
-              ))}
-            </div>
-            {hasQualityChoice && (
-              <div className="nf-column">
-                <h3>Video Quality</h3>
-                {qualityOptions.map((item) => (
-                  <button
-                    key={item.quality}
-                    onClick={() => switchQuality(item)}
-                    className={`nf-option ${selectedQuality === item.quality ? 'active' : ''}`}
-                  >
-                    <span className="nf-check">{selectedQuality === item.quality && <Check size={18} />}</span>
-                    {item.quality}
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
-        </div>
+        <AudioPanel
+          mode={mode}
+          canSwitchMode={!!onSwitchMode}
+          onSwitchMode={m => {
+            setShowAudioPanel(false);
+            onSwitchMode?.(m, videoRef.current?.currentTime || 0);
+          }}
+          subtitles={streamSource.subtitles}
+          activeSubtitle={activeSubtitle}
+          onSubtitle={setActiveSubtitle}
+          qualityOptions={hasQualityChoice ? qualityOptions : null}
+          selectedQuality={selectedQuality}
+          onQuality={switchQuality}
+          onClose={() => setShowAudioPanel(false)}
+        />
       )}
 
       {/* ---------- Episodes (floating window) ---------- */}
       {showEpisodeMenu && episodeList && onSelectEpisode && (
-        <div
-          className="nf-panel nf-panel-center"
-          onClick={(e) => {
-            e.stopPropagation();
+        <EpisodePanel
+          animeTitle={animeTitle}
+          episodes={episodeList}
+          currentId={episode.id}
+          gridRef={episodeGridRef}
+          onSelect={ep => {
             setShowEpisodeMenu(false);
+            onSelectEpisode(ep);
           }}
-          onTouchStart={(e) => e.stopPropagation()}
-          onTouchMove={(e) => e.stopPropagation()}
-        >
-          <div className="nf-episodes animate-pop-in" onClick={(e) => e.stopPropagation()}>
-            <div className="nf-episodes-head">
-              <div>
-                <div style={{ fontSize: '16px', fontWeight: 800 }}>Episodes</div>
-                <div style={{ fontSize: '12px', color: '#b3b3b3', marginTop: '2px' }}>
-                  {animeTitle} · {episodeList.length} episodes
-                </div>
-              </div>
-              <button onClick={() => setShowEpisodeMenu(false)} className="interactive nf-icon-btn" aria-label="Close episode list">
-                <X size={24} />
-              </button>
-            </div>
-            <div ref={episodeGridRef} className="nf-episodes-grid">
-              {episodeList.map((ep) => {
-                const isCurrent = ep.id === episode.id;
-                return (
-                  <button
-                    key={ep.id}
-                    data-current={isCurrent || undefined}
-                    title={ep.title}
-                    onClick={() => {
-                      setShowEpisodeMenu(false);
-                      if (!isCurrent) onSelectEpisode(ep);
-                    }}
-                    className={`interactive nf-ep ${isCurrent ? 'active' : ''}`}
-                  >
-                    {ep.number}
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-        </div>
+          onClose={() => setShowEpisodeMenu(false)}
+        />
       )}
     </div>
   );

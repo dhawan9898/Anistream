@@ -16,6 +16,7 @@ import {
   parseSearchResults,
   searchAnimeLive,
   sitePathOf,
+  REMOTE_HOST,
   type AnimeItem
 } from '../core/aniCliCore';
 import { request } from '../core/http';
@@ -68,7 +69,31 @@ function slugify(name: string): string {
 
 const ANILIST = 'https://graphql.anilist.co';
 
-async function anilist(query: string, variables: Record<string, unknown>): Promise<any> {
+
+// ---- AniList wire shapes (only the fields this app reads) ----
+interface AniListMedia {
+  id: number;
+  type?: string;
+  format?: string;
+  episodes?: number | null;
+  genres?: string[] | null;
+  synonyms?: string[] | null;
+  title?: { romaji?: string | null; english?: string | null } | null;
+  coverImage?: { extraLarge?: string | null; large?: string | null } | null;
+  startDate?: { year?: number | null; month?: number | null } | null;
+  description?: string | null;
+  isAdult?: boolean;
+  relations?: { edges?: AniListRelationEdge[] | null } | null;
+  recommendations?: { nodes?: AniListRecNode[] | null } | null;
+}
+interface AniListRelationEdge { relationType?: string; node?: AniListMedia | null }
+interface AniListRecNode { rating?: number | null; mediaRecommendation?: AniListMedia | null }
+interface AniListData {
+  Page?: { pageInfo?: { hasNextPage?: boolean | null } | null; media?: AniListMedia[] | null } | null;
+  Media?: AniListMedia | null;
+}
+
+async function anilist(query: string, variables: Record<string, unknown>): Promise<AniListData | undefined> {
   // A GraphQL read is safe to retry; AniList answers 429 when rate limited,
   // which request() backs off from (honoring Retry-After).
   const res = await request(ANILIST, {
@@ -76,9 +101,9 @@ async function anilist(query: string, variables: Record<string, unknown>): Promi
     headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
     body: JSON.stringify({ query, variables })
   }, { timeoutMs: 10000, retries: 2 });
-  const json = await res.json();
+  const json = (await res.json()) as { data?: AniListData; errors?: { message?: string }[] } | null;
   if (json?.errors?.length) throw new Error(`AniList: ${json.errors[0]?.message}`);
-  return json.data;
+  return json?.data;
 }
 
 const MEDIA_FIELDS = `id format episodes genres synonyms
@@ -96,7 +121,7 @@ function stripHtml(text: string | null | undefined): string | undefined {
   return text.replace(/<br\s*\/?>/gi, '\n').replace(/<[^>]+>/g, '').replace(/\n{3,}/g, '\n\n').trim() || undefined;
 }
 
-function anilistToAnime(m: any): AnimeItem | null {
+function anilistToAnime(m: AniListMedia | null | undefined): AnimeItem | null {
   if (!m || typeof m.id !== 'number') return null;
   const title = m.title?.english || m.title?.romaji || '';
   const poster = m.coverImage?.extraLarge || m.coverImage?.large || '';
@@ -108,7 +133,7 @@ function anilistToAnime(m: any): AnimeItem | null {
     title,
     altTitles,
     poster,
-    type: FORMAT_LABELS[m.format] || undefined,
+    type: (m.format && FORMAT_LABELS[m.format]) || undefined,
     subCount: typeof m.episodes === 'number' ? m.episodes : undefined,
     description: stripHtml(m.description),
     genres: Array.isArray(m.genres) ? m.genres : undefined
@@ -181,7 +206,7 @@ function findNextPagePath(doc: Document, page: number, currentPath: string): str
   if (!href) return undefined;
   let absolute: URL;
   try {
-    absolute = new URL(href, `https://hianime.at${currentPath}`);
+    absolute = new URL(href, `${REMOTE_HOST}${currentPath}`);
   } catch {
     return undefined;
   }
@@ -279,7 +304,7 @@ async function loadGenrePage(genre: Genre, page: number, nextPath?: string): Pro
         media(type: ANIME, isAdult: false, sort: POPULARITY_DESC, genre: $genre, tag: $tag) { ${MEDIA_FIELDS} }
       }
     }`, { page, ...filter });
-    const items = (data?.Page?.media || []).map(anilistToAnime).filter(Boolean) as AnimeItem[];
+    const items = (data?.Page?.media || []).map(anilistToAnime).filter((a): a is AnimeItem => a !== null);
     return { items: dedupe(items), hasMore: !!data?.Page?.pageInfo?.hasNextPage };
   } catch (err) {
     console.warn('[catalogService] AniList genre lookup failed:', err);
@@ -447,7 +472,7 @@ const RELATION_TYPES = new Set(['PREQUEL', 'SEQUEL', 'PARENT', 'SIDE_STORY', 'SP
 
 // How well an AniList entry's titles match the site title: 3 exact, 2
 // prefix ("Title" vs "Title: Subtitle"), 1 same franchise, 0 unrelated.
-function matchScore(media: any, title: string): number {
+function matchScore(media: AniListMedia | null | undefined, title: string): number {
   const names = [media?.title?.english, media?.title?.romaji, ...(media?.synonyms || [])]
     .filter((t: unknown): t is string => typeof t === 'string' && !!t);
   const wanted = normalizeTitle(title);
@@ -463,11 +488,11 @@ const REC_FIELDS = `recommendations(sort: RATING_DESC, perPage: 25) {
 
 // Community recommendations with a positive rating, best first, minus adult
 // titles - the votes are what make "More Like This" actually similar.
-function goodRecommendations(media: any): AnimeItem[] {
+function goodRecommendations(media: AniListMedia | null | undefined): AnimeItem[] {
   return (media?.recommendations?.nodes || [])
-    .filter((n: any) => (n?.rating ?? 0) > 0 && n?.mediaRecommendation && !n.mediaRecommendation.isAdult)
-    .map((n: any) => anilistToAnime(n.mediaRecommendation))
-    .filter(Boolean) as AnimeItem[];
+    .filter(n => (n?.rating ?? 0) > 0 && n?.mediaRecommendation && !n.mediaRecommendation.isAdult)
+    .map(n => anilistToAnime(n.mediaRecommendation))
+    .filter((a): a is AnimeItem => a !== null);
 }
 
 // A sequel ("Season 3") rarely has many recommendations of its own; below
@@ -481,8 +506,8 @@ async function loadAniListInfo(anime: AnimeItem): Promise<AniListInfo | null> {
     const found = await anilist(`query ($search: String) {
       Page(perPage: 6) { media(search: $search, type: ANIME, sort: SEARCH_MATCH) { id synonyms title { romaji english } } }
     }`, { search: anime.title });
-    const candidates: any[] = found?.Page?.media || [];
-    let best: any = null;
+    const candidates: AniListMedia[] = found?.Page?.media || [];
+    let best: AniListMedia | null = null;
     let bestScore = 0;
     for (const m of candidates) {
       const score = matchScore(m, anime.title);
@@ -507,13 +532,13 @@ async function loadAniListInfo(anime: AnimeItem): Promise<AniListInfo | null> {
     const media = data?.Media;
     if (!media) return null;
 
-    const dateKey = (m: any): number | undefined =>
+    const dateKey = (m: AniListMedia | null | undefined): number | undefined =>
       (m?.startDate?.year ? m.startDate.year * 12 + (m.startDate.month || 1) : undefined);
     const order = new Map<string, number>();
     const relations: AnimeItem[] = [];
-    let root: any = null;
+    let root: AniListMedia | null = null;
     for (const edge of media.relations?.edges || []) {
-      if (edge?.node?.type !== 'ANIME' || !RELATION_TYPES.has(edge.relationType)) continue;
+      if (edge?.node?.type !== 'ANIME' || !edge.relationType || !RELATION_TYPES.has(edge.relationType)) continue;
       if (!root && (edge.relationType === 'PARENT' || edge.relationType === 'PREQUEL')) root = edge.node;
       const item = anilistToAnime(edge.node);
       if (!item) continue;
