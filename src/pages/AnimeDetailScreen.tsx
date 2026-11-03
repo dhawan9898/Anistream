@@ -558,7 +558,7 @@ export const AnimeDetailScreen: React.FC<AnimeDetailScreenProps> = ({
                   caption={item.seasonLabel || item.title}
                   highlighted={isCurrent}
                   badge={isCurrent ? 'Now Viewing' : undefined}
-                  onClick={() => { if (!isCurrent) onSelectAnime(item); }}
+                  onSelect={isCurrent ? undefined : onSelectAnime}
                 />
               );
             })}
@@ -579,7 +579,7 @@ export const AnimeDetailScreen: React.FC<AnimeDetailScreenProps> = ({
           ) : (
             <div className="grid-collection">
               {suggestions.map(item => (
-                <PosterCard key={item.id} anime={item} onClick={() => onSelectAnime(item)} />
+                <PosterCard key={item.id} anime={item} onSelect={onSelectAnime} />
               ))}
             </div>
           )

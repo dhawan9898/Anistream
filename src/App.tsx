@@ -1,5 +1,5 @@
 // App.tsx - Main Android Application Controller for AniStream
-import React, { useState, useEffect, useRef, useMemo, Suspense, lazy } from 'react';
+import React, { useState, useEffect, useRef, useMemo, useCallback, Suspense, lazy } from 'react';
 import { Capacitor } from '@capacitor/core';
 import { ExoPlayerPlugin } from './plugins/exoPlayerPlugin';
 import { HomeScreen } from './pages/HomeScreen';
@@ -97,12 +97,14 @@ export const App: React.FC = () => {
     }, OVERLAY_EXIT_MS + 60));
   };
 
-  const pushAnime = (anime: AnimeItem) => {
+  // Stable identity (it only touches refs and state setters), so memoized
+  // poster cards that receive it as onSelect don't re-render on every App render.
+  const pushAnime = useCallback((anime: AnimeItem) => {
     const stack = animeStackRef.current;
     const key = animeKey(stack.length, anime);
     setClosing(list => list.filter(c => c.key !== key));
     updateStack([...stack, anime]);
-  };
+  }, []);
   const popAnime = () => {
     const stack = animeStackRef.current;
     if (stack.length === 0) return;
@@ -110,11 +112,11 @@ export const App: React.FC = () => {
     startClosing({ key: animeKey(stack.length - 1, top), anime: top });
     updateStack(stack.slice(0, -1));
   };
-  const openGenre = (genre: Genre) => {
+  const openGenre = useCallback((genre: Genre) => {
     updateStack([]);
     setClosing([]);
     updateGenre(genre);
-  };
+  }, []);
   const closeGenre = () => {
     const genre = selectedGenreRef.current;
     if (!genre) return;
@@ -340,7 +342,6 @@ export const App: React.FC = () => {
       progressHandle.then(h => h.remove());
       closedHandle.then(h => h.remove());
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const nativePlayOptions = (

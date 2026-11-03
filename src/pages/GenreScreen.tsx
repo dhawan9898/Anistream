@@ -115,7 +115,7 @@ export const GenreScreen: React.FC<GenreScreenProps> = ({ genre, onBack, onSelec
 
       <div className="grid-collection" style={{ padding: '4px 16px' }}>
         {items.map(anime => (
-          <PosterCard key={anime.id} anime={anime} onClick={() => onSelectAnime(anime)} />
+          <PosterCard key={anime.id} anime={anime} onSelect={onSelectAnime} />
         ))}
         {page === 0 && loading && Array.from({ length: 9 }).map((_, i) => (
           <div key={i} className="skeleton" style={{ borderRadius: '4px', paddingTop: '145%' }} />

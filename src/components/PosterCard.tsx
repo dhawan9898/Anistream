@@ -1,12 +1,14 @@
 // PosterCard.tsx - Compact poster tile used by the horizontal rails
 // (genre rows, Collection) and poster grids (genre pages, More Like This).
-import React from 'react';
+import React, { memo } from 'react';
 import type { AnimeItem } from '../core/aniCliCore';
 import { FadeImage } from './FadeImage';
 
 interface PosterCardProps {
   anime: AnimeItem;
-  onClick: () => void;
+  // Receives the card's anime so one stable handler can serve a whole list
+  // (an inline closure per card would defeat memo()). Omit for a non-interactive card.
+  onSelect?: (anime: AnimeItem) => void;
   // Fixed width for use inside a horizontal rail; omit to fill a grid cell.
   width?: number;
   // Small caption under the poster (e.g. "Season 2").
@@ -15,7 +17,9 @@ interface PosterCardProps {
   badge?: string;
 }
 
-export const PosterCard: React.FC<PosterCardProps> = ({ anime, onClick, width, caption, highlighted, badge }) => (
+const PosterCardBase: React.FC<PosterCardProps> = ({ anime, onSelect, width, caption, highlighted, badge }) => {
+  const onClick = () => onSelect?.(anime);
+  return (
   <div
     onClick={onClick}
     onKeyDown={(e) => {
@@ -102,3 +106,7 @@ export const PosterCard: React.FC<PosterCardProps> = ({ anime, onClick, width, c
     )}
   </div>
 );
+};
+
+export const PosterCard = memo(PosterCardBase);
+

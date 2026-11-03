@@ -227,7 +227,7 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({
           <h2 style={{ fontSize: '19px', fontWeight: 800, color: 'var(--text-primary)', marginBottom: '12px' }}>Anime</h2>
           <div className="grid-collection">
             {results.map(anime => (
-              <PosterCard key={anime.id} anime={anime} onClick={() => onSelectAnime(anime)} />
+              <PosterCard key={anime.id} anime={anime} onSelect={onSelectAnime} />
             ))}
           </div>
         </div>

@@ -63,7 +63,7 @@ const GenreRow: React.FC<{
       <div className="rail" style={{ gap: '10px', padding: '0 20px 6px 20px' }}>
         {items
           ? items.map(anime => (
-              <PosterCard key={anime.id} anime={anime} width={112} onClick={() => onSelectAnime(anime)} />
+              <PosterCard key={anime.id} anime={anime} width={112} onSelect={onSelectAnime} />
             ))
           : Array.from({ length: 5 }).map((_, i) => (
               <div key={i} className="skeleton" style={{ flex: '0 0 112px', height: '162px', borderRadius: '4px' }} />
@@ -321,7 +321,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
                   <div key={i} className="skeleton" style={{ flex: '0 0 112px', height: '162px', borderRadius: '4px' }} />
                 ))
               : trending.map(anime => (
-                  <PosterCard key={anime.id} anime={anime} width={112} onClick={() => onSelectAnime(anime)} />
+                  <PosterCard key={anime.id} anime={anime} width={112} onSelect={onSelectAnime} />
                 ))}
           </div>
         </div>
