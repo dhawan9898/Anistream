@@ -168,18 +168,19 @@ Use the browser's device toolbar (Ctrl+Shift+M in Chrome) to preview phone and t
 ## 8. Architecture
 
 ```
+streamkit/                      shared package, also used by CineStream: UI shell, dock, hero carousel,
+                                category picker, player panels, HTTP layer, tiered cache, theme store,
+                                history helpers, provider hedging/health, base stylesheets
+                                (sync: node scripts/sync-streamkit.mjs ../streamkit)
 src/
-├── core/aniCliCore.ts          scraping + stream resolution (search, episode lists, server
-│                               fallback, AES/XOR decryption), TTL cache, timeouts, retries
-├── services/
-│   ├── historyService.ts       watch history / My List / preferences (Capacitor Preferences),
-│   │                           serialized writes + change notifications
+├── providers/                  the only provider-specific code
+│   ├── aniCliCore.ts           scraping + stream resolution (search, episode lists, hedged server
+│   │                           fallback, AES/XOR decryption), TTL cache, timeouts, retries
 │   ├── catalogService.ts       genres, Collection, More Like This (site + AniList)
 │   ├── aniSkipService.ts       intro/outro timestamps (Jikan -> MAL id -> AniSkip)
-│   └── themeService.ts         dark/light theme
-├── components/
-│   ├── VideoPlayer.tsx         web player (hls.js), lazy-loaded only when used
-│   ├── PosterCard.tsx, GenrePicker.tsx, ConfirmModal.tsx
+│   └── streamResolver.ts       stream lookup used by the app
+├── services/                   historyService, themeService, playbackSession, persistentCache config
+├── components/                 adapters over streamkit (HeroCarousel, GenrePicker), VideoPlayer, PosterCard
 ├── pages/                      Home, Search, Genre, AnimeDetail, History (Library), Settings
 ├── plugins/exoPlayerPlugin.ts  TypeScript bridge to the native player
 └── App.tsx                     navigation, playback sessions, native event wiring

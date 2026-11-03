@@ -2,8 +2,8 @@
 // as you scroll, with a Netflix-style "Categories" switcher in the header.
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { ArrowLeft, ChevronDown, Loader2 } from 'lucide-react';
-import type { AnimeItem } from '../core/aniCliCore';
-import { getAnimeByGenre, type Genre } from '../services/catalogService';
+import type { AnimeItem } from '../providers/aniCliCore';
+import { getAnimeByGenre, type Genre } from '../providers/catalogService';
 import { PosterCard } from '../components/PosterCard';
 import { GenrePicker } from '../components/GenrePicker';
 

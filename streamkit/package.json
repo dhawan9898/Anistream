@@ -1,0 +1,44 @@
+{
+  "name": "streamkit",
+  "version": "0.1.0",
+  "description": "Shared app shell for AniStream and CineStream: UI, player, caching, HTTP and provider plumbing. Providers stay in each app.",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./*": "./src/*",
+    "./assets/*": "./assets/*",
+    "./android/*": "./android/*"
+  },
+  "files": [
+    "src",
+    "assets",
+    "android"
+  ],
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "tsx --test src/*/*.test.ts",
+    "lint": "oxlint"
+  },
+  "peerDependencies": {
+    "@capacitor/core": "^8.5.2",
+    "@capacitor/preferences": "^8.0.1",
+    "hls.js": "^1.7.3",
+    "lucide-react": "^1.46.0",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8"
+  },
+  "devDependencies": {
+    "@capacitor/core": "^8.5.2",
+    "@capacitor/preferences": "^8.0.1",
+    "@types/node": "^24.13.3",
+    "@types/react": "^19.2.18",
+    "hls.js": "^1.7.3",
+    "lucide-react": "^1.46.0",
+    "oxlint": "^1.81.0",
+    "react": "^19.2.8",
+    "tsx": "^4.19.0",
+    "typescript": "~6.0.2",
+    "react-dom": "^19.2.8",
+    "@types/react-dom": "^19.2.7"
+  }
+}

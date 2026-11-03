@@ -18,8 +18,8 @@ import {
   sitePathOf,
   REMOTE_HOST,
   type AnimeItem
-} from '../core/aniCliCore';
-import { request } from '../core/http';
+} from './aniCliCore';
+import { request } from 'streamkit/core/http.ts';
 
 export interface Genre {
   slug: string;

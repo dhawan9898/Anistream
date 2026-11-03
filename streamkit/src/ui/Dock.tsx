@@ -3,27 +3,26 @@
 // selects the tab under it. Keyboard / screen-reader activation (a click with
 // no pointer, detail 0) is handled separately.
 import React, { useRef, useState } from 'react';
-import { Home as HomeIcon, Search as SearchIcon, Library, Settings as SettingsIcon } from 'lucide-react';
 
-export type Tab = 'home' | 'search' | 'library' | 'settings';
+export interface DockTab<T extends string = string> {
+  id: T;
+  label: string;
+  icon: React.ComponentType<{ size?: number }>;
+}
 
-const TABS: { id: Tab; label: string; icon: React.ComponentType<{ size?: number }> }[] = [
-  { id: 'home', label: 'Home', icon: HomeIcon },
-  { id: 'search', label: 'Search', icon: SearchIcon },
-  { id: 'library', label: 'Library', icon: Library },
-  { id: 'settings', label: 'Settings', icon: SettingsIcon }
-];
-
-interface DockProps {
-  currentTab: Tab;
+interface DockProps<T extends string> {
+  tabs: DockTab<T>[];
+  currentTab: T;
   // Slides away while a title page or the player is open.
   hidden: boolean;
   // A title/genre page is open: re-selecting the current tab should close it.
   hasOverlay: boolean;
-  onSelect: (tab: Tab) => void;
+  onSelect: (tab: T) => void;
+  // Extra distance from the bottom edge (CSS length); defaults to the stylesheet value.
+  bottom?: string;
 }
 
-export const Dock: React.FC<DockProps> = ({ currentTab, hidden, hasOverlay, onSelect }) => {
+export function Dock<T extends string>({ tabs: TABS, currentTab, hidden, hasOverlay, onSelect, bottom }: DockProps<T>) {
   const dockRef = useRef<HTMLElement | null>(null);
   const [pressIdx, setPressIdx] = useState<number | null>(null);
 
@@ -35,10 +34,10 @@ export const Dock: React.FC<DockProps> = ({ currentTab, hidden, hasOverlay, onSe
   };
 
   const currentIdx = TABS.findIndex(t => t.id === currentTab);
-  const shouldSwitch = (tab: Tab) => tab !== currentTab || hasOverlay;
+  const shouldSwitch = (tab: T) => tab !== currentTab || hasOverlay;
 
   return (
-    <div className={hidden ? 'dock-wrap hidden' : 'dock-wrap'} aria-hidden={hidden}>
+    <div className={hidden ? 'dock-wrap hidden' : 'dock-wrap'} style={bottom ? { bottom } : undefined} aria-hidden={hidden}>
       <nav
         ref={dockRef}
         className="glass-dock"
@@ -89,4 +88,4 @@ export const Dock: React.FC<DockProps> = ({ currentTab, hidden, hasOverlay, onSe
       </nav>
     </div>
   );
-};
+}

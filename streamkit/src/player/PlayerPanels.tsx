@@ -3,8 +3,8 @@
 // state of their own: VideoPlayer owns it and passes values and callbacks in.
 import React from 'react';
 import { Check, X } from 'lucide-react';
-import type { StreamSource, EpisodeItem } from '../../core/aniCliCore';
-import { PLAYBACK_SPEEDS } from './playerUtils';
+import type { PlayerSubtitleTrack, PlayerQuality, PlayerEpisode } from './types.ts';
+import { PLAYBACK_SPEEDS } from './playerUtils.ts';
 
 const stop = (e: React.SyntheticEvent) => e.stopPropagation();
 
@@ -61,13 +61,13 @@ interface AudioPanelProps {
   mode: 'sub' | 'dub';
   canSwitchMode: boolean;
   onSwitchMode: (mode: 'sub' | 'dub') => void;
-  subtitles: StreamSource['subtitles'];
+  subtitles: PlayerSubtitleTrack[];
   activeSubtitle: string | null;
   onSubtitle: (label: string | null) => void;
   // null when the source has no genuinely different qualities to choose from.
-  qualityOptions: { quality: string; url: string }[] | null;
+  qualityOptions: PlayerQuality[] | null;
   selectedQuality: string;
-  onQuality: (item: { quality: string; url: string }) => void;
+  onQuality: (item: PlayerQuality) => void;
   onClose: () => void;
 }
 
@@ -119,19 +119,20 @@ export const AudioPanel: React.FC<AudioPanelProps> = ({
   </div>
 );
 
-interface EpisodePanelProps {
+interface EpisodePanelProps<E extends PlayerEpisode> {
   animeTitle: string;
-  episodes: EpisodeItem[];
+  episodes: E[];
   currentId: string;
   gridRef: React.RefObject<HTMLDivElement | null>;
   // Not called for the episode that is already playing.
-  onSelect: (episode: EpisodeItem) => void;
+  onSelect: (episode: E) => void;
   onClose: () => void;
 }
 
-export const EpisodePanel: React.FC<EpisodePanelProps> = ({
+export function EpisodePanel<E extends PlayerEpisode>({
   animeTitle, episodes, currentId, gridRef, onSelect, onClose
-}) => (
+}: EpisodePanelProps<E>) {
+  return (
   <div
     className="nf-panel nf-panel-center"
     onClick={(e) => { e.stopPropagation(); onClose(); }}
@@ -169,3 +170,4 @@ export const EpisodePanel: React.FC<EpisodePanelProps> = ({
     </div>
   </div>
 );
+}

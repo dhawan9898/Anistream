@@ -1,32 +1,18 @@
-// themeService.ts - Dark/light theme persistence
-import { Preferences } from '@capacitor/preferences';
+// themeService.ts - AniStream's theme persistence (dark / light), built on the
+// shared theme store.
+import { createThemeStore } from 'streamkit/core/theme.ts';
 
 export type ThemeMode = 'dark' | 'light';
 
-const THEME_KEY = 'anistream_theme';
+const store = createThemeStore<ThemeMode>({
+  key: 'anistream_theme',
+  // Capacitor Preferences on web writes this exact key; index.html reads it
+  // before first paint.
+  syncKey: 'CapacitorStorage.anistream_theme',
+  themes: ['dark', 'light'],
+  fallback: 'dark'
+});
 
-// Synchronous best-effort read so the theme can be applied to <html> before
-// first paint (avoids a flash of the wrong theme). Preferences on web is
-// backed by localStorage, so this mirrors what getTheme() will resolve to;
-// on native it's a fallback until the async Preferences read completes.
-export function getStoredThemeSync(): ThemeMode {
-  try {
-    const raw = window.localStorage.getItem('CapacitorStorage.' + THEME_KEY);
-    return raw === 'light' ? 'light' : 'dark';
-  } catch {
-    return 'dark';
-  }
-}
-
-export async function getTheme(): Promise<ThemeMode> {
-  try {
-    const { value } = await Preferences.get({ key: THEME_KEY });
-    return value === 'light' ? 'light' : 'dark';
-  } catch {
-    return getStoredThemeSync();
-  }
-}
-
-export async function setTheme(theme: ThemeMode): Promise<void> {
-  await Preferences.set({ key: THEME_KEY, value: theme });
-}
+export const getStoredThemeSync = store.getSync;
+export const getTheme = store.get;
+export const setTheme = store.set;

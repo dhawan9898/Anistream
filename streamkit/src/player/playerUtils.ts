@@ -1,13 +1,14 @@
 // playerUtils.ts - Pure helpers and constants for the web video player.
 import Hls from 'hls.js';
 import { Capacitor } from '@capacitor/core';
-import type { StreamSource } from '../../core/aniCliCore';
+import type { PlayerSubtitleTrack } from './types.ts';
 
-export const resolvePlayableUrl = (url?: string, referer?: string): string => {
+// `fallbackReferer` is used by the dev proxy when a stream carries no referer of its own.
+export const resolvePlayableUrl = (url?: string, referer?: string, fallbackReferer = ''): string => {
   if (!url) return '';
   // In dev / web mode without native CapacitorHttp, proxy the stream to bypass browser CORS & Referer restrictions
   if (!Capacitor.isNativePlatform() && !url.startsWith('/stream-proxy') && url.startsWith('http')) {
-    const ref = referer || 'https://zokoanime.video/';
+    const ref = referer || fallbackReferer;
     return `/stream-proxy?url=${encodeURIComponent(url)}&ref=${encodeURIComponent(ref)}`;
   }
   return url;
@@ -45,7 +46,7 @@ export function createHls(referer: string): Hls {
 // Subtitles start on for sub and off for dub: a dub server's caption files
 // are usually the subbed release's, timed to the Japanese dialogue, so they
 // never line up with the English audio (they can still be turned on).
-export function defaultSubtitleLabel(subtitles: StreamSource['subtitles'], mode: 'sub' | 'dub'): string | null {
+export function defaultSubtitleLabel(subtitles: PlayerSubtitleTrack[], mode: 'sub' | 'dub'): string | null {
   if (mode === 'dub') return null;
   return subtitles.find(s => s.default)?.label ?? subtitles[0]?.label ?? null;
 }

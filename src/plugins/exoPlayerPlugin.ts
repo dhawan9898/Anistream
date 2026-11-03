@@ -1,5 +1,5 @@
 import { registerPlugin, type PluginListenerHandle } from '@capacitor/core';
-import type { SubtitleTrack } from '../core/aniCliCore';
+import type { SubtitleTrack } from '../providers/aniCliCore';
 
 export interface QualityOption {
   quality: string;

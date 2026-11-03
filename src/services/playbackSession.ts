@@ -1,5 +1,5 @@
 // playbackSession.ts - Pure helpers for an in-progress playback session.
-import type { AnimeItem, EpisodeItem, StreamSource } from '../core/aniCliCore';
+import type { AnimeItem, EpisodeItem, StreamSource } from '../providers/aniCliCore';
 import { saveWatchProgress, type UserPreferences } from './historyService';
 
 export interface PlaybackSession {

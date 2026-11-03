@@ -1,7 +1,8 @@
 // aniCliCore.ts - Port of ani-cli scraping & deobfuscation logic
 import { Capacitor } from '@capacitor/core';
-import { fetchTimed } from './http.ts';
-import { MAX_STALE_MS, readPersisted, writePersisted } from './persistentCache.ts';
+import { fetchTimed } from 'streamkit/core/http.ts';
+import { resolveHedged } from 'streamkit/providers/hedged.ts';
+import { MAX_STALE_MS, readPersisted, writePersisted } from '../services/persistentCache.ts';
 
 export interface AnimeItem {
   id: string;          // e.g. "solo-leveling-season-2-arise-from-the-shadow-19413"
@@ -536,38 +537,9 @@ export function resolveFirstServer(
   resolve: (hash: string, episodeId: string, mode: 'sub' | 'dub') => Promise<StreamSource | null> = resolveEmbed,
   hedgeDelayMs = HEDGE_DELAY_MS
 ): Promise<StreamSource | null> {
-  return new Promise(done => {
-    let next = 0;
-    let pending = 0;
-    let finished = false;
-    let hedgeTimer: ReturnType<typeof setTimeout> | undefined;
-
-    const finish = (source: StreamSource | null) => {
-      if (finished) return;
-      finished = true;
-      clearTimeout(hedgeTimer);
-      done(source);
-    };
-
-    const launch = () => {
-      if (finished || next >= hashes.length) return;
-      const hash = hashes[next++];
-      pending++;
-      clearTimeout(hedgeTimer);
-      hedgeTimer = setTimeout(launch, hedgeDelayMs);
-      resolve(hash, episodeId, mode)
-        .then(source => { if (source) finish(source); })
-        .catch(err => console.warn(`[aniCliCore] episodeId=${episodeId} server failed:`, err))
-        .finally(() => {
-          pending--;
-          if (finished) return;
-          if (next < hashes.length) launch();
-          else if (pending === 0) finish(null);
-        });
-    };
-
-    if (hashes.length === 0) finish(null);
-    else launch();
+  return resolveHedged(hashes, hash => resolve(hash, episodeId, mode), {
+    hedgeDelayMs,
+    onError: err => console.warn(`[aniCliCore] episodeId=${episodeId} server failed:`, err)
   });
 }
 

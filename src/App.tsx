@@ -3,9 +3,10 @@ import React, { useState, useEffect, useRef, useMemo, useCallback, Suspense, laz
 import { Capacitor } from '@capacitor/core';
 import { ExoPlayerPlugin } from './plugins/exoPlayerPlugin';
 import { HomeScreen } from './pages/HomeScreen';
-import type { Genre } from './services/catalogService';
-import { ConfirmModal } from './components/ConfirmModal';
-import { Dock, type Tab } from './components/Dock';
+import type { Genre } from './providers/catalogService';
+import { ConfirmModal } from 'streamkit/ui/ConfirmModal.tsx';
+import { Home as HomeIcon, Search as SearchIcon, Library, Settings as SettingsIcon } from 'lucide-react';
+import { Dock, type DockTab } from 'streamkit/ui/Dock.tsx';
 import { saveSessionProgress, applyPreferredQuality, type PlaybackSession } from './services/playbackSession';
 import {
   getEpisodes,
@@ -13,9 +14,9 @@ import {
   type AnimeItem,
   type EpisodeItem,
   type StreamSource
-} from './core/aniCliCore';
-import { resolveStream } from './services/streamResolver';
-import { handleLayerBack } from './services/backStack';
+} from './providers/aniCliCore';
+import { resolveStream } from './providers/streamResolver';
+import { handleLayerBack } from 'streamkit/core/backStack.ts';
 import {
   getUserPreferences,
   setPlaybackActive,
@@ -45,6 +46,15 @@ const HistoryScreen = lazy(() => loaders.library().then(m => ({ default: m.Histo
 const GenreScreen = lazy(() => loaders.genre().then(m => ({ default: m.GenreScreen })));
 const SettingsScreen = lazy(() => loaders.settings().then(m => ({ default: m.SettingsScreen })));
 const VideoPlayer = lazy(() => import('./components/VideoPlayer').then(m => ({ default: m.VideoPlayer })));
+
+type Tab = 'home' | 'search' | 'library' | 'settings';
+
+const TABS: DockTab<Tab>[] = [
+  { id: 'home', label: 'Home', icon: HomeIcon },
+  { id: 'search', label: 'Search', icon: SearchIcon },
+  { id: 'library', label: 'Library', icon: Library },
+  { id: 'settings', label: 'Settings', icon: SettingsIcon }
+];
 
 // How long a closing screen keeps sliding out before it is removed.
 const OVERLAY_EXIT_MS = 240;
@@ -750,6 +760,7 @@ export const App: React.FC = () => {
 
       {/* Bottom bar (slides away while a title page or the player is open). */}
       <Dock
+        tabs={TABS}
         currentTab={currentTab}
         hidden={dockHidden}
         hasOverlay={animeStack.length > 0 || !!selectedGenre}
