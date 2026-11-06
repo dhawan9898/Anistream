@@ -435,7 +435,7 @@
          Positioned from code (ExoPlayerActivity). -->
     <LinearLayout
         android:id="@+id/seek_preview_container"
-        android:layout_width="wrap_content"
+        android:layout_width="168dp"
         android:layout_height="wrap_content"
         android:layout_gravity="bottom|start"
         android:layout_marginBottom="104dp"

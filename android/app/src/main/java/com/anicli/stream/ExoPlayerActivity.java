@@ -933,6 +933,7 @@ public class ExoPlayerActivity extends AppCompatActivity {
         android.view.ViewGroup.LayoutParams lp = seekPreviewCard.getLayoutParams();
         lp.height = Math.round(lp.width / aspect);
         seekPreviewCard.setLayoutParams(lp);
+        seekPreviewImage.setImageDrawable(null);
         long target = (long) ((seekBar.getProgress() / 1000.0) * player.getDuration());
         updateScrub(seekBar.getProgress(), target);
         seekPreviewContainer.animate().alpha(1f).setDuration(100).start();
@@ -951,12 +952,18 @@ public class ExoPlayerActivity extends AppCompatActivity {
         root.getLocationInWindow(rootLoc);
         int trackWidth = seekBar.getWidth() - seekBar.getPaddingLeft() - seekBar.getPaddingRight();
         float thumbX = seekLoc[0] - rootLoc[0] + seekBar.getPaddingLeft() + trackWidth * (progress / 1000f);
-        int width = seekPreviewContainer.getWidth() > 0 ? seekPreviewContainer.getWidth() : dp(80);
+        int width = dp(168); // fixed (see the layout): the popup never changes size while it follows the thumb
         float x = Math.max(dp(8), Math.min(root.getWidth() - width - dp(8), thumbX - width / 2f));
         seekPreviewContainer.setTranslationX(x);
 
         scrubTargetMs = targetMs;
-        if (player != null && !scrubSeekQueued) {
+        if (sprites == null && previewPlayer != null) {
+            // Frames come from the preview player's cache of thumbnails; the
+            // main video stays put until the finger lifts.
+            previewWantedBucket = bucketOf(targetMs);
+            showPreviewFrameFor(previewWantedBucket);
+            pumpPreviewSeek();
+        } else if (player != null && !scrubSeekQueued) {
             scrubSeekQueued = true;
             handler.postDelayed(scrubSeekRunnable, SCRUB_SEEK_INTERVAL_MS);
         }
@@ -979,33 +986,52 @@ public class ExoPlayerActivity extends AppCompatActivity {
         @Override
         public void run() {
             scrubSeekQueued = false;
-            if (scrubTargetMs < 0) return;
-            if (previewPlayer != null) {
-                // The preview shows the frame; the main video stays put (and
-                // saves its bandwidth) until the finger lifts.
-                previewPlayer.seekTo(scrubTargetMs);
-            } else if (player != null) {
-                player.seekTo(scrubTargetMs);
-            }
+            if (player != null && scrubTargetMs >= 0) player.seekTo(scrubTargetMs);
         }
     };
 
     // ---- Scrub preview player ----------------------------------------------
     //
     // For streams without thumbnail sprites: a second, muted ExoPlayer on the
-    // same stream, limited to the lowest rendition, that is seeked while the
-    // seek bar is dragged and draws into the preview card.
+    // same stream (lowest rendition) that decodes frames for the seek bar.
+    //
+    // Seeking a streaming player on every finger move is slow and flickers, so:
+    //  - the preview player is warmed up as soon as the controls show, so the
+    //    first drag does not wait for the manifest and first segment;
+    //  - positions are snapped to buckets (5 s offline, 10 s online) and only
+    //    ONE seek is in flight at a time; when it finishes the next wanted
+    //    bucket is requested;
+    //  - every decoded frame is captured into a small bitmap cache. The popup
+    //    always shows a picture instantly: the exact bucket if it is cached,
+    //    else the nearest cached one, else the previous frame - never blank.
 
+    private static final int PREVIEW_THUMB_W = 192;
+    private static final int PREVIEW_THUMB_H = 108;
     private ExoPlayer previewPlayer;
     private MediaItem previewMediaItem;
     private androidx.media3.exoplayer.source.MediaSource.Factory previewSourceFactory;
+    private final android.util.LruCache<Integer, android.graphics.Bitmap> previewThumbs = new android.util.LruCache<>(90);
+    private final java.util.Set<Integer> previewFailedBuckets = new java.util.HashSet<>();
+    private long previewBucketMs = 10_000;
+    private int previewWantedBucket = -1;
+    private int previewInFlightBucket = -1;
     private final Runnable releasePreviewRunnable = this::releasePreviewPlayer;
+    private final Runnable previewTimeoutRunnable = () -> {
+        // A seek that never produced a frame: don't ask for that spot again.
+        if (previewInFlightBucket >= 0) previewFailedBuckets.add(previewInFlightBucket);
+        previewInFlightBucket = -1;
+        pumpPreviewSeek();
+    };
+
+    private int bucketOf(long ms) {
+        return (int) (Math.max(0L, ms) / previewBucketMs);
+    }
 
     private void ensurePreviewPlayer() {
         if (previewPlayer != null || previewMediaItem == null || previewSourceFactory == null || player == null) return;
         try {
             DefaultLoadControl loadControl = new DefaultLoadControl.Builder()
-                    .setBufferDurationsMs(1500, 4000, 500, 1000)
+                    .setBufferDurationsMs(2000, 6000, 500, 1000)
                     .build();
             DefaultTrackSelector.Parameters.Builder pb = DefaultTrackSelector.Parameters.getDefaults(this).buildUpon();
             pb.setMaxVideoSize(426, 240);
@@ -1020,22 +1046,88 @@ public class ExoPlayerActivity extends AppCompatActivity {
             preview.setVolume(0f);
             preview.setSeekParameters(SeekParameters.CLOSEST_SYNC);
             preview.setVideoTextureView(seekPreviewVideo);
+            preview.addListener(new Player.Listener() {
+                // Fires for the first frame after every seek (the renderer
+                // resets its "first frame" state when the position is reset).
+                @Override
+                public void onRenderedFirstFrame() {
+                    onPreviewFrameRendered();
+                }
+
+                @Override
+                public void onPlayerError(androidx.media3.common.PlaybackException error) {
+                    // Without a preview the scrub falls back to moving the main video.
+                    Log.w("ExoPlayerActivity", "scrub preview failed", error);
+                    handler.post(ExoPlayerActivity.this::releasePreviewPlayer);
+                }
+            });
             preview.setMediaItem(previewMediaItem, Math.max(0L, player.getCurrentPosition()));
             preview.setPlayWhenReady(false);
             preview.prepare();
             previewPlayer = preview;
+            previewBucketMs = offlinePlayback ? 5_000 : 10_000;
         } catch (RuntimeException e) {
             Log.w("ExoPlayerActivity", "scrub preview unavailable", e);
             releasePreviewPlayer();
         }
     }
 
+    // Requests the bucket the finger is on, unless one is already being
+    // decoded (it chains to the newest wanted bucket when it completes).
+    private void pumpPreviewSeek() {
+        if (previewPlayer == null || previewInFlightBucket >= 0 || previewWantedBucket < 0) return;
+        int bucket = previewWantedBucket;
+        if (previewThumbs.get(bucket) != null || previewFailedBuckets.contains(bucket)) return;
+        previewInFlightBucket = bucket;
+        previewPlayer.seekTo(bucket * previewBucketMs + previewBucketMs / 2);
+        handler.removeCallbacks(previewTimeoutRunnable);
+        handler.postDelayed(previewTimeoutRunnable, 3000);
+    }
+
+    // A frame of the in-flight seek reached the surface: keep it.
+    private void onPreviewFrameRendered() {
+        final int bucket = previewInFlightBucket;
+        if (bucket < 0) return;
+        // The surface shows the frame a moment after it is released.
+        handler.postDelayed(() -> {
+            if (previewPlayer == null || previewInFlightBucket != bucket) return;
+            android.graphics.Bitmap bmp = seekPreviewVideo.isAvailable()
+                    ? seekPreviewVideo.getBitmap(PREVIEW_THUMB_W, PREVIEW_THUMB_H) : null;
+            handler.removeCallbacks(previewTimeoutRunnable);
+            previewInFlightBucket = -1;
+            if (bmp != null) {
+                previewThumbs.put(bucket, bmp);
+                if (userSeeking && previewWantedBucket >= 0) showPreviewFrameFor(previewWantedBucket);
+            } else {
+                previewFailedBuckets.add(bucket);
+            }
+            pumpPreviewSeek();
+        }, 60);
+    }
+
+    private void showPreviewFrameFor(int bucket) {
+        android.graphics.Bitmap b = previewThumbs.get(bucket);
+        for (int d = 1; b == null && d <= 8; d++) {
+            b = previewThumbs.get(bucket - d);
+            if (b == null) b = previewThumbs.get(bucket + d);
+        }
+        if (b != null) seekPreviewImage.setImageBitmap(b);
+    }
+
     private void releasePreviewPlayer() {
         handler.removeCallbacks(releasePreviewRunnable);
+        handler.removeCallbacks(previewTimeoutRunnable);
+        previewInFlightBucket = -1;
         if (previewPlayer != null) {
             previewPlayer.release();
             previewPlayer = null;
         }
+    }
+
+    private void clearPreviewFrames() {
+        previewThumbs.evictAll();
+        previewFailedBuckets.clear();
+        previewWantedBucket = -1;
     }
 
     private void endScrub(int progress) {
@@ -1051,11 +1143,11 @@ public class ExoPlayerActivity extends AppCompatActivity {
         }
         scrubTargetMs = -1;
         // Kept briefly for a quick second drag, then its decoder is freed.
+        previewWantedBucket = -1;
         if (previewPlayer != null) {
             handler.removeCallbacks(releasePreviewRunnable);
-            handler.postDelayed(releasePreviewRunnable, 5000);
+            handler.postDelayed(releasePreviewRunnable, 30_000);
         }
-        seekPreviewImage.setImageDrawable(null);
         seekPreviewContainer.animate().cancel();
         seekPreviewContainer.animate().alpha(0f).setDuration(140)
                 .withEndAction(() -> seekPreviewContainer.setVisibility(View.GONE))
@@ -1981,6 +2073,7 @@ public class ExoPlayerActivity extends AppCompatActivity {
                 .build();
 
         releasePreviewPlayer();
+        clearPreviewFrames();
         previewMediaItem = mediaItem;
         previewSourceFactory = mediaSourceFactory;
 
@@ -2370,6 +2463,8 @@ public class ExoPlayerActivity extends AppCompatActivity {
 
     private void showControls() {
         if (screenLocked) return;
+        // Get the scrub preview ready before it is needed.
+        if (sprites == null && player != null && player.getPlaybackState() == Player.STATE_READY && !inPip()) ensurePreviewPlayer();
         setControlsVisible(true);
         scheduleAutoHide();
     }
@@ -2646,6 +2741,7 @@ public class ExoPlayerActivity extends AppCompatActivity {
         }
         resolveToken++;
         releasePreviewPlayer();
+        clearPreviewFrames();
         if (sprites != null) {
             sprites.release();
             sprites = null;

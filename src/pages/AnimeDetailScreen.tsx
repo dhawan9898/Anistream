@@ -59,6 +59,10 @@ export const AnimeDetailScreen: React.FC<AnimeDetailScreenProps> = ({
   const [expanded, setExpanded] = useState<boolean>(false);
   const downloads = useDownloads();
   const [pickerOpen, setPickerOpen] = useState<boolean>(false);
+  // The one episode tile whose full description is open (accordion).
+  const [expandedEp, setExpandedEp] = useState<string | null>(null);
+  // Season mode lists every episode of the season, revealed 50 at a time.
+  const [shownCount, setShownCount] = useState<number>(50);
   // Per-episode thumbnails/synopses (Kitsu), filled in for the visible range.
   const [epInfo, setEpInfo] = useState<Record<string, EpisodeInfo>>({});
   const canDownload = downloadsSupported();
@@ -232,8 +236,14 @@ export const AnimeDetailScreen: React.FC<AnimeDetailScreenProps> = ({
   const upNextIndex = upNext ? historyIndex + 1 : historyIndex;
   const autoRange = upNextIndex >= 0 ? Math.floor(upNextIndex / chunkSize) : 0;
   const activeRange = pickedRange ?? autoRange;
-  const currentChunk = episodes.slice(activeRange * chunkSize, (activeRange + 1) * chunkSize);
-  const chunkKey = currentChunk.map(e => e.number).join(',');
+  // The dropdown lists EITHER the franchise's seasons (TV entries only - no
+  // OVAs, movies or specials) OR, for a single-season title, its episode ranges.
+  const seasons = (details?.collection || []).filter(c => !/movie|ova|ona|special|music/i.test(c.type || ''));
+  const seasonMode = seasons.length > 1;
+  const listEpisodes = seasonMode
+    ? episodes.slice(0, Math.max(shownCount, upNextIndex + 1))
+    : episodes.slice(activeRange * chunkSize, (activeRange + 1) * chunkSize);
+  const chunkKey = listEpisodes.map(e => e.number).join(',');
   useEffect(() => {
     if (!resolved || !chunkKey) return;
     let cancelled = false;
@@ -255,11 +265,16 @@ export const AnimeDetailScreen: React.FC<AnimeDetailScreenProps> = ({
   const genres = (details?.genres.length ? details.genres : shown.genres) || [];
   const collection = details?.collection || [];
 
-  // Dropdown: this title's episode ranges, plus its other seasons/parts.
-  const pickerSections: CategorySection[] = [
-    ...(rangeCount > 1 ? [{ title: 'Episodes', items: Array.from({ length: rangeCount }, (_, i) => ({ key: `r:${i}`, name: rangeLabel(i) })) }] : []),
-    ...(collection.length > 1 ? [{ title: 'Seasons & Parts', items: collection.map(c => ({ key: `s:${c.id}`, name: c.seasonLabel ? `${c.seasonLabel} \u00b7 ${c.title}` : c.title })) }] : [])
-  ];
+  const seasonName = (c: AnimeItem) => c.seasonLabel || c.title;
+  const pickerSections: CategorySection[] = [{
+    items: seasonMode
+      ? seasons.map(c => ({ key: `s:${c.id}`, name: seasonName(c) }))
+      : Array.from({ length: rangeCount }, (_, i) => ({ key: `r:${i}`, name: rangeLabel(i) }))
+  }];
+  const pickerSelected = seasonMode ? `s:${shown.id}` : `r:${activeRange}`;
+  const pickerLabel = seasonMode
+    ? seasonName(seasons.find(c => c.id === shown.id) || shown)
+    : rangeLabel(activeRange);
   const suggestions = details?.suggestions || [];
 
   const tabs: { id: DetailTab; label: string }[] = [
@@ -471,7 +486,7 @@ export const AnimeDetailScreen: React.FC<AnimeDetailScreenProps> = ({
 
         {settled && tab === 'episodes' && (
           <>
-            {(rangeCount > 1 || collection.length > 1) && (
+            {(seasonMode || rangeCount > 1) && (
               <button
                 onClick={() => { hapticLight(); setPickerOpen(true); }}
                 className="interactive"
@@ -490,7 +505,7 @@ export const AnimeDetailScreen: React.FC<AnimeDetailScreenProps> = ({
                   fontWeight: 700
                 }}
               >
-                <span>{rangeLabel(activeRange)}</span>
+                <span>{pickerLabel}</span>
                 <ChevronDown size={18} />
               </button>
             )}
@@ -498,13 +513,13 @@ export const AnimeDetailScreen: React.FC<AnimeDetailScreenProps> = ({
             <CategoryPicker
               open={pickerOpen}
               sections={pickerSections}
-              selectedKey={`r:${activeRange}`}
+              selectedKey={pickerSelected}
               onSelect={key => {
                 hapticSelection();
                 setPickerOpen(false);
                 if (key.startsWith('r:')) setActiveRange(Number(key.slice(2)));
                 else {
-                  const season = collection.find(c => `s:${c.id}` === key);
+                  const season = seasons.find(c => `s:${c.id}` === key);
                   if (season && season.id !== shown.id) onSelectAnime(season);
                 }
               }}
@@ -520,7 +535,7 @@ export const AnimeDetailScreen: React.FC<AnimeDetailScreenProps> = ({
               </div>
             ) : (
               <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                {currentChunk.map((ep) => {
+                {listEpisodes.map((ep) => {
                   const isLastWatched = history?.episodeId === ep.id;
                   const entry = progress[ep.id];
                   const watchState = episodeWatchState(entry);
@@ -554,13 +569,22 @@ export const AnimeDetailScreen: React.FC<AnimeDetailScreenProps> = ({
                       onPlayEpisode(playAnime, ep, playMode);
                     }
                   };
+                  const expanded = expandedEp === ep.id;
                   return (
                     <div
                       key={ep.id}
                       role="button"
                       tabIndex={0}
-                      onClick={play}
-                      onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); play(); } }}
+                      aria-expanded={expanded}
+                      // Tapping the tile opens (or closes) its description; opening
+                      // another one closes this one. Only the thumbnail plays.
+                      onClick={() => { hapticSelection(); setExpandedEp(expanded ? null : ep.id); }}
+                      onKeyDown={e => {
+                        if (e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ')) {
+                          e.preventDefault();
+                          setExpandedEp(expanded ? null : ep.id);
+                        }
+                      }}
                       className="interactive glass-panel"
                       aria-label={`Episode ${ep.number}${status ? `, ${status}` : ''}`}
                       style={{
@@ -569,11 +593,17 @@ export const AnimeDetailScreen: React.FC<AnimeDetailScreenProps> = ({
                         display: 'flex',
                         gap: '14px',
                         padding: '12px',
-                        alignItems: 'center',
+                        alignItems: expanded ? 'flex-start' : 'center',
                         opacity: watchState === 'finished' && !isLastWatched ? 0.7 : 1
                       }}
                     >
-                      <div style={{ position: 'relative', width: '124px', height: '70px', borderRadius: 'var(--radius-sm)', overflow: 'hidden', flexShrink: 0, background: 'var(--track-bg)' }}>
+                      <div
+                        role="button"
+                        tabIndex={0}
+                        aria-label={`Play episode ${ep.number}`}
+                        onClick={e => { e.stopPropagation(); play(); }}
+                        onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); play(); } }}
+                        style={{ position: 'relative', width: '124px', height: '70px', borderRadius: 'var(--radius-sm)', overflow: 'hidden', flexShrink: 0, background: 'var(--track-bg)', cursor: 'pointer' }}>
                         <FadeImage src={info?.thumbnail || shown.banner || shown.poster} alt="" loading="lazy" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
                         <div style={{ position: 'absolute', inset: 0, backgroundColor: 'rgba(0,0,0,0.25)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                           <div style={{ width: '30px', height: '30px', borderRadius: '50%', backgroundColor: 'rgba(255,255,255,0.25)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -590,7 +620,7 @@ export const AnimeDetailScreen: React.FC<AnimeDetailScreenProps> = ({
                       <div style={{ flex: 1, minWidth: 0 }}>
                         <h3 style={{
                           fontSize: '15px', fontWeight: 700, color: 'var(--text-primary)', letterSpacing: '-0.2px',
-                          display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden'
+                          ...(expanded ? {} : { display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' as const, overflow: 'hidden' })
                         }}>
                           {ep.number}. {epTitle || `Episode ${ep.number}`}
                         </h3>
@@ -600,12 +630,12 @@ export const AnimeDetailScreen: React.FC<AnimeDetailScreenProps> = ({
                             {status}
                           </p>
                         )}
-                        {info?.synopsis && (
+                        {(info?.synopsis || expanded) && (
                           <p style={{
-                            fontSize: '12px', lineHeight: 1.4, color: 'var(--text-secondary)', marginTop: '4px',
-                            display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical', overflow: 'hidden'
+                            fontSize: '12px', lineHeight: 1.45, color: 'var(--text-secondary)', marginTop: '4px',
+                            ...(expanded ? {} : { display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' as const, overflow: 'hidden' })
                           }}>
-                            {info.synopsis}
+                            {info?.synopsis || 'No description available for this episode.'}
                           </p>
                         )}
                       </div>
@@ -620,6 +650,15 @@ export const AnimeDetailScreen: React.FC<AnimeDetailScreenProps> = ({
                     </div>
                   );
                 })}
+                {seasonMode && listEpisodes.length < episodes.length && (
+                  <button
+                    onClick={() => { hapticLight(); setShownCount(listEpisodes.length + 50); }}
+                    className="interactive glass-pill"
+                    style={{ alignSelf: 'center', padding: '10px 22px', borderRadius: '4px', border: 'none', color: 'var(--text-primary)', fontSize: '13px', fontWeight: 700 }}
+                  >
+                    Show more episodes ({episodes.length - listEpisodes.length} left)
+                  </button>
+                )}
               </div>
             )}
           </>
