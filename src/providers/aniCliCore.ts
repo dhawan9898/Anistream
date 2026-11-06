@@ -100,14 +100,14 @@ export function deobfuscateBlob(base64Blob: string): string {
 }
 
 // Helper to resolve API URLs: the dev server proxies "/api-hianime" to
-// https://hianimes.se (see vite.config.ts), which only exists while running
+// https://hianime.at (see vite.config.ts), which only exists while running
 // `npm run dev`. The built APK has no such proxy, so on a native device we
 // must hit the real host directly - CapacitorHttp (enabled in
 // capacitor.config.ts) routes fetch() through native networking, which
 // isn't subject to the browser's CORS / forbidden-header restrictions.
 // The single place the JS side names the streaming site. (The native Java
 // resolver and the dev proxy in vite.config.ts carry their own copy.)
-export const REMOTE_HOST = "https://hianimes.se";
+export const REMOTE_HOST = "https://hianime.at";
 
 export function getApiBase(): string {
   return Capacitor.isNativePlatform() ? REMOTE_HOST : "/api-hianime";
