@@ -181,9 +181,12 @@ body {
   animation: overlayOut 0.24s cubic-bezier(0.32, 0, 0.67, 0) both;
 }
 
-/* While a poster flies to the title page (SharedElementTransitionOverlay) the
-   page must stay put - only fade it in - so the flight's target is stable. */
-:root[data-shared-transition] .overlay:not(.leaving) {
+/* A title page opened by flying a poster to it (SharedElementTransitionOverlay)
+   only fades in - it must not slide or scale, or the poster's target would be
+   moving. The class stays on the page for its whole life: switching the
+   animation off when the flight ends would restart the page's own slide-in
+   (the page visibly "refreshing"). */
+.overlay.shared-open:not(.leaving) {
   animation: overlayFadeIn 0.32s ease-out both;
 }
 

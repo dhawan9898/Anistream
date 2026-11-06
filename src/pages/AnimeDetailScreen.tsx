@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { ArrowLeft, Play, Bookmark, Check, Loader2 } from 'lucide-react';
+import { ArrowLeft, Play, Bookmark, Check, Loader2, ChevronDown } from 'lucide-react';
+import { CategoryPicker, type CategorySection } from 'streamkit/ui/CategoryPicker.tsx';
 import { FadeImage } from 'streamkit/ui/FadeImage.tsx';
 import { ErrorState } from 'streamkit/ui/ErrorState.tsx';
 import { getEpisodes, type AnimeItem, type EpisodeItem } from '../providers/aniCliCore';
@@ -15,6 +16,7 @@ import {
   subscribeLibraryChanges,
   type WatchHistoryItem
 } from '../services/historyService';
+import { getEpisodeInfo, type EpisodeInfo } from '../providers/episodeInfoService';
 import { getAnimeDetails, hasDub, resolveAnime, type AnimeDetails } from '../providers/catalogService';
 import { PosterCard } from '../components/PosterCard';
 import { DownloadButton } from '../components/DownloadButton';
@@ -56,6 +58,9 @@ export const AnimeDetailScreen: React.FC<AnimeDetailScreenProps> = ({
   const [history, setHistory] = useState<WatchHistoryItem | null>(null);
   const [expanded, setExpanded] = useState<boolean>(false);
   const downloads = useDownloads();
+  const [pickerOpen, setPickerOpen] = useState<boolean>(false);
+  // Per-episode thumbnails/synopses (Kitsu), filled in for the visible range.
+  const [epInfo, setEpInfo] = useState<Record<string, EpisodeInfo>>({});
   const canDownload = downloadsSupported();
   // Whether an English dub exists: undefined until known (the option stays
   // visible meanwhile), false hides it everywhere.
@@ -228,10 +233,33 @@ export const AnimeDetailScreen: React.FC<AnimeDetailScreenProps> = ({
   const autoRange = upNextIndex >= 0 ? Math.floor(upNextIndex / chunkSize) : 0;
   const activeRange = pickedRange ?? autoRange;
   const currentChunk = episodes.slice(activeRange * chunkSize, (activeRange + 1) * chunkSize);
+  const chunkKey = currentChunk.map(e => e.number).join(',');
+  useEffect(() => {
+    if (!resolved || !chunkKey) return;
+    let cancelled = false;
+    getEpisodeInfo(resolved, chunkKey.split(','), episodes.length).then(info => {
+      if (!cancelled && Object.keys(info).length > 0) setEpInfo(prev => ({ ...prev, ...info }));
+    });
+    return () => { cancelled = true; };
+    // `episodes.length` only guards the match; the visible range drives loading.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [resolved, chunkKey]);
+
+  const rangeLabel = (i: number) => {
+    const start = i * chunkSize + 1;
+    const end = Math.min(episodes.length, (i + 1) * chunkSize);
+    return start === end ? `Episode ${start}` : `Episodes ${start}\u2013${end}`;
+  };
 
   const description = shown.description || details?.description;
   const genres = (details?.genres.length ? details.genres : shown.genres) || [];
   const collection = details?.collection || [];
+
+  // Dropdown: this title's episode ranges, plus its other seasons/parts.
+  const pickerSections: CategorySection[] = [
+    ...(rangeCount > 1 ? [{ title: 'Episodes', items: Array.from({ length: rangeCount }, (_, i) => ({ key: `r:${i}`, name: rangeLabel(i) })) }] : []),
+    ...(collection.length > 1 ? [{ title: 'Seasons & Parts', items: collection.map(c => ({ key: `s:${c.id}`, name: c.seasonLabel ? `${c.seasonLabel} \u00b7 ${c.title}` : c.title })) }] : [])
+  ];
   const suggestions = details?.suggestions || [];
 
   const tabs: { id: DetailTab; label: string }[] = [
@@ -443,31 +471,45 @@ export const AnimeDetailScreen: React.FC<AnimeDetailScreenProps> = ({
 
         {settled && tab === 'episodes' && (
           <>
-            {rangeCount > 1 && (
-              <div style={{ display: 'flex', gap: '8px', overflowX: 'auto', paddingBottom: '12px', marginBottom: '6px' }}>
-                {Array.from({ length: rangeCount }).map((_, i) => {
-                  const start = i * chunkSize + 1;
-                  const end = Math.min(episodes.length, (i + 1) * chunkSize);
-                  return (
-                    <button
-                      key={i}
-                      onClick={() => { hapticSelection(); setActiveRange(i); }}
-                      className={`interactive glass-pill chip ${activeRange === i ? 'active' : ''}`}
-                      style={{
-                        padding: '6px 14px',
-                        borderRadius: '4px',
-                        color: activeRange === i ? undefined : 'var(--text-secondary)',
-                        fontSize: '12px',
-                        fontWeight: 700,
-                        whiteSpace: 'nowrap'
-                      }}
-                    >
-                      {start} - {end}
-                    </button>
-                  );
-                })}
-              </div>
+            {(rangeCount > 1 || collection.length > 1) && (
+              <button
+                onClick={() => { hapticLight(); setPickerOpen(true); }}
+                className="interactive"
+                aria-haspopup="dialog"
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '12px',
+                  padding: '10px 14px',
+                  marginBottom: '14px',
+                  background: 'var(--track-bg)',
+                  border: '1px solid var(--border-subtle)',
+                  borderRadius: '4px',
+                  color: 'var(--text-primary)',
+                  fontSize: '15px',
+                  fontWeight: 700
+                }}
+              >
+                <span>{rangeLabel(activeRange)}</span>
+                <ChevronDown size={18} />
+              </button>
             )}
+
+            <CategoryPicker
+              open={pickerOpen}
+              sections={pickerSections}
+              selectedKey={`r:${activeRange}`}
+              onSelect={key => {
+                hapticSelection();
+                setPickerOpen(false);
+                if (key.startsWith('r:')) setActiveRange(Number(key.slice(2)));
+                else {
+                  const season = collection.find(c => `s:${c.id}` === key);
+                  if (season && season.id !== shown.id) onSelectAnime(season);
+                }
+              }}
+              onClose={() => { hapticLight(); setPickerOpen(false); }}
+            />
 
             {episodesError && !loading ? (
               <ErrorState compact message="Couldn't load the episode list." onRetry={retryEpisodes} />
@@ -477,7 +519,7 @@ export const AnimeDetailScreen: React.FC<AnimeDetailScreenProps> = ({
                 <span style={{ fontSize: '14px' }}>Fetching episodes...</span>
               </div>
             ) : (
-              <div className="grid-episodes">
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
                 {currentChunk.map((ep) => {
                   const isLastWatched = history?.episodeId === ep.id;
                   const entry = progress[ep.id];
@@ -486,68 +528,95 @@ export const AnimeDetailScreen: React.FC<AnimeDetailScreenProps> = ({
                     ? Math.min(100, Math.round((entry.currentTime / entry.duration) * 100))
                     : 0;
                   const dl = downloads.find(d => d.id === downloadId(shown.id, ep.id, playMode));
+                  const info = epInfo[ep.number];
+                  const siteTitle = !ep.title || ep.title.trim().toLowerCase() === `episode ${ep.number}` ? undefined : ep.title;
+                  const epTitle = siteTitle || info?.title;
+                  const status = watchState === 'finished' ? 'Watched'
+                    : watchState === 'partial' ? `${pct}% watched`
+                    : isLastWatched ? 'Last watched' : null;
+                  const play = () => {
+                    if (!playAnime) return;
+                    hapticMedium();
+                    // Half-watched: continue where it was left.
+                    if (entry && watchState === 'partial') {
+                      onResume(playAnime, {
+                        animeId: playAnime.id,
+                        animeTitle: playAnime.title,
+                        poster: playAnime.poster,
+                        episodeId: ep.id,
+                        episodeNumber: ep.number,
+                        currentTime: entry.currentTime,
+                        duration: entry.duration,
+                        updatedAt: Date.now(),
+                        mode: playMode
+                      });
+                    } else {
+                      onPlayEpisode(playAnime, ep, playMode);
+                    }
+                  };
                   return (
-                    <div key={ep.id} style={{ position: 'relative', display: 'flex' }}>
-                    <button
-                      onClick={() => {
-                        if (!playAnime) return;
-                        hapticMedium();
-                        // Half-watched: continue where it was left.
-                        if (entry && watchState === 'partial') {
-                          onResume(playAnime, {
-                            animeId: playAnime.id,
-                            animeTitle: playAnime.title,
-                            poster: playAnime.poster,
-                            episodeId: ep.id,
-                            episodeNumber: ep.number,
-                            currentTime: entry.currentTime,
-                            duration: entry.duration,
-                            updatedAt: Date.now(),
-                            mode: playMode
-                          });
-                        } else {
-                          onPlayEpisode(playAnime, ep, playMode);
-                        }
-                      }}
-                      className="interactive card-bouncy glass-panel"
+                    <div
+                      key={ep.id}
+                      role="button"
+                      tabIndex={0}
+                      onClick={play}
+                      onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); play(); } }}
+                      className="interactive glass-panel"
+                      aria-label={`Episode ${ep.number}${status ? `, ${status}` : ''}`}
                       style={{
-                        flex: 1,
-                        padding: '14px 8px',
-                        borderRadius: 'var(--radius-sm)',
-                        display: 'flex',
-                        flexDirection: 'column',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        gap: '4px',
+                        borderRadius: 'var(--radius-md)',
                         overflow: 'hidden',
-                        opacity: watchState === 'finished' && !isLastWatched ? 0.62 : 1
-                      }}
-                      aria-label={`Episode ${ep.number}${watchState === 'finished' ? ', watched' : watchState === 'partial' ? ', in progress' : ''}`}
-                    >
-                      <span style={{ fontSize: '15px', fontWeight: 800, color: 'var(--text-primary)' }}>{ep.number}</span>
-                      <span style={{
-                        fontSize: '10px',
-                        color: watchState === 'finished' ? 'var(--text-muted)' : 'var(--accent-primary)',
-                        textTransform: 'uppercase',
-                        fontWeight: 600,
                         display: 'flex',
+                        gap: '14px',
+                        padding: '12px',
                         alignItems: 'center',
-                        gap: '3px'
-                      }}>
-                        {watchState === 'finished' && <Check size={10} />}
-                        {watchState === 'finished' ? 'Watched' : watchState === 'partial' || isLastWatched ? 'Resume' : 'Play'}
-                      </span>
-                      {watchState === 'partial' && (
-                        <span style={{ position: 'absolute', left: 0, bottom: 0, height: '3px', width: `${pct}%`, background: '#e50914' }} />
+                        opacity: watchState === 'finished' && !isLastWatched ? 0.7 : 1
+                      }}
+                    >
+                      <div style={{ position: 'relative', width: '124px', height: '70px', borderRadius: 'var(--radius-sm)', overflow: 'hidden', flexShrink: 0, background: 'var(--track-bg)' }}>
+                        <FadeImage src={info?.thumbnail || shown.banner || shown.poster} alt="" loading="lazy" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                        <div style={{ position: 'absolute', inset: 0, backgroundColor: 'rgba(0,0,0,0.25)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                          <div style={{ width: '30px', height: '30px', borderRadius: '50%', backgroundColor: 'rgba(255,255,255,0.25)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                            <Play size={14} fill="#fff" color="#fff" style={{ marginLeft: '1px' }} />
+                          </div>
+                        </div>
+                        {watchState === 'partial' && (
+                          <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, height: '3px', backgroundColor: 'rgba(255,255,255,0.2)' }}>
+                            <div style={{ width: `${pct}%`, height: '100%', background: '#e50914' }} />
+                          </div>
+                        )}
+                      </div>
+
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <h3 style={{
+                          fontSize: '15px', fontWeight: 700, color: 'var(--text-primary)', letterSpacing: '-0.2px',
+                          display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden'
+                        }}>
+                          {ep.number}. {epTitle || `Episode ${ep.number}`}
+                        </h3>
+                        {status && (
+                          <p style={{ fontSize: '12px', color: watchState === 'finished' ? 'var(--text-muted)' : 'var(--accent-primary)', marginTop: '3px', display: 'flex', alignItems: 'center', gap: '4px', fontWeight: 600 }}>
+                            {watchState === 'finished' && <Check size={12} />}
+                            {status}
+                          </p>
+                        )}
+                        {info?.synopsis && (
+                          <p style={{
+                            fontSize: '12px', lineHeight: 1.4, color: 'var(--text-secondary)', marginTop: '4px',
+                            display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical', overflow: 'hidden'
+                          }}>
+                            {info.synopsis}
+                          </p>
+                        )}
+                      </div>
+
+                      {canDownload && playAnime && (
+                        <DownloadButton
+                          record={dl}
+                          onStart={() => { hapticSelection(); startDownload(playAnime, ep, playMode).catch(err => console.warn('[downloads] start failed:', err)); }}
+                          onRemove={() => { hapticLight(); void removeDownload(downloadId(shown.id, ep.id, playMode)); }}
+                        />
                       )}
-                    </button>
-                    {canDownload && playAnime && (
-                      <DownloadButton
-                        record={dl}
-                        onStart={() => { hapticSelection(); startDownload(playAnime, ep, playMode).catch(err => console.warn('[downloads] start failed:', err)); }}
-                        onRemove={() => { hapticLight(); void removeDownload(downloadId(shown.id, ep.id, playMode)); }}
-                      />
-                    )}
                     </div>
                   );
                 })}

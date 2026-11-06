@@ -57,8 +57,6 @@ export const startSharedTransition = (
     originRect,
     phase: 'expanding'
   };
-  // CSS keys off this so the title page only fades in while the poster flies.
-  document.documentElement.dataset.sharedTransition = '1';
   notify();
 };
 
@@ -69,7 +67,6 @@ export const finishSharedTransition = (): void => {
     phase: 'settled',
     active: false
   };
-  delete document.documentElement.dataset.sharedTransition;
   notify();
 };
 
@@ -80,6 +77,5 @@ export const resetSharedTransition = (): void => {
     originRect: null,
     phase: 'idle'
   };
-  delete document.documentElement.dataset.sharedTransition;
   notify();
 };

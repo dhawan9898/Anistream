@@ -94,6 +94,8 @@ export const App: React.FC = () => {
   const selectedGenreRef = useRef<Genre | null>(null);
   const currentTabRef = useRef<Tab>('home');
 
+  // Overlay keys of title pages opened by a poster flight (they fade in; see index.css).
+  const sharedOpenKeys = useRef<Set<string>>(new Set());
   const closingTimers = useRef<number[]>([]);
   useEffect(() => () => closingTimers.current.forEach(t => window.clearTimeout(t)), []);
 
@@ -109,17 +111,21 @@ export const App: React.FC = () => {
     setClosing(list => [...list.filter(c => c.key !== overlay.key), overlay]);
     closingTimers.current.push(window.setTimeout(() => {
       setClosing(list => list.filter(c => c.key !== overlay.key));
+      sharedOpenKeys.current.delete(overlay.key);
     }, OVERLAY_EXIT_MS + 60));
   };
 
   // Stable identity (it only touches refs and state setters), so memoized
   // poster cards that receive it as onSelect don't re-render on every App render.
   const pushAnime = useCallback((anime: AnimeItem, rect?: DOMRect) => {
-    if (rect) {
-      startSharedTransition(rect, anime);
-    }
     const stack = animeStackRef.current;
     const key = animeKey(stack.length, anime);
+    if (rect) {
+      startSharedTransition(rect, anime);
+      sharedOpenKeys.current.add(key);
+    } else {
+      sharedOpenKeys.current.delete(key);
+    }
     setClosing(list => list.filter(c => c.key !== key));
     updateStack([...stack, anime]);
   }, []);
@@ -669,7 +675,7 @@ export const App: React.FC = () => {
   const renderOverlays = () => {
     const nodes: React.ReactNode[] = [];
     const push = (key: string, leaving: boolean, node: React.ReactNode) => {
-      nodes.push(<div key={key} className={leaving ? 'overlay leaving' : 'overlay'}><Suspense fallback={null}>{node}</Suspense></div>);
+      nodes.push(<div key={key} className={`overlay${leaving ? ' leaving' : ''}${sharedOpenKeys.current.has(key) ? ' shared-open' : ''}`}><Suspense fallback={null}>{node}</Suspense></div>);
     };
 
     // Genre page (open, or sliding out)

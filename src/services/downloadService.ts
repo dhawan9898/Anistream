@@ -28,6 +28,8 @@ export interface DownloadRecord {
   intro?: SkipRange;
   outro?: SkipRange;
   error?: string;
+  // Retries of a failed download that reused its saved stream link.
+  attempts?: number;
 }
 
 export const downloadsSupported = (): boolean => Capacitor.isNativePlatform();
@@ -168,17 +170,33 @@ export async function startDownload(anime: AnimeItem, episode: EpisodeItem, mode
   const existing = records.get(id);
   if (existing && existing.state !== 'failed') return;
 
+  // A failed download is retried on the SAME stream link first: the partly
+  // downloaded data is cached under that link, so it carries on instead of
+  // starting over. Only if that fails again (the link has probably expired)
+  // is the partial data dropped and a fresh link resolved.
+  const reuseLink = !!existing && existing.state === 'failed' && !!existing.streamUrl && (existing.attempts ?? 0) < 1;
   const placeholder: DownloadRecord = {
-    id, anime, episode, mode, state: 'queued', percent: 0, bytes: 0, createdAt: Date.now(),
-    streamUrl: '', referer: '', subtitles: []
+    id, anime, episode, mode, state: 'queued',
+    percent: reuseLink ? existing.percent : 0, bytes: reuseLink ? existing.bytes : 0,
+    createdAt: existing?.createdAt ?? Date.now(),
+    streamUrl: reuseLink ? existing.streamUrl : '', referer: reuseLink ? existing.referer : '',
+    subtitles: reuseLink ? existing.subtitles : [],
+    intro: reuseLink ? existing.intro : undefined, outro: reuseLink ? existing.outro : undefined,
+    attempts: reuseLink ? (existing.attempts ?? 0) + 1 : 0
   };
   records.set(id, placeholder);
   publish();
 
   try {
-    if (existing) await DownloadsPlugin.remove({ id }).catch(() => undefined);
-    const source = await resolveStream(anime, episode, mode, { fresh: true });
-    if (source.isFallback) throw new Error('This episode has no stream available right now.');
+    let source: Pick<StreamSource, 'streamUrl' | 'referer' | 'subtitles' | 'intro' | 'outro'>;
+    if (reuseLink) {
+      source = { streamUrl: existing.streamUrl, referer: existing.referer, subtitles: [], intro: existing.intro, outro: existing.outro };
+    } else {
+      if (existing) await DownloadsPlugin.remove({ id }).catch(() => undefined);
+      const resolved = await resolveStream(anime, episode, mode, { fresh: true });
+      if (resolved.isFallback) throw new Error('This episode has no stream available right now.');
+      source = resolved;
+    }
     const prefs = await getUserPreferences();
     const { subtitles } = await DownloadsPlugin.start({
       id,
@@ -191,7 +209,8 @@ export async function startDownload(anime: AnimeItem, episode: EpisodeItem, mode
       ...placeholder,
       streamUrl: source.streamUrl,
       referer: source.referer,
-      subtitles: subtitles ?? [],
+      // Captions already saved on an earlier attempt are kept.
+      subtitles: subtitles?.length ? subtitles : placeholder.subtitles,
       intro: source.intro,
       outro: source.outro
     };
@@ -203,7 +222,7 @@ export async function startDownload(anime: AnimeItem, episode: EpisodeItem, mode
     publish();
     void savePoster(anime);
   } catch (err) {
-    const failed: DownloadRecord = { ...placeholder, state: 'failed', error: err instanceof Error ? err.message : String(err) };
+    const failed: DownloadRecord = { ...placeholder, state: 'failed', attempts: placeholder.attempts, error: err instanceof Error ? err.message : String(err) };
     records.set(id, failed);
     await idbPut('downloads', failed);
     publish();

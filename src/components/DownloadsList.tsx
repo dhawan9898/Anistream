@@ -128,6 +128,7 @@ const EpisodeRow: React.FC<{ rec: DownloadRecord; onPlay: (r: DownloadRecord) =>
   const status = done ? formatBytes(rec.bytes)
     : failed ? 'Failed - tap retry'
     : rec.state === 'queued' ? 'Waiting…'
+    : rec.state === 'stopped' ? `Paused at ${pct}% - waiting for a connection`
     : `${pct}%`;
 
   return (

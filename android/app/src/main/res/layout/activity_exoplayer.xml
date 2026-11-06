@@ -430,8 +430,8 @@
         </LinearLayout>
     </FrameLayout>
 
-    <!-- Scrub bubble: the time being seeked to, floating above the seek bar
-         thumb while it is dragged (the video itself scrubs live behind it).
+    <!-- Scrub preview: the frame (and time) being seeked to, floating above the
+         seek bar thumb while it is dragged.
          Positioned from code (ExoPlayerActivity). -->
     <LinearLayout
         android:id="@+id/seek_preview_container"
@@ -450,6 +450,13 @@
             android:layout_marginBottom="6dp"
             android:background="#000000"
             android:visibility="gone">
+
+            <!-- Live frame from a small second player (streams without sprite sheets). -->
+            <TextureView
+                android:id="@+id/seek_preview_video"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:visibility="gone" />
 
             <ImageView
                 android:id="@+id/seek_preview_image"

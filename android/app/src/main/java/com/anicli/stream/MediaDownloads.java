@@ -16,6 +16,7 @@ import androidx.media3.datasource.cache.SimpleCache;
 import androidx.media3.exoplayer.offline.Download;
 import androidx.media3.exoplayer.offline.DownloadCursor;
 import androidx.media3.exoplayer.offline.DownloadManager;
+import androidx.media3.exoplayer.scheduler.Requirements;
 import java.io.File;
 import java.io.IOException;
 import java.util.HashMap;
@@ -81,6 +82,12 @@ final class MediaDownloads {
         applyHeaders(null);
         manager = new DownloadManager(context, db, cache, upstream, Executors.newFixedThreadPool(3));
         manager.setMaxParallelDownloads(2);
+        // Lost connection: downloads pause (state "stopped") and carry on
+        // from what is already cached once a network is back, instead of
+        // failing and having to be started again. More retries before a
+        // download is given up as failed.
+        manager.setRequirements(new Requirements(Requirements.NETWORK));
+        manager.setMinRetryCount(8);
         manager.addListener(new DownloadManager.Listener() {
             @Override
             public void onDownloadChanged(DownloadManager m, Download download, @Nullable Exception finalException) {

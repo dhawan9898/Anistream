@@ -131,6 +131,7 @@ public class ExoPlayerActivity extends AppCompatActivity {
     private View seekPreviewContainer;
     private View seekPreviewCard;
     private ImageView seekPreviewImage;
+    private android.view.TextureView seekPreviewVideo;
     private TextView seekPreviewTime;
     private ThumbnailSprites sprites;
     private long scrubTargetMs = -1;
@@ -734,6 +735,7 @@ public class ExoPlayerActivity extends AppCompatActivity {
         seekPreviewContainer = findViewById(R.id.seek_preview_container);
         seekPreviewCard = findViewById(R.id.seek_preview_card);
         seekPreviewImage = findViewById(R.id.seek_preview_image);
+        seekPreviewVideo = findViewById(R.id.seek_preview_video);
         seekPreviewTime = findViewById(R.id.seek_preview_time);
     }
 
@@ -915,15 +917,22 @@ public class ExoPlayerActivity extends AppCompatActivity {
         seekPreviewContainer.animate().cancel();
         seekPreviewContainer.setAlpha(0f);
         seekPreviewContainer.setVisibility(View.VISIBLE);
-        seekPreviewCard.setVisibility(sprites != null ? View.VISIBLE : View.GONE);
-        if (sprites != null) {
-            float aspect = sprites.aspect();
-            if (aspect > 0) {
-                android.view.ViewGroup.LayoutParams lp = seekPreviewCard.getLayoutParams();
-                lp.height = Math.round(lp.width / aspect);
-                seekPreviewCard.setLayoutParams(lp);
-            }
+        // Frame source: the stream's thumbnail sprites when it has them,
+        // otherwise a small muted second player that decodes the frame.
+        handler.removeCallbacks(releasePreviewRunnable);
+        if (sprites == null) ensurePreviewPlayer();
+        boolean showFrame = sprites != null || previewPlayer != null;
+        seekPreviewCard.setVisibility(showFrame ? View.VISIBLE : View.GONE);
+        seekPreviewVideo.setVisibility(sprites == null && previewPlayer != null ? View.VISIBLE : View.GONE);
+        float aspect = sprites != null ? sprites.aspect() : 0f;
+        if (aspect <= 0) {
+            androidx.media3.common.VideoSize vs = player.getVideoSize();
+            aspect = vs.width > 0 && vs.height > 0 ? (float) vs.width / vs.height : 16f / 9f;
         }
+        aspect = Math.max(1f, Math.min(2.4f, aspect));
+        android.view.ViewGroup.LayoutParams lp = seekPreviewCard.getLayoutParams();
+        lp.height = Math.round(lp.width / aspect);
+        seekPreviewCard.setLayoutParams(lp);
         long target = (long) ((seekBar.getProgress() / 1000.0) * player.getDuration());
         updateScrub(seekBar.getProgress(), target);
         seekPreviewContainer.animate().alpha(1f).setDuration(100).start();
@@ -970,9 +979,64 @@ public class ExoPlayerActivity extends AppCompatActivity {
         @Override
         public void run() {
             scrubSeekQueued = false;
-            if (player != null && scrubTargetMs >= 0) player.seekTo(scrubTargetMs);
+            if (scrubTargetMs < 0) return;
+            if (previewPlayer != null) {
+                // The preview shows the frame; the main video stays put (and
+                // saves its bandwidth) until the finger lifts.
+                previewPlayer.seekTo(scrubTargetMs);
+            } else if (player != null) {
+                player.seekTo(scrubTargetMs);
+            }
         }
     };
+
+    // ---- Scrub preview player ----------------------------------------------
+    //
+    // For streams without thumbnail sprites: a second, muted ExoPlayer on the
+    // same stream, limited to the lowest rendition, that is seeked while the
+    // seek bar is dragged and draws into the preview card.
+
+    private ExoPlayer previewPlayer;
+    private MediaItem previewMediaItem;
+    private androidx.media3.exoplayer.source.MediaSource.Factory previewSourceFactory;
+    private final Runnable releasePreviewRunnable = this::releasePreviewPlayer;
+
+    private void ensurePreviewPlayer() {
+        if (previewPlayer != null || previewMediaItem == null || previewSourceFactory == null || player == null) return;
+        try {
+            DefaultLoadControl loadControl = new DefaultLoadControl.Builder()
+                    .setBufferDurationsMs(1500, 4000, 500, 1000)
+                    .build();
+            DefaultTrackSelector.Parameters.Builder pb = DefaultTrackSelector.Parameters.getDefaults(this).buildUpon();
+            pb.setMaxVideoSize(426, 240);
+            pb.setForceLowestBitrate(true);
+            pb.setTrackTypeDisabled(C.TRACK_TYPE_AUDIO, true);
+            pb.setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true);
+            ExoPlayer preview = new ExoPlayer.Builder(this)
+                    .setMediaSourceFactory(previewSourceFactory)
+                    .setLoadControl(loadControl)
+                    .setTrackSelector(new DefaultTrackSelector(this, pb.build()))
+                    .build();
+            preview.setVolume(0f);
+            preview.setSeekParameters(SeekParameters.CLOSEST_SYNC);
+            preview.setVideoTextureView(seekPreviewVideo);
+            preview.setMediaItem(previewMediaItem, Math.max(0L, player.getCurrentPosition()));
+            preview.setPlayWhenReady(false);
+            preview.prepare();
+            previewPlayer = preview;
+        } catch (RuntimeException e) {
+            Log.w("ExoPlayerActivity", "scrub preview unavailable", e);
+            releasePreviewPlayer();
+        }
+    }
+
+    private void releasePreviewPlayer() {
+        handler.removeCallbacks(releasePreviewRunnable);
+        if (previewPlayer != null) {
+            previewPlayer.release();
+            previewPlayer = null;
+        }
+    }
 
     private void endScrub(int progress) {
         resumeGuardMs = -1;
@@ -986,6 +1050,11 @@ public class ExoPlayerActivity extends AppCompatActivity {
             if (scrubWasPlaying) player.setPlayWhenReady(true);
         }
         scrubTargetMs = -1;
+        // Kept briefly for a quick second drag, then its decoder is freed.
+        if (previewPlayer != null) {
+            handler.removeCallbacks(releasePreviewRunnable);
+            handler.postDelayed(releasePreviewRunnable, 5000);
+        }
         seekPreviewImage.setImageDrawable(null);
         seekPreviewContainer.animate().cancel();
         seekPreviewContainer.animate().alpha(0f).setDuration(140)
@@ -1911,6 +1980,10 @@ public class ExoPlayerActivity extends AppCompatActivity {
                 .setContentType(C.AUDIO_CONTENT_TYPE_MOVIE)
                 .build();
 
+        releasePreviewPlayer();
+        previewMediaItem = mediaItem;
+        previewSourceFactory = mediaSourceFactory;
+
         player = new ExoPlayer.Builder(this)
                 .setMediaSourceFactory(mediaSourceFactory)
                 .setLoadControl(loadControl)
@@ -2551,6 +2624,7 @@ public class ExoPlayerActivity extends AppCompatActivity {
     protected void onStop() {
         super.onStop();
         activityStopped = true;
+        releasePreviewPlayer();
         reportProgressNow();
         // In Picture-in-Picture the window is still on screen: keep playing.
         // (Closing the PiP window also stops the activity, but by then the
@@ -2571,6 +2645,7 @@ public class ExoPlayerActivity extends AppCompatActivity {
             pipReceiver = null;
         }
         resolveToken++;
+        releasePreviewPlayer();
         if (sprites != null) {
             sprites.release();
             sprites = null;

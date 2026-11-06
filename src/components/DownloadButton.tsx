@@ -9,7 +9,7 @@ interface DownloadButtonProps {
   onRemove: () => void;
 }
 
-const SIZE = 26;
+const SIZE = 36;
 
 export const DownloadButton: React.FC<DownloadButtonProps> = ({ record, onStart, onRemove }) => {
   const state = record?.state;
@@ -33,9 +33,8 @@ export const DownloadButton: React.FC<DownloadButtonProps> = ({ record, onStart,
       aria-label={label}
       title={label}
       style={{
-        position: 'absolute',
-        top: 4,
-        right: 4,
+        position: 'relative',
+        flexShrink: 0,
         width: SIZE,
         height: SIZE,
         borderRadius: '50%',
@@ -50,20 +49,20 @@ export const DownloadButton: React.FC<DownloadButtonProps> = ({ record, onStart,
       }}
     >
       {active && (
-        <svg width={SIZE} height={SIZE} viewBox="0 0 26 26" style={{ position: 'absolute', inset: 0, transform: 'rotate(-90deg)' }} aria-hidden="true">
-          <circle cx="13" cy="13" r="10" fill="none" stroke="var(--border-subtle)" strokeWidth="2.5" />
+        <svg width={SIZE} height={SIZE} viewBox="0 0 36 36" style={{ position: 'absolute', inset: 0, transform: 'rotate(-90deg)' }} aria-hidden="true">
+          <circle cx="18" cy="18" r="14" fill="none" stroke="var(--border-subtle)" strokeWidth="2.5" />
           <circle
-            cx="13" cy="13" r="10" fill="none" stroke="var(--accent-primary)" strokeWidth="2.5" strokeLinecap="round"
-            strokeDasharray={2 * Math.PI * 10}
-            strokeDashoffset={2 * Math.PI * 10 * (1 - (state === 'queued' ? 0.08 : pct / 100))}
+            cx="18" cy="18" r="14" fill="none" stroke="var(--accent-primary)" strokeWidth="2.5" strokeLinecap="round"
+            strokeDasharray={2 * Math.PI * 14}
+            strokeDashoffset={2 * Math.PI * 14 * (1 - (state === 'queued' ? 0.08 : pct / 100))}
             style={{ transition: 'stroke-dashoffset 0.4s linear' }}
           />
         </svg>
       )}
-      {state === 'completed' ? <Check size={14} />
-        : state === 'failed' ? <RotateCw size={13} />
-        : active ? <span style={{ width: 8, height: 8, borderRadius: 2, background: 'var(--text-primary)' }} />
-        : <Download size={14} />}
+      {state === 'completed' ? <Check size={17} />
+        : state === 'failed' ? <RotateCw size={16} />
+        : active ? <span style={{ width: 10, height: 10, borderRadius: 2, background: 'var(--text-primary)' }} />
+        : <Download size={18} />}
     </button>
   );
 };
