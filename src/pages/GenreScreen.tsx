@@ -6,6 +6,7 @@ import type { AnimeItem } from '../providers/aniCliCore';
 import { getAnimeByGenre, type Genre } from '../providers/catalogService';
 import { PosterCard } from '../components/PosterCard';
 import { GenrePicker } from '../components/GenrePicker';
+import { hapticLight } from '../services/hapticsService';
 
 interface GenreScreenProps {
   genre: Genre;
@@ -74,7 +75,7 @@ export const GenreScreen: React.FC<GenreScreenProps> = ({ genre, onBack, onSelec
         gap: '12px'
       }}>
         <button
-          onClick={onBack}
+          onClick={() => { hapticLight(); onBack(); }}
           className="interactive"
           aria-label="Back"
           style={{
@@ -94,7 +95,7 @@ export const GenreScreen: React.FC<GenreScreenProps> = ({ genre, onBack, onSelec
         </button>
         <h1 style={{ flex: 1, fontSize: '20px', fontWeight: 800, color: 'var(--text-primary)' }}>{genre.name}</h1>
         <button
-          onClick={() => setPickerOpen(true)}
+          onClick={() => { hapticLight(); setPickerOpen(true); }}
           className="interactive glass-pill"
           style={{
             padding: '7px 12px',

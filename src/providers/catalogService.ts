@@ -2,7 +2,7 @@
 // related entries) and "More Like This" (suggestions) rails on an anime's
 // page, Netflix-style.
 //
-// Genres come from the streaming site itself (hianime.at's /genres/<name>
+// Genres come from the streaming site itself (hianimes.se's /genres/<name>
 // listing pages, same card markup as search), falling back to AniList when
 // the site gives nothing back. "More Like This" is similarity-ranked:
 // AniList's per-title recommendations first, then site titles that share the
@@ -46,17 +46,20 @@ export interface AnimeDetails {
 }
 
 const GENRE_NAMES: [string, string][] = [
-  ['action', 'Action'], ['adventure', 'Adventure'], ['cars', 'Cars'], ['comedy', 'Comedy'],
-  ['dementia', 'Dementia'], ['demons', 'Demons'], ['drama', 'Drama'], ['ecchi', 'Ecchi'],
-  ['fantasy', 'Fantasy'], ['game', 'Game'], ['harem', 'Harem'], ['historical', 'Historical'],
-  ['horror', 'Horror'], ['isekai', 'Isekai'], ['josei', 'Josei'], ['kids', 'Kids'],
-  ['magic', 'Magic'], ['martial-arts', 'Martial Arts'], ['mecha', 'Mecha'], ['military', 'Military'],
-  ['music', 'Music'], ['mystery', 'Mystery'], ['parody', 'Parody'], ['police', 'Police'],
-  ['psychological', 'Psychological'], ['romance', 'Romance'], ['samurai', 'Samurai'], ['school', 'School'],
-  ['sci-fi', 'Sci-Fi'], ['seinen', 'Seinen'], ['shoujo', 'Shoujo'], ['shoujo-ai', 'Shoujo Ai'],
-  ['shounen', 'Shounen'], ['shounen-ai', 'Shounen Ai'], ['slice-of-life', 'Slice of Life'], ['space', 'Space'],
-  ['sports', 'Sports'], ['super-power', 'Super Power'], ['supernatural', 'Supernatural'], ['thriller', 'Thriller'],
-  ['vampire', 'Vampire']
+  ['action', 'Action'],
+  ['adventure', 'Adventure'],
+  ['comedy', 'Comedy'],
+  ['drama', 'Drama'],
+  ['fantasy', 'Fantasy'],
+  ['isekai', 'Isekai'],
+  ['mystery', 'Mystery'],
+  ['romance', 'Romance'],
+  ['sci-fi', 'Sci-Fi'],
+  ['shounen', 'Shounen'],
+  ['slice-of-life', 'Slice of Life'],
+  ['sports', 'Sports'],
+  ['supernatural', 'Supernatural'],
+  ['thriller', 'Thriller']
 ];
 
 export const DEFAULT_GENRES: Genre[] = GENRE_NAMES.map(([slug, name]) => ({ slug, name, path: `/genres/${slug}` }));
@@ -219,34 +222,10 @@ function findNextPagePath(doc: Document, page: number, currentPath: string): str
 
 let genresCache: Promise<Genre[]> | null = null;
 
-// The site's own genre links (from its home page menu) when they can be
-// read - so the paths are the site's real ones - otherwise the standard list
-// under /genres/.
+// Returns the clean, curated list of essential anime categories under /genres/.
 export function getGenres(): Promise<Genre[]> {
   if (!genresCache) {
-    genresCache = (async () => {
-      try {
-        const html = await fetchSiteHtml('/home');
-        const doc = new DOMParser().parseFromString(html, 'text/html');
-        const found: Genre[] = [];
-        const seen = new Set<string>();
-        doc.querySelectorAll('a[href*="/genre"]').forEach(a => {
-          const path = sitePathOf(a.getAttribute('href') || '').replace(/\/$/, '');
-          if (!/^\/genres?\/[^/]+$/.test(path)) return;
-          const slug = path.split('/').pop() || '';
-          const name = (a.getAttribute('title') || a.textContent || '').trim().replace(/\s+/g, ' ');
-          if (!slug || !name || name.length > 30 || seen.has(slug)) return;
-          seen.add(slug);
-          found.push({ slug, name, path });
-        });
-        if (found.length >= 5) {
-          return found.sort((a, b) => a.name.localeCompare(b.name));
-        }
-      } catch (err) {
-        console.warn('[catalogService] Could not read genre links from the site:', err);
-      }
-      return DEFAULT_GENRES;
-    })();
+    genresCache = Promise.resolve(DEFAULT_GENRES);
   }
   return genresCache;
 }

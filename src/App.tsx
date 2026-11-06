@@ -7,6 +7,9 @@ import type { Genre } from './providers/catalogService';
 import { ConfirmModal } from 'streamkit/ui/ConfirmModal.tsx';
 import { Home as HomeIcon, Search as SearchIcon, Library, Settings as SettingsIcon } from 'lucide-react';
 import { Dock, type DockTab } from 'streamkit/ui/Dock.tsx';
+import { SharedElementTransitionOverlay } from './components/SharedElementTransitionOverlay';
+import { startSharedTransition } from './services/sharedTransitionService';
+import { hapticLight } from './services/hapticsService';
 import { saveSessionProgress, applyPreferredQuality, type PlaybackSession } from './services/playbackSession';
 import {
   getEpisodes,
@@ -110,7 +113,10 @@ export const App: React.FC = () => {
 
   // Stable identity (it only touches refs and state setters), so memoized
   // poster cards that receive it as onSelect don't re-render on every App render.
-  const pushAnime = useCallback((anime: AnimeItem) => {
+  const pushAnime = useCallback((anime: AnimeItem, rect?: DOMRect) => {
+    if (rect) {
+      startSharedTransition(rect, anime);
+    }
     const stack = animeStackRef.current;
     const key = animeKey(stack.length, anime);
     setClosing(list => list.filter(c => c.key !== key));
@@ -124,17 +130,20 @@ export const App: React.FC = () => {
     updateStack(stack.slice(0, -1));
   };
   const openGenre = useCallback((genre: Genre) => {
+    hapticLight();
     updateStack([]);
     setClosing([]);
     updateGenre(genre);
   }, []);
   const closeGenre = () => {
+    hapticLight();
     const genre = selectedGenreRef.current;
     if (!genre) return;
     startClosing({ key: genreKey(genre), genre });
     updateGenre(null);
   };
   const switchTab = (tab: Tab) => {
+    hapticLight();
     updateStack([]);
     updateGenre(null);
     setClosing([]);
@@ -742,6 +751,7 @@ export const App: React.FC = () => {
         ))}
 
         {renderOverlays()}
+        <SharedElementTransitionOverlay />
       </div>
 
       {/* Stream loading: a slim, non-blocking bar at the top (the native

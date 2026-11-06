@@ -1,0 +1,7 @@
+{
+  "name": "AniStream",
+  "description": "Stream and discover anime titles with customizable playback, history tracking, and dark/light modes.",
+  "capabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

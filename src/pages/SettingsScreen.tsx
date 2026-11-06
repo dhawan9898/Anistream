@@ -12,6 +12,13 @@ import {
 import type { ThemeMode } from '../services/themeService';
 import { Preferences } from '@capacitor/preferences';
 import { ConfirmModal } from 'streamkit/ui/ConfirmModal.tsx';
+import {
+  hapticToggle,
+  hapticMedium,
+  hapticSelection,
+  hapticSuccess,
+  hapticWarning
+} from '../services/hapticsService';
 
 const QUALITIES = ['480p', '720p', '1080p', 'Auto'];
 
@@ -26,19 +33,32 @@ interface ToggleRowProps {
 const ToggleRow: React.FC<ToggleRowProps> = ({ icon, label, description, value, onToggle }) => (
   <div
     className="interactive"
-    onClick={onToggle}
+    onClick={() => {
+      hapticToggle(!value);
+      onToggle();
+    }}
+    role="button"
+    tabIndex={0}
+    onKeyDown={(e) => {
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        hapticToggle(!value);
+        onToggle();
+      }
+    }}
     style={{
       display: 'flex',
       alignItems: 'center',
       gap: '14px',
-      padding: '14px 16px'
+      padding: '16px 18px',
+      userSelect: 'none'
     }}
   >
     <div style={{
-      width: '38px',
-      height: '38px',
+      width: '40px',
+      height: '40px',
       borderRadius: 'var(--radius-sm)',
-      background: 'rgba(229, 9, 20, 0.14)',
+      background: 'rgba(229, 9, 20, 0.12)',
       display: 'flex',
       alignItems: 'center',
       justifyContent: 'center',
@@ -48,10 +68,15 @@ const ToggleRow: React.FC<ToggleRowProps> = ({ icon, label, description, value, 
       {icon}
     </div>
     <div style={{ flex: 1, minWidth: 0 }}>
-      <h4 style={{ fontSize: '14px', fontWeight: 700, color: 'var(--text-primary)' }}>{label}</h4>
-      <p style={{ fontSize: '12px', color: 'var(--text-secondary)', marginTop: '2px' }}>{description}</p>
+      <h4 style={{ fontSize: '15px', fontWeight: 700, color: 'var(--text-primary)', letterSpacing: '-0.2px' }}>{label}</h4>
+      <p style={{ fontSize: '12px', color: 'var(--text-secondary)', marginTop: '2px', lineHeight: 1.35 }}>{description}</p>
     </div>
-    <div className={`toggle-switch ${value ? 'on' : ''}`}>
+    <div
+      role="switch"
+      aria-checked={value}
+      aria-label={label}
+      className={`toggle-switch ${value ? 'on' : ''}`}
+    >
       <div className="knob" />
     </div>
   </div>
@@ -97,12 +122,14 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({ active, theme, o
     await clearWatchHistory();
     setHistoryCount(0);
     setClearing(false);
+    hapticSuccess();
   };
 
   const handleClearBookmarks = async () => {
     setConfirmingClearBookmarks(false);
     await Preferences.remove({ key: 'anistream_bookmarks' });
     setBookmarkCount(0);
+    hapticSuccess();
   };
 
   if (!prefs) {
@@ -137,14 +164,14 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({ active, theme, o
             <h4 style={{ fontSize: '14px', fontWeight: 700, color: 'var(--text-primary)', marginBottom: '10px' }}>Theme</h4>
             <div className="seg-track">
               <button
-                onClick={() => onChangeTheme('dark')}
+                onClick={() => { hapticMedium(); onChangeTheme('dark'); }}
                 className={`interactive seg-pill ${theme === 'dark' ? 'active' : ''}`}
               >
                 <Moon size={15} />
                 <span>Dark</span>
               </button>
               <button
-                onClick={() => onChangeTheme('light')}
+                onClick={() => { hapticMedium(); onChangeTheme('light'); }}
                 className={`interactive seg-pill ${theme === 'light' ? 'active' : ''}`}
               >
                 <Sun size={15} />
@@ -163,13 +190,13 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({ active, theme, o
             <h4 style={{ fontSize: '14px', fontWeight: 700, color: 'var(--text-primary)', marginBottom: '10px' }}>Default Audio</h4>
             <div className="seg-track">
               <button
-                onClick={() => updatePrefs({ defaultMode: 'sub' })}
+                onClick={() => { hapticMedium(); updatePrefs({ defaultMode: 'sub' }); }}
                 className={`interactive seg-pill ${prefs.defaultMode === 'sub' ? 'active' : ''}`}
               >
                 Subtitled (SUB)
               </button>
               <button
-                onClick={() => updatePrefs({ defaultMode: 'dub' })}
+                onClick={() => { hapticMedium(); updatePrefs({ defaultMode: 'dub' }); }}
                 className={`interactive seg-pill ${prefs.defaultMode === 'dub' ? 'active' : ''}`}
               >
                 Dubbed (DUB)
@@ -184,13 +211,13 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({ active, theme, o
               {QUALITIES.map(q => (
                 <button
                   key={q}
-                  onClick={() => updatePrefs({ defaultQuality: q })}
+                  onClick={() => { hapticSelection(); updatePrefs({ defaultQuality: q }); }}
                   className={`interactive glass-pill chip ${prefs.defaultQuality === q ? 'active' : ''}`}
                   style={{
-                    padding: '7px 16px',
-                    borderRadius: '4px',
+                    padding: '8px 18px',
+                    borderRadius: 'var(--radius-sm)',
                     color: prefs.defaultQuality === q ? undefined : 'var(--text-secondary)',
-                    fontSize: '12px',
+                    fontSize: '13px',
                     fontWeight: 700
                   }}
                 >
@@ -215,13 +242,21 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({ active, theme, o
             value={prefs.autoPlayNext}
             onToggle={() => updatePrefs({ autoPlayNext: !prefs.autoPlayNext })}
           />
+          <div style={{ height: '1px', background: 'var(--border-subtle)', margin: '0 16px' }} />
+          <ToggleRow
+            icon={<PlayCircle size={18} />}
+            label="Subtitles & Captions"
+            description="Display subtitles automatically whenever available"
+            value={prefs.subtitlesEnabled !== false}
+            onToggle={() => updatePrefs({ subtitlesEnabled: prefs.subtitlesEnabled === false })}
+          />
         </div>
 
         {/* Data Section */}
         <SectionLabel>Data</SectionLabel>
         <div className="glass-panel animate-pop-in" style={{ borderRadius: 'var(--radius-lg)', overflow: 'hidden', marginBottom: '24px' }}>
           <button
-            onClick={() => setConfirmingClearHistory(true)}
+            onClick={() => { hapticWarning(); setConfirmingClearHistory(true); }}
             disabled={clearing || historyCount === 0}
             className="interactive"
             style={{
@@ -250,7 +285,7 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({ active, theme, o
           </button>
           <div style={{ height: '1px', background: 'var(--border-subtle)', margin: '0 16px' }} />
           <button
-            onClick={() => setConfirmingClearBookmarks(true)}
+            onClick={() => { hapticWarning(); setConfirmingClearBookmarks(true); }}
             disabled={bookmarkCount === 0}
             className="interactive"
             style={{

@@ -1,8 +1,7 @@
-// GenrePicker.tsx - AniStream's "Categories" overlay: the site's genres in the
-// shared category picker.
 import React, { useEffect, useMemo, useState } from 'react';
 import { CategoryPicker } from 'streamkit/ui/CategoryPicker.tsx';
 import { getGenres, type Genre } from '../providers/catalogService';
+import { hapticSelection, hapticLight } from '../services/hapticsService';
 
 interface GenrePickerProps {
   open: boolean;
@@ -28,8 +27,17 @@ export const GenrePicker: React.FC<GenrePickerProps> = ({ open, selectedSlug, on
       open={open}
       sections={sections}
       selectedKey={selectedSlug}
-      onSelect={slug => { const g = genres.find(x => x.slug === slug); if (g) onSelect(g); }}
-      onClose={onClose}
+      onSelect={slug => {
+        const g = genres.find(x => x.slug === slug);
+        if (g) {
+          hapticSelection();
+          onSelect(g);
+        }
+      }}
+      onClose={() => {
+        hapticLight();
+        onClose();
+      }}
     />
   );
 };

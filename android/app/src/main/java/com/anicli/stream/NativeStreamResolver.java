@@ -42,7 +42,7 @@ import javax.crypto.spec.SecretKeySpec;
  */
 final class NativeStreamResolver {
     private static final String TAG = "NativeStreamResolver";
-    private static final String HOST = "https://hianime.at";
+    private static final String HOST = "https://hianimes.se";
     private static final String UA =
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
     private static final int TIMEOUT_MS = 8_000;

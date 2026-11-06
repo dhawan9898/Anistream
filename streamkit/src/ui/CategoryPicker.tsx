@@ -40,7 +40,16 @@ export const CategoryPicker: React.FC<CategoryPickerProps> = ({ open, sections, 
       aria-label="Categories"
       data-modal-root="true"
       className="animate-fade-in"
-      style={{ position: 'fixed', inset: 0, zIndex: 9500, backgroundColor: 'rgba(0, 0, 0, 0.9)', display: 'flex', flexDirection: 'column' }}
+      style={{
+        position: 'fixed',
+        inset: 0,
+        zIndex: 9500,
+        backgroundColor: 'rgba(8, 8, 12, 0.82)',
+        WebkitBackdropFilter: 'blur(28px) saturate(190%)',
+        backdropFilter: 'blur(28px) saturate(190%)',
+        display: 'flex',
+        flexDirection: 'column'
+      }}
     >
       <div style={{ flex: 1, overflowY: 'auto', padding: 'calc(var(--safe-top) + 24px) 20px 120px 20px', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '16px' }}>
         {header}
@@ -56,7 +65,19 @@ export const CategoryPicker: React.FC<CategoryPickerProps> = ({ open, sections, 
                   key={`${section.title ?? s}-${item.key}`}
                   onClick={() => onSelect(item.key)}
                   aria-current={active ? 'true' : undefined}
-                  style={{ background: 'none', border: 'none', color: active ? '#fff' : '#b3b3b3', fontSize: active ? '22px' : '18px', fontWeight: active ? 800 : 500, cursor: 'pointer' }}
+                  className="interactive"
+                  style={{
+                    background: 'none',
+                    border: 'none',
+                    color: active ? 'var(--accent-primary)' : 'var(--text-primary)',
+                    fontSize: active ? '22px' : '18px',
+                    fontWeight: active ? 800 : 500,
+                    cursor: 'pointer',
+                    padding: '6px 16px',
+                    borderRadius: 'var(--radius-pill)',
+                    backgroundColor: active ? 'rgba(255,255,255,0.08)' : 'transparent',
+                    transition: 'all 0.25s ease'
+                  }}
                 >
                   {item.name}
                 </button>
@@ -65,11 +86,24 @@ export const CategoryPicker: React.FC<CategoryPickerProps> = ({ open, sections, 
           </section>
         ))}
       </div>
-      <div style={{ position: 'absolute', left: 0, right: 0, bottom: 0, padding: '24px 0 calc(var(--safe-bottom) + 28px) 0', display: 'flex', justifyContent: 'center', background: 'linear-gradient(180deg, transparent 0%, rgba(0,0,0,0.95) 45%)' }}>
+      <div style={{ position: 'absolute', left: 0, right: 0, bottom: 0, padding: '24px 0 calc(var(--safe-bottom) + 28px) 0', display: 'flex', justifyContent: 'center', background: 'linear-gradient(180deg, transparent 0%, rgba(0,0,0,0.92) 50%)' }}>
         <button
           onClick={onClose}
           aria-label="Close categories"
-          style={{ width: '56px', height: '56px', borderRadius: '50%', border: 'none', backgroundColor: '#fff', color: '#000', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}
+          className="interactive"
+          style={{
+            width: '56px',
+            height: '56px',
+            borderRadius: '50%',
+            border: 'none',
+            backgroundColor: '#fff',
+            color: '#000',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            cursor: 'pointer',
+            boxShadow: '0 8px 24px rgba(0,0,0,0.5)'
+          }}
         >
           <X size={26} />
         </button>

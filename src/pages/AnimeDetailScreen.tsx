@@ -1,7 +1,5 @@
-// AnimeDetailScreen.tsx - Netflix-style title page: backdrop, Play/Resume,
-// sub/dub selector, synopsis, then Episodes / Collection / More Like This tabs.
 import React, { useState, useEffect } from 'react';
-import { ArrowLeft, Play, Plus, Check, Loader2 } from 'lucide-react';
+import { ArrowLeft, Play, Bookmark, Check, Loader2 } from 'lucide-react';
 import { FadeImage } from 'streamkit/ui/FadeImage.tsx';
 import { ErrorState } from 'streamkit/ui/ErrorState.tsx';
 import { getEpisodes, type AnimeItem, type EpisodeItem } from '../providers/aniCliCore';
@@ -19,6 +17,7 @@ import {
 } from '../services/historyService';
 import { getAnimeDetails, hasDub, resolveAnime, type AnimeDetails } from '../providers/catalogService';
 import { PosterCard } from '../components/PosterCard';
+import { hapticLight, hapticMedium, hapticSuccess, hapticSelection } from '../services/hapticsService';
 
 interface AnimeDetailScreenProps {
   anime: AnimeItem;
@@ -163,8 +162,8 @@ export const AnimeDetailScreen: React.FC<AnimeDetailScreenProps> = ({
   };
 
   const shown = resolved || anime;
-  // No dub for this title: everything plays subbed, and the option is hidden.
-  const playMode: 'sub' | 'dub' = dubAvailable === false ? 'sub' : mode;
+  // Respect user's last choice of language (from title history or preferences)
+  const playMode: 'sub' | 'dub' = dubAvailable === false ? 'sub' : (history?.mode || mode);
   // What the player is told about the title (it hides its own dub option too).
   const playAnime = resolved
     ? { ...resolved, dubCount: dubAvailable === undefined ? resolved.dubCount : dubAvailable ? (resolved.dubCount || 1) : 0 }
@@ -172,7 +171,18 @@ export const AnimeDetailScreen: React.FC<AnimeDetailScreenProps> = ({
 
   const handleBookmarkToggle = async () => {
     if (!resolved) return;
-    setIsBookmarked(await toggleBookmark(resolved));
+    const nowSaved = await toggleBookmark(resolved);
+    setIsBookmarked(nowSaved);
+    if (nowSaved) {
+      hapticSuccess();
+    } else {
+      hapticLight();
+    }
+  };
+
+  const handleBack = () => {
+    hapticLight();
+    onBack();
   };
 
   // A finished last-watched episode means "up next" is the following one,
@@ -185,6 +195,7 @@ export const AnimeDetailScreen: React.FC<AnimeDetailScreenProps> = ({
   const handlePlay = () => {
     if (!resolved) return;
     if (!playAnime) return;
+    hapticMedium();
     const historyMode = dubAvailable === false ? 'sub' : history?.mode;
     if (upNext) {
       onPlayEpisode(playAnime, upNext, historyMode || playMode);
@@ -250,43 +261,71 @@ export const AnimeDetailScreen: React.FC<AnimeDetailScreenProps> = ({
           left: 0,
           right: 0,
           padding: 'calc(var(--safe-top) + 12px) 20px 0 20px',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
           zIndex: 20
         }}>
           <button
-            onClick={onBack}
+            onClick={handleBack}
             className="interactive glass-pill-dark"
             aria-label="Back"
             style={{
-              width: '40px',
-              height: '40px',
-              borderRadius: '8px',
+              width: '42px',
+              height: '42px',
+              borderRadius: 'var(--radius-pill)',
               display: 'flex',
               alignItems: 'center',
-              justifyContent: 'center'
+              justifyContent: 'center',
+              boxShadow: '0 4px 14px rgba(0,0,0,0.45)'
             }}
           >
             <ArrowLeft size={20} />
           </button>
+
+          {resolved && (
+            <button
+              onClick={handleBookmarkToggle}
+              className="interactive glass-pill-dark"
+              aria-label={isBookmarked ? "In Watchlist" : "Add to Watchlist"}
+              style={{
+                width: '42px',
+                height: '42px',
+                borderRadius: 'var(--radius-pill)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                boxShadow: isBookmarked ? '0 4px 16px rgba(229, 9, 20, 0.45)' : '0 4px 14px rgba(0,0,0,0.45)',
+                background: isBookmarked ? 'linear-gradient(135deg, #ff3b45 0%, #e50914 100%)' : undefined,
+                color: isBookmarked ? '#ffffff' : 'var(--text-primary)'
+              }}
+            >
+              <Bookmark size={20} fill={isBookmarked ? "#ffffff" : "none"} strokeWidth={2} />
+            </button>
+          )}
         </div>
       </div>
 
-      <div style={{ padding: '0 20px', marginTop: '-70px', position: 'relative', zIndex: 10 }}>
+      <div style={{ padding: '0 20px', marginTop: '-74px', position: 'relative', zIndex: 10 }}>
         {/* Poster + title */}
-        <div style={{ display: 'flex', gap: '16px', alignItems: 'flex-end', marginBottom: '14px' }}>
-          <FadeImage
-            src={shown.poster}
-            alt={shown.title}
-            style={{
-              width: '104px',
-              height: '150px',
-              objectFit: 'cover',
-              borderRadius: '4px',
-              boxShadow: '0 8px 24px rgba(0,0,0,0.7)',
-              flexShrink: 0
-            }}
-          />
+        <div style={{ display: 'flex', gap: '16px', alignItems: 'flex-end', marginBottom: '16px' }}>
+          <div id="detail-poster-target" style={{ flexShrink: 0 }}>
+            <FadeImage
+              src={shown.poster}
+              alt={shown.title}
+              style={{
+                width: '108px',
+                height: '154px',
+                objectFit: 'cover',
+                borderRadius: 'var(--radius-md)',
+                boxShadow: 'var(--card-shadow-hover)',
+                border: '1px solid rgba(255, 255, 255, 0.16)',
+                display: 'block'
+              }}
+            />
+          </div>
           <div style={{ flex: 1, paddingBottom: '4px', minWidth: 0 }}>
-            <h1 style={{ fontSize: '21px', fontWeight: 800, color: 'var(--text-primary)', lineHeight: '1.25' }}>
+            <h1 style={{ fontSize: '22px', fontWeight: 800, color: 'var(--text-primary)', lineHeight: '1.25', letterSpacing: '-0.3px' }}>
               {shown.title}
             </h1>
             <div style={{ fontSize: '12px', color: 'var(--text-secondary)', marginTop: '6px', fontWeight: 600 }}>
@@ -301,25 +340,26 @@ export const AnimeDetailScreen: React.FC<AnimeDetailScreenProps> = ({
           </div>
         ) : (
           <>
-            {/* Play / Resume - white Netflix button */}
+            {/* Play / Resume - Apple style white pill button */}
             <button
               onClick={handlePlay}
               disabled={!resolved || (episodes.length === 0 && !history)}
               className="interactive"
               style={{
                 width: '100%',
-                padding: '12px',
-                borderRadius: '4px',
-                background: '#fff',
+                padding: '13px',
+                borderRadius: 'var(--radius-md)',
+                background: '#ffffff',
                 border: 'none',
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center',
                 gap: '8px',
-                color: '#000',
+                color: '#000000',
                 fontSize: '15px',
                 fontWeight: 800,
-                marginBottom: '10px',
+                marginBottom: '12px',
+                boxShadow: '0 8px 24px rgba(255, 255, 255, 0.18)',
                 opacity: !resolved || (episodes.length === 0 && !history) ? 0.6 : 1
               }}
             >
@@ -342,25 +382,13 @@ export const AnimeDetailScreen: React.FC<AnimeDetailScreenProps> = ({
                 </span>
               </div>
             )}
-
-            {/* Sub / Dub - only when the title actually has a dub */}
-            {dubAvailable !== false && (
-              <div className="seg-track" style={{ marginBottom: '14px' }}>
-                <button onClick={() => setMode('sub')} className={`interactive seg-pill ${playMode === 'sub' ? 'active' : ''}`}>
-                  Subtitled (SUB)
-                </button>
-                <button onClick={() => setMode('dub')} className={`interactive seg-pill ${playMode === 'dub' ? 'active' : ''}`}>
-                  Dubbed (DUB)
-                </button>
-              </div>
-            )}
           </>
         )}
 
         {/* Synopsis */}
         {description && (
           <p
-            onClick={() => setExpanded(e => !e)}
+            onClick={() => { hapticLight(); setExpanded(e => !e); }}
             style={{
               fontSize: '13px',
               color: 'var(--text-primary)',
@@ -382,54 +410,19 @@ export const AnimeDetailScreen: React.FC<AnimeDetailScreenProps> = ({
           </p>
         )}
 
-        {/* My List */}
-        {resolved && (
-          <div style={{ display: 'flex', gap: '28px', marginBottom: '18px' }}>
-            <button
-              onClick={handleBookmarkToggle}
-              className="interactive"
-              style={{
-                background: 'none',
-                border: 'none',
-                display: 'flex',
-                flexDirection: 'column',
-                alignItems: 'center',
-                gap: '4px',
-                color: 'var(--text-primary)',
-                fontSize: '11px',
-                fontWeight: 600
-              }}
-            >
-              {isBookmarked ? <Check size={22} /> : <Plus size={22} />}
-              <span style={{ color: 'var(--text-secondary)' }}>My List</span>
-            </button>
-          </div>
-        )}
 
-        {/* Tabs - red bar over the active one, Netflix-style */}
-        <div style={{ display: 'flex', gap: '22px', borderTop: '1px solid var(--border-subtle)', marginBottom: '16px', overflowX: 'auto', scrollbarWidth: 'none' }}>
+        {/* Tabs - Apple segmented pill control */}
+        <div className="seg-track" style={{ marginBottom: '18px' }}>
           {tabs.map(t => {
             const active = tab === t.id;
             return (
               <button
                 key={t.id}
-                onClick={() => setTab(t.id)}
-                style={{
-                  background: 'none',
-                  border: 'none',
-                  borderTop: `4px solid ${active ? '#e50914' : 'transparent'}`,
-                  padding: '10px 0 0 0',
-                  marginTop: '-1px',
-                  color: active ? 'var(--text-primary)' : 'var(--text-secondary)',
-                  fontSize: '13px',
-                  fontWeight: 800,
-                  textTransform: 'uppercase',
-                  letterSpacing: '0.3px',
-                  whiteSpace: 'nowrap',
-                  cursor: 'pointer'
-                }}
+                onClick={() => { hapticLight(); setTab(t.id); }}
+                className={`interactive seg-pill ${active ? 'active' : ''}`}
+                style={{ padding: '8px 14px', fontSize: '13px' }}
               >
-                {t.label}
+                <span>{t.label}</span>
               </button>
             );
           })}
@@ -453,7 +446,7 @@ export const AnimeDetailScreen: React.FC<AnimeDetailScreenProps> = ({
                   return (
                     <button
                       key={i}
-                      onClick={() => setActiveRange(i)}
+                      onClick={() => { hapticSelection(); setActiveRange(i); }}
                       className={`interactive glass-pill chip ${activeRange === i ? 'active' : ''}`}
                       style={{
                         padding: '6px 14px',
@@ -492,6 +485,7 @@ export const AnimeDetailScreen: React.FC<AnimeDetailScreenProps> = ({
                       key={ep.id}
                       onClick={() => {
                         if (!playAnime) return;
+                        hapticMedium();
                         // Half-watched: continue where it was left.
                         if (entry && watchState === 'partial') {
                           onResume(playAnime, {
@@ -509,7 +503,7 @@ export const AnimeDetailScreen: React.FC<AnimeDetailScreenProps> = ({
                           onPlayEpisode(playAnime, ep, playMode);
                         }
                       }}
-                      className="interactive glass-panel"
+                      className="interactive card-bouncy glass-panel"
                       style={{
                         padding: '14px 8px',
                         borderRadius: 'var(--radius-sm)',

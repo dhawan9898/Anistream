@@ -2,12 +2,13 @@
 import React, { useState, useEffect } from 'react';
 import { Clock, Bookmark, Trash2, Play, Loader2, X } from 'lucide-react';
 import {
-  getEpisodeLog, clearWatchHistory, removeEpisodeFromLibrary, getBookmarks,
+  getWatchHistory, clearWatchHistory, removeWatchHistoryItem, getBookmarks,
   isEpisodeFinished, subscribeLibraryChanges, type WatchHistoryItem
 } from '../services/historyService';
 import type { AnimeItem } from '../providers/aniCliCore';
 import { ConfirmModal } from 'streamkit/ui/ConfirmModal.tsx';
 import { FadeImage } from 'streamkit/ui/FadeImage.tsx';
+import { hapticLight, hapticMedium, hapticWarning, hapticSuccess } from '../services/hapticsService';
 
 interface HistoryScreenProps {
   // True while this tab is the visible one (tabs stay mounted when hidden).
@@ -34,9 +35,18 @@ export const HistoryScreen: React.FC<HistoryScreenProps> = ({
     if (!active) return;
     let cancelled = false;
     const loadData = async () => {
-      const [history, bookmarks] = await Promise.all([getEpisodeLog(), getBookmarks()]);
+      const [history, bookmarks] = await Promise.all([getWatchHistory(), getBookmarks()]);
       if (cancelled) return;
-      setHistoryList(history);
+      // Show only the last episode watched for each title
+      const seen = new Set<string>();
+      const singleEpisodePerAnime: WatchHistoryItem[] = [];
+      for (const item of history) {
+        if (!seen.has(item.animeId)) {
+          seen.add(item.animeId);
+          singleEpisodePerAnime.push(item);
+        }
+      }
+      setHistoryList(singleEpisodePerAnime);
       setBookmarkedAnime(bookmarks);
       setLoading(false);
     };
@@ -52,11 +62,13 @@ export const HistoryScreen: React.FC<HistoryScreenProps> = ({
     await clearWatchHistory();
     setHistoryList([]);
     setConfirmingClear(false);
+    hapticSuccess();
   };
 
   const handleRemoveItem = async (e: React.MouseEvent, item: WatchHistoryItem) => {
     e.stopPropagation(); // don't start playback via the card underneath
-    const updated = await removeEpisodeFromLibrary(item.animeId, item.episodeId);
+    hapticLight();
+    const updated = await removeWatchHistoryItem(item.animeId);
     setHistoryList(updated);
   };
 
@@ -78,7 +90,7 @@ export const HistoryScreen: React.FC<HistoryScreenProps> = ({
         
         {activeTab === 'history' && historyList.length > 0 && (
           <button
-            onClick={() => setConfirmingClear(true)}
+            onClick={() => { hapticWarning(); setConfirmingClear(true); }}
             className="interactive"
             style={{
               background: 'none',
@@ -112,14 +124,14 @@ export const HistoryScreen: React.FC<HistoryScreenProps> = ({
       <div style={{ padding: '16px 20px 8px 20px' }}>
         <div className="seg-track">
           <button
-            onClick={() => setActiveTab('history')}
+            onClick={() => { hapticLight(); setActiveTab('history'); }}
             className={`interactive seg-pill ${activeTab === 'history' ? 'active' : ''}`}
           >
             <Clock size={16} />
             <span>History ({historyList.length})</span>
           </button>
           <button
-            onClick={() => setActiveTab('bookmarks')}
+            onClick={() => { hapticLight(); setActiveTab('bookmarks'); }}
             className={`interactive seg-pill ${activeTab === 'bookmarks' ? 'active' : ''}`}
           >
             <Bookmark size={16} />
@@ -149,36 +161,46 @@ export const HistoryScreen: React.FC<HistoryScreenProps> = ({
                 return (
                   <div
                     key={`${item.animeId}-${item.episodeId}`}
-                    onClick={() => onPlayHistoryItem(item)}
-                    className="interactive glass-panel"
+                    onClick={() => { hapticMedium(); onPlayHistoryItem(item); }}
+                    className="interactive card-bouncy glass-panel"
                     style={{
                       borderRadius: 'var(--radius-md)',
                       overflow: 'hidden',
                       display: 'flex',
                       gap: '14px',
-                      padding: '10px',
+                      padding: '12px',
                       alignItems: 'center'
                     }}
                   >
-                    <div style={{ position: 'relative', width: '80px', height: '60px', borderRadius: '8px', overflow: 'hidden', flexShrink: 0 }}>
+                    <div style={{ position: 'relative', width: '84px', height: '62px', borderRadius: 'var(--radius-sm)', overflow: 'hidden', flexShrink: 0 }}>
                       <FadeImage src={item.poster} alt={item.animeTitle} loading="lazy" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
                       <div style={{
                         position: 'absolute',
                         inset: 0,
-                        backgroundColor: 'rgba(0,0,0,0.4)',
+                        backgroundColor: 'rgba(0,0,0,0.35)',
                         display: 'flex',
                         alignItems: 'center',
                         justifyContent: 'center'
                       }}>
-                        <Play size={16} fill="#fff" color="#fff" />
+                        <div style={{
+                          width: '28px',
+                          height: '28px',
+                          borderRadius: '50%',
+                          backgroundColor: 'rgba(255,255,255,0.25)',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center'
+                        }}>
+                          <Play size={13} fill="#fff" color="#fff" style={{ marginLeft: '1px' }} />
+                        </div>
                       </div>
                       <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, height: '3px', backgroundColor: 'rgba(255,255,255,0.2)' }}>
-                        <div style={{ width: `${progressPct}%`, height: '100%', background: 'var(--accent-primary)' }} />
+                        <div style={{ width: `${progressPct}%`, height: '100%', background: 'linear-gradient(90deg, #ff3b45 0%, #e50914 100%)' }} />
                       </div>
                     </div>
 
                     <div style={{ flex: 1, minWidth: 0 }}>
-                      <h3 style={{ fontSize: '14px', fontWeight: 700, color: 'var(--text-primary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                      <h3 style={{ fontSize: '15px', fontWeight: 700, color: 'var(--text-primary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', letterSpacing: '-0.2px' }}>
                         {item.animeTitle}
                       </h3>
                       <p style={{ fontSize: '12px', color: 'var(--text-secondary)', marginTop: '2px' }}>
@@ -188,7 +210,7 @@ export const HistoryScreen: React.FC<HistoryScreenProps> = ({
 
                     <button
                       onClick={(e) => handleRemoveItem(e, item)}
-                      className="interactive"
+                      className="interactive glass-pill"
                       style={{
                         width: '32px',
                         height: '32px',
@@ -197,13 +219,12 @@ export const HistoryScreen: React.FC<HistoryScreenProps> = ({
                         alignItems: 'center',
                         justifyContent: 'center',
                         border: 'none',
-                        background: 'none',
                         color: 'var(--text-muted)',
                         flexShrink: 0
                       }}
                       aria-label={`Remove ${item.animeTitle} episode ${item.episodeNumber} from history`}
                     >
-                      <X size={18} />
+                      <X size={15} />
                     </button>
                   </div>
                 );
@@ -214,8 +235,8 @@ export const HistoryScreen: React.FC<HistoryScreenProps> = ({
           bookmarkedAnime.length === 0 ? (
             <div style={{ textAlign: 'center', padding: '60px 20px', color: 'var(--text-secondary)' }}>
               <Bookmark size={40} color="var(--accent-secondary)" style={{ margin: '0 auto 12px auto', opacity: 0.8 }} />
-              <p style={{ fontSize: '16px', fontWeight: 600, color: 'var(--text-primary)', marginBottom: '6px' }}>Your list is empty</p>
-              <p style={{ fontSize: '13px' }}>Tap “My List” on any title to save it here.</p>
+              <p style={{ fontSize: '16px', fontWeight: 700, color: 'var(--text-primary)', marginBottom: '6px' }}>Your list is empty</p>
+              <p style={{ fontSize: '13px' }}>Tap “Add to Watchlist” on any title to save it here.</p>
             </div>
           ) : (
             <div className="grid-posters">
@@ -223,7 +244,7 @@ export const HistoryScreen: React.FC<HistoryScreenProps> = ({
                 <div
                   key={anime.id}
                   onClick={() => onSelectAnime(anime)}
-                  className="interactive glass-panel"
+                  className="interactive card-bouncy glass-panel"
                   style={{
                     borderRadius: 'var(--radius-md)',
                     overflow: 'hidden',
@@ -239,7 +260,7 @@ export const HistoryScreen: React.FC<HistoryScreenProps> = ({
                       style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', objectFit: 'cover' }}
                     />
                   </div>
-                  <div style={{ padding: '10px' }}>
+                  <div style={{ padding: '12px 14px' }}>
                     <h3 style={{
                       fontSize: '14px',
                       fontWeight: 700,

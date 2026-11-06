@@ -100,7 +100,7 @@ export function deobfuscateBlob(base64Blob: string): string {
 }
 
 // Helper to resolve API URLs: the dev server proxies "/api-hianime" to
-// https://hianime.at (see vite.config.ts), which only exists while running
+// https://hianimes.se (see vite.config.ts), which only exists while running
 // `npm run dev`. The built APK has no such proxy, so on a native device we
 // must hit the real host directly - CapacitorHttp (enabled in
 // capacitor.config.ts) routes fetch() through native networking, which
@@ -435,9 +435,10 @@ export async function getEpisodeStream(
   // 1. First priority: Invoke real ani-cli bridge (when running in Vite dev mode).
   if (!Capacitor.isNativePlatform()) {
     try {
-      const cleanQuery = (animeId || animeTitleOrId).replace(/-[0-9]+$/, '').replace(/-/g, ' ');
+      const rawAnimeId = animeId || animeTitleOrId;
+      const cleanQuery = rawAnimeId.replace(/-[0-9]+$/, '').replace(/-/g, ' ');
       const epNum = episodeIdOrNumber.replace(/^.*-ep-/, '').replace(/[^0-9.]/g, '') || '1';
-      const bridgeUrl = `/api/ani-cli/stream?query=${encodeURIComponent(cleanQuery)}&ep=${encodeURIComponent(epNum)}&mode=${mode}`;
+      const bridgeUrl = `/api/ani-cli/stream?query=${encodeURIComponent(cleanQuery)}&ep=${encodeURIComponent(epNum)}&mode=${mode}&animeId=${encodeURIComponent(rawAnimeId)}`;
       console.log("[aniCliCore] Requesting stream from bridge:", bridgeUrl);
       const res = await fetchTimed(bridgeUrl);
       if (res.ok) {

@@ -60,25 +60,35 @@ function parseInlinePayload(html: string): any | null {
   }
 }
 
-async function resolveStream(query: string, ep: string, mode: string) {
+async function resolveStream(query: string, ep: string, mode: string, animeId?: string) {
   const REMOTE_HOST = 'https://hianime.at';
   const headers = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
     'Referer': `${REMOTE_HOST}/`
   };
 
-  // 1. Search anime (clean negative keyword prefix to prevent exclusion)
-  const cleanKeyword = query.replace(/(^|\s)-+(\w)/g, '$1$2').trim();
-  const searchRes = await fetch(`${REMOTE_HOST}/search?keyword=${encodeURIComponent(cleanKeyword)}`, { headers });
-  if (!searchRes.ok) throw new Error(`Search failed: HTTP ${searchRes.status}`);
-  const searchHtml = await searchRes.text();
-
-  // Match inside search results card only, never header/nav bar
-  const match = searchHtml.match(/class="film-name"[^>]*>\s*<a\s+href="([^"]+)"[^>]*title="([^"]+)"/i) ||
-                searchHtml.match(/<div class="flw-item"[^>]*>[\s\S]*?<a\s+href="([^"]+)"[^>]*title="([^"]+)"/i);
   let numericAnimeId = '';
-  if (match && match[1]) {
-    numericAnimeId = match[1].split('/').filter(Boolean).pop()?.split('-').pop() || '';
+  // Check if animeId or query directly provides the numeric anime ID (e.g. 'fullmetal-alchemist-brotherhood-1140' -> '1140')
+  const possibleId = (animeId || query).trim();
+  if (/^\d+$/.test(possibleId)) {
+    numericAnimeId = possibleId;
+  } else if (/-\d+$/.test(possibleId)) {
+    numericAnimeId = possibleId.split('-').pop() || '';
+  }
+
+  // 1. Search anime if numeric ID not directly available
+  if (!numericAnimeId) {
+    const cleanKeyword = query.replace(/(^|\s)-+(\w)/g, '$1$2').trim();
+    const searchRes = await fetch(`${REMOTE_HOST}/search?keyword=${encodeURIComponent(cleanKeyword)}`, { headers });
+    if (!searchRes.ok) throw new Error(`Search failed: HTTP ${searchRes.status}`);
+    const searchHtml = await searchRes.text();
+
+    // Match inside search results card only, never header/nav bar
+    const match = searchHtml.match(/class="film-name"[^>]*>\s*<a\s+href="([^"]+)"[^>]*title="([^"]+)"/i) ||
+                  searchHtml.match(/<div class="flw-item"[^>]*>[\s\S]*?<a\s+href="([^"]+)"[^>]*title="([^"]+)"/i);
+    if (match && match[1]) {
+      numericAnimeId = match[1].split('/').filter(Boolean).pop()?.split('-').pop() || '';
+    }
   }
   if (!numericAnimeId) throw new Error(`No anime found for query "${query}"`);
 
@@ -235,11 +245,12 @@ export function aniCliBridgePlugin(): Plugin {
         const query = reqUrl.searchParams.get('query') || 'solo leveling';
         const ep = reqUrl.searchParams.get('ep') || '1';
         const mode = reqUrl.searchParams.get('mode') || 'sub';
+        const animeId = reqUrl.searchParams.get('animeId') || '';
 
-        console.log(`[ani-cli-bridge] Resolving stream: query="${query}", ep=${ep}, mode=${mode}`);
+        console.log(`[ani-cli-bridge] Resolving stream: query="${query}", ep=${ep}, mode=${mode}, animeId="${animeId}"`);
 
         try {
-          const result = await resolveStream(query, ep, mode);
+          const result = await resolveStream(query, ep, mode, animeId);
           console.log('[ani-cli-bridge] Stream resolved successfully:', result.rawStreamUrl);
           res.setHeader('Content-Type', 'application/json');
           res.setHeader('Access-Control-Allow-Origin', '*');

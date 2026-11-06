@@ -1,9 +1,13 @@
-// SearchScreen.tsx - Rapid anime search powered by ani-cli scraper
+// SearchScreen.tsx - Apple-style Spotlight search with quick topic chips,
+// fluid squircle rows, and rapid live results.
 import React, { useState, useEffect, useRef } from 'react';
-import { Search as SearchIcon, X, Loader2, ArrowLeft, Play } from 'lucide-react';
+import { Search as SearchIcon, X, Loader2, ArrowLeft, Play, Sparkles } from 'lucide-react';
 import { getTrendingAnime, searchAnimeLive, type AnimeItem } from '../providers/aniCliCore';
 import { FadeImage } from 'streamkit/ui/FadeImage.tsx';
 import { PosterCard } from '../components/PosterCard';
+import { hapticLight, hapticSelection } from '../services/hapticsService';
+
+const QUICK_TAGS = ['Solo Leveling', 'Jujutsu Kaisen', 'One Piece', 'Demon Slayer', 'Bleach', 'Chainsaw Man'];
 
 interface SearchScreenProps {
   // True while this tab is the visible one (tabs stay mounted when hidden).
@@ -17,7 +21,7 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({
   onBack,
   onSelectAnime
 }) => {
-  // Shown while the box is empty, like Netflix's "Top Searches".
+  // Shown while the box is empty, like Netflix/Apple "Top Searches".
   const [topSearches, setTopSearches] = useState<AnimeItem[]>([]);
 
   useEffect(() => {
@@ -34,9 +38,7 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({
   const [searchError, setSearchError] = useState<boolean>(false);
   const inputRef = useRef<HTMLInputElement | null>(null);
 
-  // Focus the field (raising the keyboard) when the tab is opened - after
-  // the tab's fade-in, so the keyboard animation doesn't fight it - and put
-  // the keyboard away again when the tab is left.
+  // Focus the field when the tab is opened.
   useEffect(() => {
     if (!active) {
       inputRef.current?.blur();
@@ -46,8 +48,6 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({
     return () => window.clearTimeout(timer);
   }, [active]);
 
-  // Typing is debounced and only the newest request may update the screen,
-  // so a slow response for an earlier keystroke can't overwrite newer results.
   const searchSeq = useRef(0);
   const debounceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -56,9 +56,6 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({
     searchSeq.current++;
   }, []);
 
-  // Live results only: the old path silently swapped in made-up "results"
-  // when the site was unreachable, which looked like real anime that then
-  // failed to play. A failure is now shown as such, with a retry.
   const runSearch = async (searchTerm: string) => {
     const seq = ++searchSeq.current;
     setLoading(true);
@@ -91,7 +88,7 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({
       runSearch(searchTerm);
     } else {
       setLoading(true);
-      debounceTimer.current = setTimeout(() => runSearch(searchTerm), 350);
+      debounceTimer.current = setTimeout(() => runSearch(searchTerm), 320);
     }
   };
 
@@ -108,18 +105,19 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({
           display: 'flex',
           alignItems: 'center',
           gap: '12px',
-          borderBottom: '1px solid var(--border-subtle)'
+          borderBottom: '1px solid var(--border-subtle)',
+          WebkitBackdropFilter: 'var(--glass-blur)',
+          backdropFilter: 'var(--glass-blur)'
         }}
       >
         <button
-          onClick={onBack}
+          onClick={() => { hapticLight(); onBack(); }}
           aria-label="Back to Home"
-          className="interactive"
+          className="interactive glass-pill-dark"
           style={{
             width: '40px',
             height: '40px',
-            margin: '0 -8px',
-            background: 'none',
+            borderRadius: 'var(--radius-pill)',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
@@ -128,7 +126,7 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({
             flexShrink: 0
           }}
         >
-          <ArrowLeft size={20} />
+          <ArrowLeft size={19} />
         </button>
 
         <div
@@ -138,8 +136,10 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({
             display: 'flex',
             alignItems: 'center',
             gap: '10px',
-            padding: '10px 14px',
-            borderRadius: '4px'
+            padding: '10px 16px',
+            borderRadius: 'var(--radius-pill)',
+            border: '1.5px solid var(--border-subtle)',
+            boxShadow: 'inset 0 1px 2px rgba(0,0,0,0.18)'
           }}
         >
           <SearchIcon size={18} color="var(--text-muted)" />
@@ -147,7 +147,7 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({
             ref={inputRef}
             type="text"
             value={query}
-            placeholder="Search for a show, movie, genre…"
+            placeholder="Search shows, movies, genres…"
             aria-label="Search anime"
             enterKeyHint="search"
             onChange={(e) => handleSearch(e.target.value, false)}
@@ -162,44 +162,125 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({
           />
           {query && (
             <button
-              onClick={() => handleSearch('')}
+              onClick={() => { hapticLight(); handleSearch(''); }}
               className="interactive"
               aria-label="Clear search"
-              style={{ background: 'none', border: 'none', color: 'var(--text-muted)', display: 'flex' }}
+              style={{
+                width: '22px',
+                height: '22px',
+                borderRadius: '50%',
+                background: 'rgba(120, 120, 128, 0.3)',
+                border: 'none',
+                color: 'var(--text-primary)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center'
+              }}
             >
-              <X size={18} />
+              <X size={13} />
             </button>
           )}
         </div>
       </div>
 
+      {/* Quick Search Suggestions Chips */}
+      {!query && (
+        <div className="rail" style={{ gap: '8px', padding: '14px 20px 6px 20px' }}>
+          {QUICK_TAGS.map(tag => (
+            <button
+              key={tag}
+              onClick={() => { hapticSelection(); handleSearch(tag, true); }}
+              className="interactive glass-pill"
+              style={{
+                padding: '7px 14px',
+                borderRadius: 'var(--radius-pill)',
+                fontSize: '12px',
+                fontWeight: 600,
+                color: 'var(--text-primary)',
+                whiteSpace: 'nowrap',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '5px'
+              }}
+            >
+              <Sparkles size={12} color="var(--accent-primary)" />
+              <span>{tag}</span>
+            </button>
+          ))}
+        </div>
+      )}
+
       {loading ? (
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '60px 0', gap: '10px', color: 'var(--text-secondary)' }}>
-          <Loader2 size={24} className="animate-spin" />
-          <span style={{ fontSize: '14px' }}>Searching…</span>
+          <Loader2 size={24} className="animate-spin" color="var(--accent-primary)" />
+          <span style={{ fontSize: '14px', fontWeight: 600 }}>Searching titles…</span>
         </div>
       ) : !query ? (
-        <div style={{ padding: '18px 20px 0 20px' }}>
-          <h2 style={{ fontSize: '19px', fontWeight: 800, color: 'var(--text-primary)', marginBottom: '12px' }}>Top Searches</h2>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+        <div style={{ padding: '16px 20px 0 20px' }}>
+          <h2 style={{ fontSize: '18px', fontWeight: 800, color: 'var(--text-primary)', marginBottom: '14px', letterSpacing: '-0.3px' }}>
+            Top Searches
+          </h2>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
             {topSearches.length === 0 && Array.from({ length: 6 }).map((_, i) => (
-              <div key={i} className="skeleton" style={{ height: '68px', borderRadius: '4px' }} />
+              <div key={i} className="skeleton" style={{ height: '72px', borderRadius: 'var(--radius-md)' }} />
             ))}
             {topSearches.map(anime => (
               <button
                 key={anime.id}
                 onClick={() => onSelectAnime(anime)}
-                className="interactive"
-                style={{ display: 'flex', alignItems: 'center', gap: '14px', background: 'var(--bg-surface)', border: 'none', borderRadius: '4px', padding: 0, overflow: 'hidden', textAlign: 'left', color: 'var(--text-primary)' }}
+                className="interactive card-bouncy glass-panel"
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '14px',
+                  padding: '8px 10px',
+                  borderRadius: 'var(--radius-md)',
+                  textAlign: 'left',
+                  color: 'var(--text-primary)'
+                }}
               >
-                <div style={{ position: 'relative', width: '120px', height: '68px', flexShrink: 0, backgroundColor: 'rgba(127,127,127,0.15)' }}>
+                <div style={{
+                  position: 'relative',
+                  width: '110px',
+                  height: '66px',
+                  borderRadius: 'var(--radius-sm)',
+                  overflow: 'hidden',
+                  flexShrink: 0,
+                  backgroundColor: 'rgba(127,127,127,0.15)'
+                }}>
                   <FadeImage src={anime.banner || anime.poster} alt="" loading="lazy" style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }} />
                 </div>
-                <span style={{ flex: 1, minWidth: 0, fontSize: '14px', fontWeight: 700, lineHeight: 1.3, display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
-                  {anime.title}
-                </span>
-                <span style={{ width: '34px', height: '34px', margin: '0 14px 0 4px', borderRadius: '50%', border: '2px solid rgba(255,255,255,0.8)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                  <Play size={14} fill="#fff" color="#fff" style={{ marginLeft: '2px' }} />
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <span style={{
+                    fontSize: '14px',
+                    fontWeight: 700,
+                    lineHeight: 1.35,
+                    display: '-webkit-box',
+                    WebkitLineClamp: 2,
+                    WebkitBoxOrient: 'vertical',
+                    overflow: 'hidden'
+                  }}>
+                    {anime.title}
+                  </span>
+                  {anime.type && (
+                    <span style={{ fontSize: '11px', color: 'var(--text-secondary)', marginTop: '2px', display: 'block' }}>
+                      {anime.type}
+                    </span>
+                  )}
+                </div>
+                <span style={{
+                  width: '36px',
+                  height: '36px',
+                  margin: '0 8px',
+                  borderRadius: '50%',
+                  backgroundColor: 'rgba(255,255,255,0.15)',
+                  border: '1.5px solid rgba(255,255,255,0.3)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  flexShrink: 0
+                }}>
+                  <Play size={14} fill="currentColor" color="currentColor" style={{ marginLeft: '2px' }} />
                 </span>
               </button>
             ))}
@@ -207,24 +288,26 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({
         </div>
       ) : searchError ? (
         <div style={{ textAlign: 'center', padding: '60px 20px', color: 'var(--text-secondary)' }}>
-          <p style={{ fontSize: '16px', fontWeight: 600, marginBottom: '6px', color: 'var(--text-primary)' }}>Couldn't reach the server</p>
-          <p style={{ fontSize: '13px', marginBottom: '16px' }}>Check your connection and try again.</p>
+          <p style={{ fontSize: '16px', fontWeight: 700, marginBottom: '6px', color: 'var(--text-primary)' }}>Couldn't reach the server</p>
+          <p style={{ fontSize: '13px', marginBottom: '18px' }}>Check your network connection and retry.</p>
           <button
             onClick={() => handleSearch(query)}
-            className="interactive glass-pill chip active"
-            style={{ padding: '10px 22px', borderRadius: '4px', fontSize: '13px', fontWeight: 700 }}
+            className="interactive glass-pill"
+            style={{ padding: '10px 24px', borderRadius: 'var(--radius-pill)', fontSize: '13px', fontWeight: 700, background: 'var(--accent-primary)', color: '#fff', border: 'none' }}
           >
-            Retry
+            Retry Search
           </button>
         </div>
       ) : results.length === 0 ? (
         <div style={{ textAlign: 'center', padding: '60px 28px', color: 'var(--text-secondary)' }}>
-          <p style={{ fontSize: '16px', fontWeight: 600, marginBottom: '6px', color: 'var(--text-primary)' }}>No results for "{query}"</p>
-          <p style={{ fontSize: '13px' }}>Try searching for another title or keyword.</p>
+          <p style={{ fontSize: '16px', fontWeight: 700, marginBottom: '6px', color: 'var(--text-primary)' }}>No results for "{query}"</p>
+          <p style={{ fontSize: '13px' }}>Try searching with a broader title or character name.</p>
         </div>
       ) : (
-        <div style={{ padding: '16px 16px 0 16px' }}>
-          <h2 style={{ fontSize: '19px', fontWeight: 800, color: 'var(--text-primary)', marginBottom: '12px' }}>Anime</h2>
+        <div style={{ padding: '16px 20px 0 20px' }}>
+          <h2 style={{ fontSize: '18px', fontWeight: 800, color: 'var(--text-primary)', marginBottom: '14px', letterSpacing: '-0.3px' }}>
+            Results ({results.length})
+          </h2>
           <div className="grid-collection">
             {results.map(anime => (
               <PosterCard key={anime.id} anime={anime} onSelect={onSelectAnime} />

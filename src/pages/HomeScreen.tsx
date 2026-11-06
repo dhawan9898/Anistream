@@ -8,6 +8,7 @@ import { PosterCard } from '../components/PosterCard';
 import { GenrePicker } from '../components/GenrePicker';
 import { HeroCarousel } from '../components/HeroCarousel';
 import { ErrorState } from 'streamkit/ui/ErrorState.tsx';
+import { hapticLight, hapticMedium } from '../services/hapticsService';
 
 // Genres that get their own rail on the home screen, Netflix-style.
 const HOME_ROW_GENRES = ['action', 'romance', 'comedy', 'fantasy', 'isekai'];
@@ -52,7 +53,7 @@ const GenreRow: React.FC<{
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 20px', marginBottom: '10px' }}>
         <h2 style={{ fontSize: '17px', fontWeight: 700, color: 'var(--text-primary)' }}>{genre.name} Anime</h2>
         <button
-          onClick={onSeeAll}
+          onClick={() => { hapticLight(); onSeeAll(); }}
           className="interactive"
           style={{ background: 'none', border: 'none', color: 'var(--text-secondary)', fontSize: '13px', fontWeight: 600, display: 'flex', alignItems: 'center' }}
         >
@@ -60,13 +61,13 @@ const GenreRow: React.FC<{
           <ChevronRight size={16} />
         </button>
       </div>
-      <div className="rail" style={{ gap: '10px', padding: '0 20px 6px 20px' }}>
+      <div className="rail" style={{ gap: '12px', padding: '0 20px 8px 20px' }}>
         {items
           ? items.map(anime => (
-              <PosterCard key={anime.id} anime={anime} width={112} onSelect={onSelectAnime} />
+              <PosterCard key={anime.id} anime={anime} width={118} onSelect={onSelectAnime} />
             ))
           : Array.from({ length: 5 }).map((_, i) => (
-              <div key={i} className="skeleton" style={{ flex: '0 0 112px', height: '162px', borderRadius: '4px' }} />
+              <div key={i} className="skeleton" style={{ flex: '0 0 118px', height: '168px', borderRadius: 'var(--radius-md)' }} />
             ))}
       </div>
     </div>
@@ -152,54 +153,58 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
           position: 'sticky',
           top: 0,
           zIndex: 40,
-          // Gradient only, no blur: a blurred sticky bar re-renders the whole
-          // feed under it on every scroll frame.
-          background: 'linear-gradient(180deg, rgba(11,11,13,0.85) 0%, rgba(11,11,13,0.5) 65%, transparent 100%)',
+          background: 'rgba(11, 11, 14, 0.82)',
+          WebkitBackdropFilter: 'blur(20px) saturate(180%)',
+          backdropFilter: 'blur(20px) saturate(180%)',
+          borderBottom: '1px solid rgba(255, 255, 255, 0.08)',
           padding: 'calc(var(--safe-top) + 12px) 20px 12px 20px',
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'space-between'
         }}
       >
-        <span style={{ fontSize: '24px', fontWeight: 900, letterSpacing: '-0.8px', color: 'var(--accent-primary)', textShadow: '0 2px 12px rgba(0,0,0,0.6)' }}>ANISTREAM</span>
+        <span style={{ fontSize: '24px', fontWeight: 900, letterSpacing: '-0.8px', textShadow: '0 2px 14px rgba(0,0,0,0.7)', userSelect: 'none' }}>
+          <span style={{ color: '#ff2d3b' }}>ANI</span>
+          <span style={{ color: '#ffffff' }}>STREAM</span>
+        </span>
 
         {/* Sits on the hero banner image, so it keeps the dark look regardless
             of app theme (same reasoning as the hero text below). */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
           <button
-            onClick={() => setPickerOpen(true)}
+            onClick={() => { hapticLight(); setPickerOpen(true); }}
             className="interactive glass-pill-dark"
             style={{
-              padding: '7px 10px 7px 12px',
-              borderRadius: '4px',
+              padding: '8px 14px',
+              borderRadius: 'var(--radius-pill)',
               display: 'flex',
               alignItems: 'center',
-              gap: '4px',
+              gap: '6px',
               color: '#fff',
               fontSize: '13px',
-              fontWeight: 600
+              fontWeight: 600,
+              boxShadow: '0 4px 14px rgba(0,0,0,0.35)'
             }}
           >
             <span>Categories</span>
-            <ChevronDown size={16} />
+            <ChevronDown size={15} />
           </button>
           <button
-            onClick={onOpenSearch}
-            className="interactive"
+            onClick={() => { hapticLight(); onOpenSearch(); }}
+            className="interactive glass-pill-dark"
             aria-label="Search"
             style={{
               width: '40px',
               height: '40px',
-              background: 'none',
-              border: 'none',
+              borderRadius: 'var(--radius-pill)',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
               color: '#fff',
-              filter: 'drop-shadow(0 1px 6px rgba(0,0,0,0.7))'
+              boxShadow: '0 4px 14px rgba(0,0,0,0.35)'
             }}
           >
-            <SearchIcon size={22} />
+            <SearchIcon size={19} />
           </button>
         </div>
       </div>
@@ -220,11 +225,11 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
       {history.length > 0 && (
         <div style={{ padding: '24px 20px 8px 20px' }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '14px' }}>
-            <h2 style={{ fontSize: '17px', fontWeight: 700, color: 'var(--text-primary)' }}>Continue Watching</h2>
-            <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>{history.length} {history.length === 1 ? 'title' : 'titles'}</span>
+            <h2 style={{ fontSize: '18px', fontWeight: 800, color: 'var(--text-primary)', letterSpacing: '-0.3px' }}>Continue Watching</h2>
+            <span style={{ fontSize: '12px', color: 'var(--text-secondary)', fontWeight: 600 }}>{history.length} {history.length === 1 ? 'title' : 'titles'}</span>
           </div>
 
-          <div className="rail" style={{ gap: '14px', paddingBottom: '10px' }}>
+          <div className="rail" style={{ gap: '14px', paddingBottom: '12px' }}>
             {history.map((item) => {
               const progressPct = Math.min(100, Math.round((item.currentTime / (item.duration || 1)) * 100));
               const finished = isEpisodeFinished(item);
@@ -232,16 +237,16 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
               return (
                 <div
                   key={`${item.animeId}-${item.episodeId}`}
-                  onClick={() => onResumeEpisode(item)}
-                  className="interactive glass-panel"
+                  onClick={() => { hapticMedium(); onResumeEpisode(item); }}
+                  className="interactive card-bouncy glass-panel"
                   style={{
-                    flex: '0 0 200px',
+                    flex: '0 0 214px',
                     borderRadius: 'var(--radius-md)',
                     overflow: 'hidden',
                     position: 'relative'
                   }}
                 >
-                  <div style={{ position: 'relative', height: '110px' }}>
+                  <div style={{ position: 'relative', height: '116px' }}>
                     <FadeImage
                       src={item.poster}
                       alt={item.animeTitle}
@@ -251,32 +256,40 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
                     <div style={{
                       position: 'absolute',
                       inset: 0,
-                      background: 'linear-gradient(180deg, transparent 40%, rgba(0,0,0,0.85) 100%)',
+                      background: 'linear-gradient(180deg, rgba(0,0,0,0.1) 0%, rgba(0,0,0,0.78) 100%)',
                       display: 'flex',
                       alignItems: 'center',
                       justifyContent: 'center'
                     }}>
                       <div style={{
-                        width: '36px',
-                        height: '36px',
+                        width: '38px',
+                        height: '38px',
                         borderRadius: '50%',
-                        backgroundColor: 'rgba(0,0,0,0.65)',
-                        border: '1px solid rgba(255,255,255,0.25)',
+                        backgroundColor: 'rgba(15,15,20,0.7)',
+                        WebkitBackdropFilter: 'blur(10px)',
+                        backdropFilter: 'blur(10px)',
+                        border: '1.5px solid rgba(255,255,255,0.3)',
                         display: 'flex',
                         alignItems: 'center',
-                        justifyContent: 'center'
+                        justifyContent: 'center',
+                        boxShadow: '0 4px 12px rgba(0,0,0,0.45)'
                       }}>
                         <Play size={16} fill="#fff" color="#fff" style={{ marginLeft: '2px' }} />
                       </div>
                     </div>
                   </div>
 
-                  {/* Progress bar */}
-                  <div style={{ width: '100%', height: '3px', backgroundColor: 'rgba(255,255,255,0.2)' }}>
-                    <div style={{ width: `${progressPct}%`, height: '100%', background: 'var(--accent-primary)' }} />
+                  {/* Sleek Apple-style progress bar */}
+                  <div style={{ width: '100%', height: '3.5px', backgroundColor: 'rgba(255,255,255,0.15)' }}>
+                    <div style={{
+                      width: `${progressPct}%`,
+                      height: '100%',
+                      background: 'linear-gradient(90deg, #ff3b45 0%, #e50914 100%)',
+                      boxShadow: '0 0 8px rgba(229, 9, 20, 0.5)'
+                    }} />
                   </div>
 
-                  <div style={{ padding: '10px' }}>
+                  <div style={{ padding: '12px 14px' }}>
                     <h4 style={{
                       fontSize: '13px',
                       fontWeight: 700,

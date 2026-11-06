@@ -4,6 +4,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { HeroCarousel as SharedHeroCarousel, type HeroSlide } from 'streamkit/ui/HeroCarousel.tsx';
 import type { AnimeItem } from '../providers/aniCliCore';
 import { getBookmarks, subscribeLibraryChanges, toggleBookmark } from '../services/historyService';
+import { hapticMedium, hapticSuccess, hapticLight } from '../services/hapticsService';
 
 const MAX_SLIDES = 8;
 
@@ -47,6 +48,11 @@ export const HeroCarousel: React.FC<HeroCarouselProps> = ({ items, onSelect, pau
     const target = find(key);
     if (!target) return;
     const nowSaved = await toggleBookmark(target);
+    if (nowSaved) {
+      hapticSuccess();
+    } else {
+      hapticLight();
+    }
     setSaved(prev => {
       const next = new Set(prev);
       if (nowSaved) next.add(key); else next.delete(key);
@@ -59,7 +65,13 @@ export const HeroCarousel: React.FC<HeroCarouselProps> = ({ items, onSelect, pau
       slides={slides}
       rankLabel="Trending"
       primaryLabel="Watch Now"
-      onPrimary={key => { const a = find(key); if (a) onSelect(a); }}
+      onPrimary={key => {
+        const a = find(key);
+        if (a) {
+          hapticMedium();
+          onSelect(a);
+        }
+      }}
       onToggleSaved={handleToggle}
       showListLabel
       paused={paused}

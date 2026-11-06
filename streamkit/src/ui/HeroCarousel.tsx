@@ -9,7 +9,7 @@ import { FadeImage } from './FadeImage.tsx';
 const AUTO_ADVANCE_MS = 6000;
 // After a manual swipe, wait this long before auto-advancing again.
 const USER_IDLE_MS = 10000;
-const HERO_HEIGHT = 440;
+const HERO_HEIGHT = 400;
 
 export interface HeroSlide {
   key: string;
@@ -86,13 +86,13 @@ export const HeroCarousel: React.FC<HeroCarouselProps> = ({
   const markTouched = () => { lastTouchRef.current = Date.now(); };
 
   if (slides.length === 0) {
-    return <div className="skeleton" style={{ width: '100%', height: `${HERO_HEIGHT}px`, marginTop: '-60px', borderRadius: 0 }} />;
+    return <div className="skeleton hero-carousel-container" style={{ height: `${HERO_HEIGHT}px` }} />;
   }
 
   const chipStyle: React.CSSProperties = { fontSize: '11px', fontWeight: 600, padding: '3px 8px', borderRadius: '6px', color: '#cbd5e1' };
 
   return (
-    <div style={{ position: 'relative', marginTop: '-60px' }}>
+    <div className="hero-carousel-container">
       <div
         ref={trackRef}
         className="hero-track"
