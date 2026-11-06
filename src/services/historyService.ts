@@ -20,6 +20,8 @@ export interface UserPreferences {
   defaultMode: 'sub' | 'dub';
   autoSkipIntro: boolean;
   autoPlayNext: boolean;
+  subtitlesEnabled?: boolean;
+  aspectRatio?: 'fit' | 'crop' | 'fill';
   // Bumped when a default changes, so old saved copies of it are reset once.
   prefsVersion?: number;
 }
@@ -43,10 +45,12 @@ const PREFS_VERSION = 2;
 // Auto-Skip Intro is off by default: jumping past the opening without being
 // asked surprised people. (v1 saved copies had it on - see getUserPreferences.)
 export const DEFAULT_PREFERENCES: UserPreferences = {
-  defaultQuality: '1080p',
+  defaultQuality: 'Auto',
   defaultMode: 'sub',
   autoSkipIntro: false,
   autoPlayNext: true,
+  subtitlesEnabled: true,
+  aspectRatio: 'fit',
   prefsVersion: PREFS_VERSION
 };
 

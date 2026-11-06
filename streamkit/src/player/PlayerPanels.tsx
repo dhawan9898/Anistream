@@ -64,16 +64,11 @@ interface AudioPanelProps {
   subtitles: PlayerSubtitleTrack[];
   activeSubtitle: string | null;
   onSubtitle: (label: string | null) => void;
-  // null when the source has no genuinely different qualities to choose from.
-  qualityOptions: PlayerQuality[] | null;
-  selectedQuality: string;
-  onQuality: (item: PlayerQuality) => void;
   onClose: () => void;
 }
 
 export const AudioPanel: React.FC<AudioPanelProps> = ({
-  mode, canSwitchMode, onSwitchMode, subtitles, activeSubtitle, onSubtitle,
-  qualityOptions, selectedQuality, onQuality, onClose
+  mode, canSwitchMode, onSwitchMode, subtitles, activeSubtitle, onSubtitle, onClose
 }) => (
   <div className="nf-panel" onClick={stop} onTouchStart={stop} onTouchMove={stop}>
     <button onClick={onClose} className="interactive nf-panel-close" aria-label="Close">
@@ -105,16 +100,33 @@ export const AudioPanel: React.FC<AudioPanelProps> = ({
           </Option>
         ))}
       </div>
-      {qualityOptions && (
-        <div className="nf-column">
-          <h3>Video Quality</h3>
-          {qualityOptions.map(item => (
-            <Option key={item.quality} active={selectedQuality === item.quality} onClick={() => onQuality(item)}>
-              {item.quality}
-            </Option>
-          ))}
-        </div>
-      )}
+    </div>
+  </div>
+);
+
+interface QualityPanelProps {
+  qualityOptions: PlayerQuality[];
+  selectedQuality: string;
+  onQuality: (item: PlayerQuality) => void;
+  onClose: () => void;
+}
+
+export const QualityPanel: React.FC<QualityPanelProps> = ({
+  qualityOptions, selectedQuality, onQuality, onClose
+}) => (
+  <div className="nf-panel" onClick={stop} onTouchStart={stop} onTouchMove={stop}>
+    <button onClick={onClose} className="interactive nf-panel-close" aria-label="Close">
+      <X size={28} />
+    </button>
+    <div className="nf-columns" style={{ justifyContent: 'center' }}>
+      <div className="nf-column">
+        <h3>Video Quality</h3>
+        {qualityOptions.map(item => (
+          <Option key={item.quality} active={selectedQuality === item.quality} onClick={() => { onQuality(item); onClose(); }}>
+            {item.quality}
+          </Option>
+        ))}
+      </div>
     </div>
   </div>
 );

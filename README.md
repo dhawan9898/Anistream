@@ -1,6 +1,6 @@
 # AniStream — Android Anime Streaming App (powered by `ani-cli`)
 
-[![Version](https://img.shields.io/badge/Version-v9.2-E50914?style=for-the-badge&logo=android)](https://github.com/dhawan9898/Anistream/releases)
+[![Version](https://img.shields.io/badge/Version-v10.0-E50914?style=for-the-badge&logo=android)](https://github.com/dhawan9898/Anistream/releases)
 [![Android](https://img.shields.io/badge/Android-8.0%2B-green?style=for-the-badge&logo=android)](https://github.com/dhawan9898/Anistream/releases)
 [![License](https://img.shields.io/badge/License-GPLv3-blue?style=for-the-badge)](https://www.gnu.org/licenses/gpl-3.0)
 
@@ -30,8 +30,8 @@ steps as [`ani-cli`](https://github.com/pystardust/ani-cli).
 
 ## 1. Install the APK
 
-1. Open the **[Releases page](https://github.com/dhawan9898/Anistream/releases)** and pick the latest release (**v9.2**).
-2. Under **Assets**, download **`AniStream-v9.2.apk`**.
+1. Open the **[Releases page](https://github.com/dhawan9898/Anistream/releases)** and pick the latest release (**v10.0**).
+2. Under **Assets**, download **`AniStream-v10.0.apk`**.
 3. Open the file on your phone. If Android asks, enable **Install unknown apps** for your browser or file manager.
 4. Tap **Install**. If you already have AniStream, the new version installs over it and keeps your history and My List, because every release is signed with the same key.
 
@@ -219,6 +219,12 @@ Network requests to the site go through a small in-memory cache (5 min for pages
 ---
 
 ## 10. What's new
+
+### v10.0
+
+- **Dedicated Top-Right Player Controls**: Video Quality and Aspect Ratio buttons are now conveniently placed on the top-right corner of the player overlay screen.
+- **Aspect Ratio Selection**: Added support to switch video display modes between **Normal (Fit)**, **Expand (Crop)**, and **Fill (Stretch)**.
+- **Persistent Playback Settings**: Audio preferences (Sub/Dub), Subtitle preferences (On/Off), Video Quality (`Auto`, `1080p`, etc.), and Aspect Ratio choices are automatically saved and remembered across all episodes and sessions.
 
 ### v9.2
 

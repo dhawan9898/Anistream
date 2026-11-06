@@ -25,6 +25,29 @@
   filter: drop-shadow(0 1px 3px rgba(0, 0, 0, 0.6));
 }
 
+.nf-top-chip-btn {
+  background: rgba(20, 20, 20, 0.65);
+  border: 1.5px solid rgba(255, 255, 255, 0.85);
+  border-radius: 4px;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 700;
+  padding: 4px 10px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  white-space: nowrap;
+  backdrop-filter: blur(8px);
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.nf-top-chip-btn:hover {
+  background: rgba(255, 255, 255, 0.2);
+  border-color: #fff;
+}
+
 .nf-top,
 .nf-center,
 .nf-bottom {

@@ -75,6 +75,9 @@ public class ExoPlayerPlugin extends Plugin {
         boolean autoSkipIntro = call.getBoolean("autoSkipIntro", false);
         boolean autoPlayNext = call.getBoolean("autoPlayNext", true);
         boolean hasDub = call.getBoolean("hasDub", true);
+        boolean subtitlesEnabled = call.getBoolean("subtitlesEnabled", true);
+        String defaultQuality = call.getString("defaultQuality", "Auto");
+        String aspectRatio = call.getString("aspectRatio", "fit");
         String spriteVtt = call.getString("spriteVtt");
 
         Intent intent = new Intent(getContext(), ExoPlayerActivity.class);
@@ -90,6 +93,9 @@ public class ExoPlayerPlugin extends Plugin {
         intent.putExtra("autoSkipIntro", autoSkipIntro);
         intent.putExtra("autoPlayNext", autoPlayNext);
         intent.putExtra("hasDub", hasDub);
+        intent.putExtra("subtitlesEnabled", subtitlesEnabled);
+        intent.putExtra("defaultQuality", defaultQuality != null ? defaultQuality : "Auto");
+        intent.putExtra("aspectRatio", aspectRatio != null ? aspectRatio : "fit");
         if (spriteVtt != null && !spriteVtt.isEmpty()) intent.putExtra("spriteVtt", spriteVtt);
         putSkipRange(intent, "intro", intro);
         putSkipRange(intent, "outro", outro);
@@ -209,5 +215,26 @@ public class ExoPlayerPlugin extends Plugin {
         data.put("positionMs", positionMs);
         data.put("durationMs", durationMs);
         activeInstance.notifyListeners("progressUpdate", data);
+    }
+
+    static void notifySubtitleToggled(boolean enabled) {
+        if (activeInstance == null) return;
+        JSObject data = new JSObject();
+        data.put("subtitlesEnabled", enabled);
+        activeInstance.notifyListeners("subtitleToggled", data);
+    }
+
+    static void notifyQualitySelected(String quality) {
+        if (activeInstance == null) return;
+        JSObject data = new JSObject();
+        data.put("quality", quality);
+        activeInstance.notifyListeners("qualitySelected", data);
+    }
+
+    static void notifyAspectRatioChanged(String aspectRatio) {
+        if (activeInstance == null) return;
+        JSObject data = new JSObject();
+        data.put("aspectRatio", aspectRatio);
+        activeInstance.notifyListeners("aspectRatioChanged", data);
     }
 }

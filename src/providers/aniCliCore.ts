@@ -100,14 +100,14 @@ export function deobfuscateBlob(base64Blob: string): string {
 }
 
 // Helper to resolve API URLs: the dev server proxies "/api-hianime" to
-// https://hianime.at (see vite.config.ts), which only exists while running
+// https://hianimes.se (see vite.config.ts), which only exists while running
 // `npm run dev`. The built APK has no such proxy, so on a native device we
 // must hit the real host directly - CapacitorHttp (enabled in
 // capacitor.config.ts) routes fetch() through native networking, which
 // isn't subject to the browser's CORS / forbidden-header restrictions.
 // The single place the JS side names the streaming site. (The native Java
 // resolver and the dev proxy in vite.config.ts carry their own copy.)
-export const REMOTE_HOST = "https://hianime.at";
+export const REMOTE_HOST = "https://hianimes.se";
 
 export function getApiBase(): string {
   return Capacitor.isNativePlatform() ? REMOTE_HOST : "/api-hianime";
@@ -720,19 +720,17 @@ function sourceFrom(
   const subtitles = parseSubtitleTracks(tracks);
   return {
     streamUrl: rawStreamUrl,
-    quality: "1080p",
+    quality: "Auto",
     subtitles,
     referer: embedOrigin + '/',
     spriteVtt,
     masterUrl: rawStreamUrl,
-    // One adaptive (HLS master) URL - the players pick the rendition. The
-    // labels only exist so the "Default Quality" preference has something
-    // to match; the menus hide them because the URLs are identical.
     qualities: [
+      { quality: "Auto", url: rawStreamUrl },
       { quality: "1080p", url: rawStreamUrl },
       { quality: "720p", url: rawStreamUrl },
       { quality: "480p", url: rawStreamUrl },
-      { quality: "Auto", url: rawStreamUrl }
+      { quality: "360p", url: rawStreamUrl }
     ],
     intro,
     outro

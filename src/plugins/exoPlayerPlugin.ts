@@ -41,6 +41,18 @@ export interface ProgressUpdateEvent {
   durationMs: number;
 }
 
+export interface SubtitleToggledEvent {
+  subtitlesEnabled: boolean;
+}
+
+export interface QualitySelectedEvent {
+  quality: string;
+}
+
+export interface AspectRatioChangedEvent {
+  aspectRatio: 'fit' | 'crop' | 'fill';
+}
+
 // The stream failed with an HTTP error; JS resolves the same episode again
 // and play()s it at positionMs (once per episode - see ExoPlayerActivity).
 export interface ReloadRequestedEvent {
@@ -80,6 +92,9 @@ export interface ExoPlayerPluginInterface {
     autoPlayNext?: boolean;
     // False when the title has no English dub (the audio panel then hides it).
     hasDub?: boolean;
+    subtitlesEnabled?: boolean;
+    defaultQuality?: string;
+    aspectRatio?: 'fit' | 'crop' | 'fill';
   }): Promise<{ success: boolean }>;
 
   // Same options as play(), for the episode after `afterEpisode`: the
@@ -127,6 +142,21 @@ export interface ExoPlayerPluginInterface {
   addListener(
     eventName: 'progressUpdate',
     listenerFunc: (event: ProgressUpdateEvent) => void
+  ): Promise<PluginListenerHandle>;
+
+  addListener(
+    eventName: 'subtitleToggled',
+    listenerFunc: (event: SubtitleToggledEvent) => void
+  ): Promise<PluginListenerHandle>;
+
+  addListener(
+    eventName: 'qualitySelected',
+    listenerFunc: (event: QualitySelectedEvent) => void
+  ): Promise<PluginListenerHandle>;
+
+  addListener(
+    eventName: 'aspectRatioChanged',
+    listenerFunc: (event: AspectRatioChangedEvent) => void
   ): Promise<PluginListenerHandle>;
 }
 

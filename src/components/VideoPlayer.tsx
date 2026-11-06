@@ -6,13 +6,13 @@ import {
   Volume2, VolumeX, Loader2, Gauge, Lock, LockOpen, Layers, MessageSquareText
 } from 'lucide-react';
 import type { StreamSource, EpisodeItem } from '../providers/aniCliCore';
-import { getUserPreferences } from '../services/historyService';
+import { getUserPreferences, saveUserPreferences } from '../services/historyService';
 import { getEpisodeSkipIntervals, type SkipInterval } from '../providers/aniSkipService';
 import {
   resolvePlayableUrl, createHls, defaultSubtitleLabel, formatTime,
   NEXT_EPISODE_COUNTDOWN_SECS, POST_PLAY_THRESHOLD_SECS, NETFLIX_RED
 } from 'streamkit/player/playerUtils.ts';
-import { SpeedPanel, AudioPanel, EpisodePanel } from 'streamkit/player/PlayerPanels.tsx';
+import { SpeedPanel, AudioPanel, EpisodePanel, QualityPanel } from 'streamkit/player/PlayerPanels.tsx';
 import { useWakeLock, useFullscreenState } from 'streamkit/player/playerHooks.ts';
 import './VideoPlayer.css';
 
@@ -74,6 +74,8 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   const [buffered, setBuffered] = useState<number>(0);
   const [showControls, setShowControls] = useState<boolean>(true);
   const [isFullscreen, setIsFullscreen] = useState<boolean>(false);
+  const [aspectRatioMode, setAspectRatioMode] = useState<'fit' | 'crop' | 'fill'>('fit');
+  const [showQualityPanel, setShowQualityPanel] = useState<boolean>(false);
   const [selectedQuality, setSelectedQuality] = useState<string>(streamSource.quality || '1080p');
   const [showAudioPanel, setShowAudioPanel] = useState<boolean>(false);
   const [showSpeedPanel, setShowSpeedPanel] = useState<boolean>(false);
@@ -170,6 +172,8 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
       if (cancelled) return;
       setAutoSkipIntro(p.autoSkipIntro);
       setAutoPlayNext(p.autoPlayNext);
+      if (p.aspectRatio) setAspectRatioMode(p.aspectRatio);
+      if (p.subtitlesEnabled === false) setActiveSubtitle(null);
     });
     return () => { cancelled = true; };
   }, []);
@@ -516,6 +520,21 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     if (!video || !item.url) return;
 
     setSelectedQuality(item.quality);
+    saveUserPreferences({ defaultQuality: item.quality });
+
+    if (hlsRef.current && hlsRef.current.levels && hlsRef.current.levels.length > 0) {
+      if (item.quality === 'Auto') {
+        hlsRef.current.currentLevel = -1;
+      } else {
+        const targetHeight = parseInt(item.quality, 10);
+        if (isFinite(targetHeight)) {
+          const matchIdx = hlsRef.current.levels.findIndex(l => l.height === targetHeight);
+          if (matchIdx >= 0) {
+            hlsRef.current.currentLevel = matchIdx;
+          }
+        }
+      }
+    }
 
     const prevTime = video.currentTime;
     const wasPlaying = !video.paused;
@@ -756,15 +775,26 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
 
   // Quality choices only when the scraper gave genuinely different URLs -
   // the same URL under several labels is not a real choice.
-  const qualityOptions = streamSource.qualities || [];
-  const hasQualityChoice = new Set(qualityOptions.map(q => q.url)).size > 1;
+  const defaultQualities = [
+    { quality: 'Auto', url: streamSource.streamUrl },
+    { quality: '1080p', url: streamSource.streamUrl },
+    { quality: '720p', url: streamSource.streamUrl },
+    { quality: '480p', url: streamSource.streamUrl },
+    { quality: '360p', url: streamSource.streamUrl }
+  ];
+  const qualityOptions = streamSource.qualities && streamSource.qualities.length > 1
+    ? streamSource.qualities
+    : defaultQualities;
+
+  const ASPECT_RATIO_LABELS = { fit: 'Fit', crop: 'Crop', fill: 'Fill' } as const;
+  const ASPECT_RATIO_OBJECT_FIT = { fit: 'contain', crop: 'cover', fill: 'fill' } as const;
 
   const episodeLabel = episode.title && !/^episode\s*\d+/i.test(episode.title)
     ? `E${episode.number} · ${episode.title}`
     : `E${episode.number}`;
   const progressPct = duration > 0 ? (currentTime / duration) * 100 : 0;
   const bufferedPct = duration > 0 ? (buffered / duration) * 100 : 0;
-  const anyPanelOpen = showAudioPanel || showSpeedPanel || showEpisodeMenu;
+  const anyPanelOpen = showAudioPanel || showSpeedPanel || showEpisodeMenu || showQualityPanel;
   // Paused always shows the controls (Netflix behaviour); while playing they
   // follow the auto-hide timer / taps.
   const controlsVisible = (showControls || !isPlaying) && !isLocked && !anyPanelOpen;
@@ -816,7 +846,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
       <video
         ref={videoRef}
         playsInline
-        style={{ width: '100%', height: '100%', objectFit: 'contain' }}
+        style={{ width: '100%', height: '100%', objectFit: ASPECT_RATIO_OBJECT_FIT[aspectRatioMode] }}
         onTimeUpdate={handleTimeUpdate}
         onDurationChange={handleDurationChange}
         onError={handleVideoError}
@@ -907,7 +937,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
         </div>
       )}
 
-      {/* ---------- Top bar: back | title | fullscreen ---------- */}
+      {/* ---------- Top bar: back | title | aspect ratio | quality | fullscreen ---------- */}
       <div
         className="nf-top"
         style={{ opacity: controlsVisible ? 1 : 0, pointerEvents: controlsVisible ? 'auto' : 'none' }}
@@ -924,9 +954,31 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
             {streamSource.isFallback ? ' · DEMO - SOURCE UNAVAILABLE' : ''}
           </span>
         </div>
-        <button onClick={toggleFullscreen} className="interactive nf-icon-btn" aria-label="Fullscreen">
-          {isFullscreen ? <Minimize size={24} /> : <Maximize size={24} />}
-        </button>
+        <div className="nf-top-actions" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <button
+            onClick={() => {
+              setAspectRatioMode(prev => {
+                const next = prev === 'fit' ? 'crop' : prev === 'crop' ? 'fill' : 'fit';
+                saveUserPreferences({ aspectRatio: next });
+                return next;
+              });
+            }}
+            className="interactive nf-top-chip-btn"
+            aria-label="Aspect Ratio"
+          >
+            {ASPECT_RATIO_LABELS[aspectRatioMode]}
+          </button>
+          <button
+            onClick={() => setShowQualityPanel(true)}
+            className="interactive nf-top-chip-btn"
+            aria-label="Video Quality"
+          >
+            {selectedQuality}
+          </button>
+          <button onClick={toggleFullscreen} className="interactive nf-icon-btn" aria-label="Fullscreen">
+            {isFullscreen ? <Minimize size={24} /> : <Maximize size={24} />}
+          </button>
+        </div>
       </div>
 
       {/* ---------- Center transport: -10 | play/pause | +10 ---------- */}
@@ -1062,11 +1114,21 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
           }}
           subtitles={streamSource.subtitles}
           activeSubtitle={activeSubtitle}
-          onSubtitle={setActiveSubtitle}
-          qualityOptions={hasQualityChoice ? qualityOptions : null}
+          onSubtitle={label => {
+            setActiveSubtitle(label);
+            saveUserPreferences({ subtitlesEnabled: label !== null });
+          }}
+          onClose={() => setShowAudioPanel(false)}
+        />
+      )}
+
+      {/* ---------- Video Quality panel ---------- */}
+      {showQualityPanel && (
+        <QualityPanel
+          qualityOptions={qualityOptions.length > 0 ? qualityOptions : [{ quality: 'Auto', url: streamSource.streamUrl }]}
           selectedQuality={selectedQuality}
           onQuality={switchQuality}
-          onClose={() => setShowAudioPanel(false)}
+          onClose={() => setShowQualityPanel(false)}
         />
       )}
 

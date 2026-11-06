@@ -99,6 +99,15 @@ public class ExoPlayerActivity extends AppCompatActivity {
     private View btnEpisodes;
     private View btnAudioSubs;
     private View btnNextEp;
+    private TextView btnAspectRatio;
+    private TextView btnQuality;
+    private int aspectRatioMode = 0; // 0 = Fit, 1 = Crop, 2 = Fill
+    private static final String[] ASPECT_RATIO_LABELS = new String[]{"Fit", "Crop", "Fill"};
+    private static final int[] ASPECT_RATIO_MODES = new int[]{
+            androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_FIT,
+            androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_ZOOM,
+            androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_FILL
+    };
     private TextView btnSkipIntro;
     private TextView btnSkipOutro;
     private TextView btnWatchCredits;
@@ -394,6 +403,21 @@ public class ExoPlayerActivity extends AppCompatActivity {
         if (intent.hasExtra("hasDub")) hasDub = intent.getBooleanExtra("hasDub", true);
         if (intent.hasExtra("autoSkipIntro")) autoSkipIntro = intent.getBooleanExtra("autoSkipIntro", false);
         if (intent.hasExtra("autoPlayNext")) autoPlayNext = intent.getBooleanExtra("autoPlayNext", true);
+        if (intent.hasExtra("aspectRatio")) {
+            String ar = intent.getStringExtra("aspectRatio");
+            if ("crop".equals(ar)) aspectRatioMode = 1;
+            else if ("fill".equals(ar)) aspectRatioMode = 2;
+            else aspectRatioMode = 0;
+            if (playerView != null) playerView.setResizeMode(ASPECT_RATIO_MODES[aspectRatioMode]);
+            if (btnAspectRatio != null) btnAspectRatio.setText(ASPECT_RATIO_LABELS[aspectRatioMode]);
+        }
+        if (intent.hasExtra("subtitlesEnabled")) {
+            boolean subEnabled = intent.getBooleanExtra("subtitlesEnabled", true);
+            if (!subEnabled) {
+                currentSubtitleLabel = null;
+                subtitleSelectionInitialized = true;
+            }
+        }
         String title = intent.getStringExtra("title");
         if (title != null) animeTitle = title;
         String episode = intent.getStringExtra("episode");
@@ -679,6 +703,8 @@ public class ExoPlayerActivity extends AppCompatActivity {
         btnEpisodes = findViewById(R.id.btn_episodes);
         btnAudioSubs = findViewById(R.id.btn_audio_subs);
         btnNextEp = findViewById(R.id.btn_next_ep);
+        btnAspectRatio = findViewById(R.id.btn_aspect_ratio);
+        btnQuality = findViewById(R.id.btn_quality);
         btnSkipIntro = findViewById(R.id.btn_skip_intro);
         btnSkipOutro = findViewById(R.id.btn_skip_outro);
         btnWatchCredits = findViewById(R.id.btn_watch_credits);
@@ -710,12 +736,13 @@ public class ExoPlayerActivity extends AppCompatActivity {
     private void styleGlassChrome() {
         float density = getResources().getDisplayMetrics().density;
 
-        for (TextView skip : new TextView[]{btnSkipIntro, btnSkipOutro, btnWatchCredits}) {
+        for (TextView btn : new TextView[]{btnSkipIntro, btnSkipOutro, btnWatchCredits, btnAspectRatio, btnQuality}) {
+            if (btn == null) continue;
             GradientDrawable bg = new GradientDrawable();
             bg.setCornerRadius(4f * density);
             bg.setColor(Color.argb(165, 20, 20, 20));
             bg.setStroke(Math.round(1.5f * density), Color.argb(220, 255, 255, 255));
-            skip.setBackground(bg);
+            btn.setBackground(bg);
         }
 
         // Solid white button (readable over any scene); the countdown is a
@@ -832,6 +859,8 @@ public class ExoPlayerActivity extends AppCompatActivity {
         btnEpisodes.setOnClickListener(this::showEpisodeMenu);
         btnNextEp.setOnClickListener(v -> triggerNextEpisode());
         btnRetry.setOnClickListener(v -> retryPlayback());
+        if (btnAspectRatio != null) btnAspectRatio.setOnClickListener(v -> toggleAspectRatio());
+        if (btnQuality != null) btnQuality.setOnClickListener(this::showQualityMenu);
 
         seekBar.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
             @Override
@@ -1097,26 +1126,80 @@ public class ExoPlayerActivity extends AppCompatActivity {
         }
         columns.addView(buildOptionColumn("Subtitles", subtitleRows), new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, 1f));
 
-        java.util.List<MenuRow> qualityRows = new java.util.ArrayList<>();
+        dialogRef[0] = showFullScreenPanel(columns);
+    }
+
+    private static final String[] ASPECT_RATIO_KEYS = new String[]{"fit", "crop", "fill"};
+
+    private void toggleAspectRatio() {
+        aspectRatioMode = (aspectRatioMode + 1) % 3;
+        if (playerView != null) {
+            playerView.setResizeMode(ASPECT_RATIO_MODES[aspectRatioMode]);
+        }
+        if (btnAspectRatio != null) {
+            btnAspectRatio.setText(ASPECT_RATIO_LABELS[aspectRatioMode]);
+        }
+        ExoPlayerPlugin.notifyAspectRatioChanged(ASPECT_RATIO_KEYS[aspectRatioMode]);
+    }
+
+    private void updateQualityButtonText() {
+        if (btnQuality == null) return;
+        String label = "Auto";
         if (useAdaptiveQualityMenu) {
-            qualityRows.add(new MenuRow("Auto", currentVideoTrackIndex == -1, () -> selectVideoQuality(-1)));
+            if (currentVideoTrackIndex >= 0 && currentVideoTrackIndex < videoQualityOptions.size()) {
+                label = videoQualityOptions.get(currentVideoTrackIndex).label;
+            } else {
+                label = "Auto";
+            }
+        } else if (currentQualityLabel != null && !currentQualityLabel.isEmpty()) {
+            label = currentQualityLabel;
+        }
+        btnQuality.setText(label);
+    }
+
+    private void showQualityMenu(View anchor) {
+        LinearLayout columns = new LinearLayout(this);
+        columns.setOrientation(LinearLayout.HORIZONTAL);
+        columns.setPadding(0, dp(28), dp(40), 0);
+        columns.setGravity(Gravity.CENTER_HORIZONTAL);
+        final Dialog[] dialogRef = new Dialog[1];
+
+        java.util.List<MenuRow> qualityRows = new java.util.ArrayList<>();
+        if (useAdaptiveQualityMenu && !videoQualityOptions.isEmpty()) {
+            qualityRows.add(new MenuRow("Auto", currentVideoTrackIndex == -1, () -> {
+                selectVideoQuality(-1);
+                updateQualityButtonText();
+                if (dialogRef[0] != null) dialogRef[0].dismiss();
+            }));
             for (VideoQualityOption option : videoQualityOptions) {
-                qualityRows.add(new MenuRow(option.label, option.trackIndex == currentVideoTrackIndex,
-                        () -> selectVideoQuality(option.trackIndex)));
+                qualityRows.add(new MenuRow(option.label, option.trackIndex == currentVideoTrackIndex, () -> {
+                    selectVideoQuality(option.trackIndex);
+                    updateQualityButtonText();
+                    if (dialogRef[0] != null) dialogRef[0].dismiss();
+                }));
             }
         } else if (qualityOptions.size() > 1) {
             for (QualityOption option : qualityOptions) {
                 qualityRows.add(new MenuRow(option.label, option.label.equals(currentQualityLabel), () -> {
-                    // Rebuilds the player - close the panel first.
                     if (dialogRef[0] != null) dialogRef[0].dismiss();
                     switchQuality(option);
+                    updateQualityButtonText();
+                }));
+            }
+        } else {
+            String[] fallbackQualities = new String[]{"Auto", "1080p", "720p", "480p", "360p"};
+            for (String q : fallbackQualities) {
+                boolean active = q.equals(currentQualityLabel != null ? currentQualityLabel : "Auto");
+                qualityRows.add(new MenuRow(q, active, () -> {
+                    currentQualityLabel = q;
+                    updateQualityButtonText();
+                    ExoPlayerPlugin.notifyQualitySelected(q);
+                    if (dialogRef[0] != null) dialogRef[0].dismiss();
                 }));
             }
         }
-        if (!qualityRows.isEmpty()) {
-            columns.addView(buildOptionColumn("Video Quality", qualityRows), new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, 1f));
-        }
 
+        columns.addView(buildOptionColumn("Video Quality", qualityRows), new LinearLayout.LayoutParams(dp(220), LinearLayout.LayoutParams.MATCH_PARENT));
         dialogRef[0] = showFullScreenPanel(columns);
     }
 
@@ -1261,6 +1344,7 @@ public class ExoPlayerActivity extends AppCompatActivity {
         if (player != null) {
             applySubtitleSelection(player.getCurrentTracks());
         }
+        ExoPlayerPlugin.notifySubtitleToggled(label != null);
     }
 
     // Lists the text tracks the player reports, each under a unique label:
@@ -1369,6 +1453,9 @@ public class ExoPlayerActivity extends AppCompatActivity {
             builder.addOverride(new TrackSelectionOverride(adaptiveVideoGroup, trackIndex));
         }
         player.setTrackSelectionParameters(builder.build());
+        String qLabel = (trackIndex >= 0 && trackIndex < videoQualityOptions.size())
+                ? videoQualityOptions.get(trackIndex).label : "Auto";
+        ExoPlayerPlugin.notifyQualitySelected(qLabel);
     }
 
     // Checked on every onTracksChanged - the very first time ExoPlayer
@@ -1376,18 +1463,28 @@ public class ExoPlayerActivity extends AppCompatActivity {
     // real adaptive ladder, so switch the quality button over to it
     // permanently for this player instance.
     private void maybeResolveAdaptiveQuality(Tracks tracks) {
-        if (useAdaptiveQualityMenu) return;
         for (Tracks.Group group : tracks.getGroups()) {
-            if (group.getType() != C.TRACK_TYPE_VIDEO || group.length <= 1) continue;
+            if (group.getType() != C.TRACK_TYPE_VIDEO) continue;
             adaptiveVideoGroup = group.getMediaTrackGroup();
             videoQualityOptions.clear();
             for (int i = 0; i < group.length; i++) {
                 Format format = group.getTrackFormat(i);
-                videoQualityOptions.add(new VideoQualityOption(
-                        format.height > 0 ? format.height + "p" : "Track " + (i + 1), i));
+                String label = format.height > 0 ? format.height + "p" : "Track " + (i + 1);
+                videoQualityOptions.add(new VideoQualityOption(label, i));
             }
-            useAdaptiveQualityMenu = true;
-            return;
+            if (!videoQualityOptions.isEmpty()) {
+                useAdaptiveQualityMenu = true;
+                if (currentQualityLabel != null && !"Auto".equalsIgnoreCase(currentQualityLabel)) {
+                    for (VideoQualityOption opt : videoQualityOptions) {
+                        if (opt.label.equalsIgnoreCase(currentQualityLabel)) {
+                            selectVideoQuality(opt.trackIndex);
+                            break;
+                        }
+                    }
+                }
+                handler.post(this::updateQualityButtonText);
+                return;
+            }
         }
     }
 
@@ -1569,6 +1666,7 @@ public class ExoPlayerActivity extends AppCompatActivity {
         boolean wasPlaying = player.isPlaying();
         currentQualityLabel = option.label;
         pendingVideoUrl = option.url;
+        ExoPlayerPlugin.notifyQualitySelected(option.label);
         player.release();
         player = null;
         initializePlayer(option.url, pendingReferer, pendingSubtitlesJson, resumePosition, wasPlaying);

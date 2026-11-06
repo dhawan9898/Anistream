@@ -19,6 +19,7 @@ import { resolveStream } from './providers/streamResolver';
 import { handleLayerBack } from 'streamkit/core/backStack.ts';
 import {
   getUserPreferences,
+  saveUserPreferences,
   setPlaybackActive,
   isEpisodeFinished,
   DEFAULT_PREFERENCES,
@@ -199,6 +200,10 @@ export const App: React.FC = () => {
   }, [nativeOpen, isPlaying]);
 
   const prefsRef = useRef<UserPreferences>(DEFAULT_PREFERENCES);
+  const updatePrefs = useCallback((partial: Partial<UserPreferences>) => {
+    prefsRef.current = { ...prefsRef.current, ...partial };
+    saveUserPreferences(partial);
+  }, []);
   useEffect(() => {
     getUserPreferences().then(p => { prefsRef.current = p; });
   }, []);
@@ -254,8 +259,18 @@ export const App: React.FC = () => {
         failInPlayer("Couldn't switch audio for this episode. Go back and pick it again.");
         return;
       }
+      updatePrefs({ defaultMode: mode });
       // Continue from the same point in the other audio track.
       handlePlayEpisode(anime, episode, mode, Math.max(0, (positionMs || 0) / 1000));
+    });
+    const subHandle = ExoPlayerPlugin.addListener('subtitleToggled', ({ subtitlesEnabled }) => {
+      updatePrefs({ subtitlesEnabled });
+    });
+    const qualityHandle = ExoPlayerPlugin.addListener('qualitySelected', ({ quality }) => {
+      if (quality) updatePrefs({ defaultQuality: quality });
+    });
+    const arHandle = ExoPlayerPlugin.addListener('aspectRatioChanged', ({ aspectRatio }) => {
+      if (aspectRatio) updatePrefs({ aspectRatio: aspectRatio as 'fit' | 'crop' | 'fill' });
     });
     // The player started the prefetched next episode itself. Record it as
     // the playing episode (progress reports for it are matched against
@@ -345,6 +360,9 @@ export const App: React.FC = () => {
     });
     return () => {
       modeHandle.then(h => h.remove());
+      subHandle.then(h => h.remove());
+      qualityHandle.then(h => h.remove());
+      arHandle.then(h => h.remove());
       nextStartedHandle.then(h => h.remove());
       nextEpHandle.then(h => h.remove());
       episodeSelectedHandle.then(h => h.remove());
@@ -378,7 +396,10 @@ export const App: React.FC = () => {
     startPositionMs: Math.max(0, Math.round(startTime * 1000)),
     autoSkipIntro: prefs.autoSkipIntro,
     autoPlayNext: prefs.autoPlayNext,
-    hasDub: anime.dubCount === undefined ? true : anime.dubCount > 0
+    hasDub: anime.dubCount === undefined ? true : anime.dubCount > 0,
+    subtitlesEnabled: prefs.subtitlesEnabled !== false,
+    defaultQuality: prefs.defaultQuality,
+    aspectRatio: prefs.aspectRatio || 'fit'
   });
 
   // The next episode's stream, resolved ahead of time and handed to the
@@ -752,7 +773,10 @@ export const App: React.FC = () => {
           hasNextEpisode={hasNextEpisode}
           episodeList={episodeList}
           onSelectEpisode={(ep) => handlePlayEpisode(nowPlaying.anime, ep, playingMode, 0)}
-          onSwitchMode={(newMode, positionSec) => handlePlayEpisode(nowPlaying.anime, nowPlaying.episode, newMode, positionSec)}
+          onSwitchMode={(newMode, positionSec) => {
+            updatePrefs({ defaultMode: newMode });
+            handlePlayEpisode(nowPlaying.anime, nowPlaying.episode, newMode, positionSec);
+          }}
           onProgressUpdate={handleProgressUpdate}
         />
         </Suspense>
