@@ -20,6 +20,7 @@ import {
   type AnimeItem
 } from './aniCliCore';
 import { request } from 'streamkit/core/http.ts';
+import { readPersistedJson, writePersistedJson } from '../services/persistentCache.ts';
 
 export interface Genre {
   slug: string;
@@ -299,6 +300,19 @@ async function loadGenrePage(genre: Genre, page: number, nextPath?: string): Pro
 // throws if nothing matches. Site entries are returned as-is.
 export async function resolveAnime(anime: AnimeItem): Promise<AnimeItem> {
   if (!anime.id.startsWith('al-') && !anime.id.startsWith('mal-')) return anime;
+  try {
+    const resolved = await resolveFromSite(anime);
+    writePersistedJson(`resolved:${anime.id}`, resolved);
+    return resolved;
+  } catch (err) {
+    // Offline (or the site is down): the match found on an earlier visit.
+    const saved = await readPersistedJson<AnimeItem>(`resolved:${anime.id}`);
+    if (saved) return saved.value;
+    throw err;
+  }
+}
+
+async function resolveFromSite(anime: AnimeItem): Promise<AnimeItem> {
   const titles = Array.from(new Set([anime.title, ...(anime.altTitles || [])]));
   for (const title of titles) {
     let results: AnimeItem[] = [];
@@ -581,13 +595,34 @@ const detailsCache = new Map<string, Promise<AnimeDetails>>();
 export function getAnimeDetails(anime: AnimeItem): Promise<AnimeDetails> {
   const cached = detailsCache.get(anime.id);
   if (cached) return cached;
-  const pending = loadAnimeDetails(anime);
+  const pending = loadDetailsOrSaved(anime);
   detailsCache.set(anime.id, pending);
   // Don't pin a failed/empty lookup forever - let a later visit retry.
   pending.then(d => {
     if (d.collection.length === 0 && d.suggestions.length === 0) detailsCache.delete(anime.id);
   });
   return pending;
+}
+
+// Title details are kept on disk after every successful load; when nothing
+// useful can be loaded (offline), the copy from the last visit is shown.
+async function loadDetailsOrSaved(anime: AnimeItem): Promise<AnimeDetails> {
+  const key = `details:${anime.id}`;
+  let fresh: AnimeDetails;
+  try {
+    fresh = await loadAnimeDetails(anime);
+  } catch (err) {
+    const saved = await readPersistedJson<AnimeDetails>(key);
+    if (saved) return saved.value;
+    throw err;
+  }
+  const hasContent = !!fresh.description || fresh.collection.length > 0 || fresh.suggestions.length > 0 || fresh.genres.length > 0;
+  if (hasContent) {
+    writePersistedJson(key, fresh);
+    return fresh;
+  }
+  const saved = await readPersistedJson<AnimeDetails>(key);
+  return saved ? saved.value : fresh;
 }
 
 async function loadSiteDetailPage(anime: AnimeItem): Promise<ParsedDetailPage> {

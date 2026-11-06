@@ -95,6 +95,8 @@ export interface ExoPlayerPluginInterface {
     subtitlesEnabled?: boolean;
     defaultQuality?: string;
     aspectRatio?: 'fit' | 'crop' | 'fill';
+    // The stream is a download: read it from the offline store.
+    offline?: boolean;
   }): Promise<{ success: boolean }>;
 
   // Same options as play(), for the episode after `afterEpisode`: the

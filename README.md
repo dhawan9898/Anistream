@@ -1,6 +1,6 @@
 # AniStream — Android Anime Streaming App (powered by `ani-cli`)
 
-[![Version](https://img.shields.io/badge/Version-v10.0-E50914?style=for-the-badge&logo=android)](https://github.com/dhawan9898/Anistream/releases)
+[![Version](https://img.shields.io/badge/Version-v10.1-E50914?style=for-the-badge&logo=android)](https://github.com/dhawan9898/Anistream/releases)
 [![Android](https://img.shields.io/badge/Android-8.0%2B-green?style=for-the-badge&logo=android)](https://github.com/dhawan9898/Anistream/releases)
 [![License](https://img.shields.io/badge/License-GPLv3-blue?style=for-the-badge)](https://www.gnu.org/licenses/gpl-3.0)
 
@@ -30,8 +30,8 @@ steps as [`ani-cli`](https://github.com/pystardust/ani-cli).
 
 ## 1. Install the APK
 
-1. Open the **[Releases page](https://github.com/dhawan9898/Anistream/releases)** and pick the latest release (**v10.0**).
-2. Under **Assets**, download **`AniStream-v10.0.apk`**.
+1. Open the **[Releases page](https://github.com/dhawan9898/Anistream/releases)** and pick the latest release (**v10.1** or newer; every push to `main` publishes the next `v10.x`).
+2. Under **Assets**, download **`AniStream-v<version>.apk`**.
 3. Open the file on your phone. If Android asks, enable **Install unknown apps** for your browser or file manager.
 4. Tap **Install**. If you already have AniStream, the new version installs over it and keeps your history and My List, because every release is signed with the same key.
 
@@ -159,6 +159,13 @@ Use the browser's device toolbar (Ctrl+Shift+M in Chrome) to preview phone and t
 
 | Trigger | Result |
 |---------|--------|
+| Push to `main` / `master` (not Markdown-only) | Builds the APK and publishes it as the **next version**: the tag is `v<major>.<next minor>` after the highest existing tag (v10.1, then v10.2, v10.3, ...), never below the base version in `package.json`. The release has the APK attached and auto-generated notes (commits since the previous release). The APK and R8 mapping are also kept as workflow artifacts. |
+| Push a tag `v*` (e.g. `git tag v11.0 && git push origin v11.0`) | Builds that exact version and releases it under the tag. Use this to start a new major. |
+| **Actions ▸ Build AniStream APK ▸ Run workflow** | Builds any branch. Fill in `release_tag` (e.g. `v10.5`) to also publish a release (an existing release with that tag is replaced so the tag points at the built commit). Leave it empty to only build. |
+
+CI stamps the version into the build workspace with `scripts/set-version.mjs`; it never commits. So `package.json` / `build.gradle` hold the **base** version (currently 10.1) and local builds use it. Runs of the same branch are serialized so two quick pushes get consecutive numbers. `versionCode` is `major * 100 + minor`, so a major has room for minors 0-99 (the script refuses 100+).
+
+---------|--------|
 | Push to `main` / `master` | APK uploaded as a workflow artifact (`AniStream-v9.2-APK`, kept 30 days), plus the R8 mapping (`AniStream-v9.2-mapping`) |
 | Push a tag `v*` (e.g. `git tag v9.2 && git push origin v9.2`) | Artifact plus a GitHub Release under that tag with the APK attached |
 | **Actions ▸ Build AniStream v9.2 APK ▸ Run workflow** | Builds any branch. Fill in `release_tag` (e.g. `v9.2`) to also publish a release. If that release already exists, it and its tag are replaced so the tag points at the built commit. Leave it empty to only build. |
@@ -219,6 +226,16 @@ Network requests to the site go through a small in-memory cache (5 min for pages
 ---
 
 ## 10. What's new
+
+### v10.1
+
+- **Picture-in-Picture**: a PiP button in the native player (and automatic PiP when you leave the app while playing) keeps the video in a small window with a play/pause control.
+- **Downloads**: download episodes from the title page and watch them offline from **Library > Downloads** (Android app). Download quality is set in Settings.
+- **Offline browsing**: pages, episode lists and title details you have viewed are cached in IndexedDB and open without a connection.
+- **Haptics**: gentler vibration, with an on/off switch and Low / Medium / High intensity in Settings.
+- **Smoother tile-to-title transition** and a fix for the square card that stayed behind a tapped poster.
+- **Light theme**: the Categories overlay is readable.
+- **CI**: every push to `main` builds and publishes the next `v10.x` release.
 
 ### v10.0
 

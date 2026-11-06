@@ -1,16 +1,28 @@
-name: Build AniStream v10.0 APK
+name: Build AniStream APK
 
+# Every push to main builds a signed release APK and publishes it as the next
+# v<major>.<minor> release (v10.1, v10.2, ...). The base version lives in
+# package.json / build.gradle; CI never commits, it stamps the number into
+# the build workspace only (see the "Work out the version" step).
 on:
   push:
     branches: [ main, master ]
+    paths-ignore:
+      - '**.md'
     tags:
       - 'v*'
   workflow_dispatch:
     inputs:
       release_tag:
-        description: 'Tag to publish this build under (e.g. v10.0) - leave empty to just build, no release'
+        description: 'Tag to publish this build under (e.g. v10.5) - leave empty to just build, no release'
         required: false
         default: ''
+
+# Builds of the same ref run one after another, so each sees the tag the
+# previous one created and the numbers never collide.
+concurrency:
+  group: build-apk-${{ github.ref }}
+  cancel-in-progress: false
 
 permissions:
   contents: write
@@ -23,6 +35,9 @@ jobs:
     steps:
       - name: Checkout Source Code
         uses: actions/checkout@v4
+        with:
+          # Full history + tags: the next version is derived from existing tags.
+          fetch-depth: 0
 
       - name: Setup Node.js 22
         uses: actions/setup-node@v4
@@ -48,6 +63,55 @@ jobs:
 
       - name: Install Dependencies
         run: npm ci
+
+      # Which version this build is, and whether it gets published:
+      #   - push of a tag vX.Y            -> that version, released under the tag
+      #   - manual run with release_tag   -> that version, released under the tag
+      #   - push to main                  -> next free minor after the highest
+      #                                      existing vMAJOR.* tag (never below
+      #                                      the base version in package.json),
+      #                                      released as that new tag
+      #   - manual run, no release_tag    -> build only (version as for main)
+      - name: Work out the version
+        id: version
+        env:
+          EVENT: ${{ github.event_name }}
+          REF: ${{ github.ref }}
+          REF_NAME: ${{ github.ref_name }}
+          INPUT_TAG: ${{ inputs.release_tag }}
+        run: |
+          set -euo pipefail
+          BASE=$(node -p "require('./package.json').version.split('.').slice(0, 2).join('.')")
+          MAJOR=${BASE%%.*}
+          BASE_MINOR=${BASE##*.}
+
+          TAG=""
+          RELEASE=false
+          if [[ "$REF" == refs/tags/* ]]; then
+            TAG="$REF_NAME"; RELEASE=true
+          elif [[ "$EVENT" == "workflow_dispatch" && -n "$INPUT_TAG" ]]; then
+            TAG="$INPUT_TAG"; RELEASE=true
+          fi
+
+          if [[ -n "$TAG" ]]; then
+            VERSION="${TAG#v}"
+            [[ "$VERSION" =~ ^[0-9]+\.[0-9]+$ ]] || { echo "::error::Tag '$TAG' must look like v10.4"; exit 1; }
+          else
+            LAST=$(git tag -l "v${MAJOR}.*" | sed -nE "s/^v${MAJOR}\.([0-9]+)$/\1/p" | sort -n | tail -1)
+            NEXT=$(( ${LAST:--1} + 1 ))
+            (( NEXT < BASE_MINOR )) && NEXT=$BASE_MINOR
+            VERSION="${MAJOR}.${NEXT}"
+            TAG="v${VERSION}"
+            [[ "$EVENT" == "push" ]] && RELEASE=true
+          fi
+
+          node scripts/set-version.mjs "$VERSION"
+          {
+            echo "version=$VERSION"
+            echo "tag=$TAG"
+            echo "release=$RELEASE"
+          } >> "$GITHUB_OUTPUT"
+          echo "Building AniStream $VERSION (tag $TAG, release=$RELEASE)"
 
       - name: Check Version
         run: npm run check-version
@@ -79,28 +143,29 @@ jobs:
       - name: Package APK for Release
         run: |
           mkdir -p build-output
-          cp android/app/build/outputs/apk/release/app-release.apk build-output/AniStream-v10.0.apk
-          ls -lh build-output/AniStream-v10.0.apk
+          cp android/app/build/outputs/apk/release/app-release.apk "build-output/AniStream-v${{ steps.version.outputs.version }}.apk"
+          ls -lh build-output
 
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: AniStream-v10.0-APK
-          path: build-output/AniStream-v10.0.apk
+          name: AniStream-v${{ steps.version.outputs.version }}-APK
+          path: build-output/AniStream-v${{ steps.version.outputs.version }}.apk
           retention-days: 30
 
       # R8 mapping - needed to de-obfuscate stack traces from this build.
       - name: Upload R8 Mapping
         uses: actions/upload-artifact@v4
         with:
-          name: AniStream-v10.0-mapping
+          name: AniStream-v${{ steps.version.outputs.version }}-mapping
           path: android/app/build/outputs/mapping/release/mapping.txt
           retention-days: 90
           if-no-files-found: warn
 
-      # A manual run republishing an existing tag (e.g. rebuilding v10.0)
+      # A manual run republishing an existing tag (e.g. rebuilding v10.4)
       # replaces that release and its tag, so the tag always points at the
-      # commit this APK was built from. Tag pushes are never touched.
+      # commit this APK was built from. Tag pushes and pushes to main never
+      # replace anything.
       - name: Replace Existing Release (manual runs only)
         if: github.event_name == 'workflow_dispatch' && inputs.release_tag != ''
         run: gh release delete "${{ inputs.release_tag }}" --cleanup-tag --yes || true
@@ -108,33 +173,22 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
 
+      # Tags created here with GITHUB_TOKEN do not start another workflow run,
+      # so publishing from a push to main cannot loop.
       - name: Create GitHub Release
-        # A real tag push (refs/tags/vX.Y) always releases under that tag. A
-        # manual run only releases when explicitly given a release_tag input
-        # - never under whatever branch happened to be dispatched, which
-        # used to create a bogus release/tag named after the branch itself.
-        if: startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch' && inputs.release_tag != '')
+        if: steps.version.outputs.release == 'true'
         uses: softprops/action-gh-release@v2
         with:
-          files: build-output/AniStream-v10.0.apk
-          tag_name: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || inputs.release_tag }}
+          files: build-output/AniStream-v${{ steps.version.outputs.version }}.apk
+          tag_name: ${{ steps.version.outputs.tag }}
           # Without this a new tag is created on the default branch, not on
           # the commit that was actually built.
           target_commitish: ${{ github.sha }}
-          name: AniStream ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || inputs.release_tag }} Release
+          name: AniStream ${{ steps.version.outputs.tag }}
+          make_latest: true
+          # Lists the commits / pull requests since the previous release.
+          generate_release_notes: true
           body: |
-            ## AniStream v10.0 - Android Anime Streaming App (Powered by ani-cli)
-
-            v10.0 is a playback stability release.
-
-            ### What's new in v10.0:
-
-            - **Fewer "HTTP 403" playback errors**: the player now sends the same Origin and Accept headers a browser does when fetching video segments, and an expired stream link is re-fetched again later in the same episode instead of only once.
-            - **Faster loading**: video servers are tried in parallel (the next one starts after 2.5 s or when one fails) and requests time out after 8 s instead of 10 s.
-            - **Next Episode button** has a fixed, compact size instead of stretching across the screen.
-            - Clearer error when the servers list can't be loaded.
-
-            ### Download:
-            Download **`AniStream-v10.0.apk`** below and install or update on any Android device running Android 8.0 or later. It updates previous versions in place and keeps your history and My List.
+            Android anime streaming app (powered by ani-cli). Download **`AniStream-v${{ steps.version.outputs.version }}.apk`** below and install it on Android 8.0 or later. It updates earlier versions in place and keeps your history and My List.
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

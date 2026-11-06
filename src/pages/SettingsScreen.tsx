@@ -2,7 +2,7 @@
 import React, { useEffect, useState } from 'react';
 import {
   PlayCircle, SkipForward, Rewind, Trash2,
-  Info, Terminal, Bookmark, Clock, Sun, Moon, Loader2
+  Info, Terminal, Bookmark, Clock, Sun, Moon, Loader2, Vibrate
 } from 'lucide-react';
 import {
   getUserPreferences, saveUserPreferences, clearWatchHistory,
@@ -17,7 +17,10 @@ import {
   hapticMedium,
   hapticSelection,
   hapticSuccess,
-  hapticWarning
+  hapticWarning,
+  getHapticSettings,
+  saveHapticSettings,
+  type HapticIntensity
 } from '../services/hapticsService';
 
 const QUALITIES = ['480p', '720p', '1080p', 'Auto'];
@@ -99,6 +102,7 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({ active, theme, o
   const [prefs, setPrefs] = useState<UserPreferences | null>(null);
   const [historyCount, setHistoryCount] = useState<number>(0);
   const [bookmarkCount, setBookmarkCount] = useState<number>(0);
+  const [haptics, setHaptics] = useState(getHapticSettings);
   const [clearing, setClearing] = useState<boolean>(false);
   const [confirmingClearHistory, setConfirmingClearHistory] = useState<boolean>(false);
   const [confirmingClearBookmarks, setConfirmingClearBookmarks] = useState<boolean>(false);
@@ -250,6 +254,55 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({ active, theme, o
             value={prefs.subtitlesEnabled !== false}
             onToggle={() => updatePrefs({ subtitlesEnabled: prefs.subtitlesEnabled === false })}
           />
+        </div>
+
+        {/* Downloads */}
+        <SectionLabel>Downloads</SectionLabel>
+        <div className="glass-panel animate-pop-in" style={{ borderRadius: 'var(--radius-lg)', overflow: 'hidden', marginBottom: '24px' }}>
+          <div style={{ padding: '16px' }}>
+            <h4 style={{ fontSize: '14px', fontWeight: 700, color: 'var(--text-primary)', marginBottom: '4px' }}>Download Quality</h4>
+            <p style={{ fontSize: '12px', color: 'var(--text-secondary)', marginBottom: '10px', lineHeight: 1.35 }}>
+              Highest video quality saved for offline viewing. Lower qualities use much less storage.
+            </p>
+            <div className="seg-track">
+              {(['1080', '720', '480'] as const).map(q => (
+                <button
+                  key={q}
+                  onClick={() => { hapticSelection(); updatePrefs({ downloadQuality: q }); }}
+                  className={`interactive seg-pill ${(prefs.downloadQuality || '720') === q ? 'active' : ''}`}
+                >
+                  {q}p
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        {/* Haptics */}
+        <SectionLabel>Haptic Feedback</SectionLabel>
+        <div className="glass-panel animate-pop-in" style={{ borderRadius: 'var(--radius-lg)', overflow: 'hidden', marginBottom: '24px' }}>
+          <ToggleRow
+            icon={<Vibrate size={20} />}
+            label="Vibration"
+            description="Short vibrations when you tap, switch or confirm something."
+            value={haptics.enabled}
+            onToggle={() => setHaptics(saveHapticSettings({ enabled: !haptics.enabled }))}
+          />
+          <div style={{ padding: '4px 16px 16px 16px', opacity: haptics.enabled ? 1 : 0.45 }}>
+            <h4 style={{ fontSize: '14px', fontWeight: 700, color: 'var(--text-primary)', marginBottom: '10px' }}>Intensity</h4>
+            <div className="seg-track">
+              {(['low', 'medium', 'high'] as HapticIntensity[]).map(level => (
+                <button
+                  key={level}
+                  disabled={!haptics.enabled}
+                  onClick={() => { setHaptics(saveHapticSettings({ intensity: level })); hapticMedium(); }}
+                  className={`interactive seg-pill ${haptics.intensity === level ? 'active' : ''}`}
+                >
+                  {level === 'low' ? 'Low' : level === 'medium' ? 'Medium' : 'High'}
+                </button>
+              ))}
+            </div>
+          </div>
         </div>
 
         {/* Data Section */}

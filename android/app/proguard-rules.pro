@@ -36,3 +36,7 @@
 }
 -dontwarn org.apache.cordova.**
 -keep class com.anicli.stream.KeepAliveWebView { *; }
+
+# Media3 downloads create their HLS downloader reflectively.
+-keep class androidx.media3.exoplayer.hls.offline.** { *; }
+-keep class androidx.media3.exoplayer.offline.** { *; }

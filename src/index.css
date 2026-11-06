@@ -122,6 +122,13 @@
   --shadow-dock: 0 20px 44px -4px rgba(15, 23, 42, 0.18), 0 4px 14px rgba(15, 23, 42, 0.08);
   --bg-dock: rgba(255, 255, 255, 0.88);
 
+  /* Categories overlay (streamkit CategoryPicker) */
+  --picker-scrim: rgba(242, 243, 247, 0.92);
+  --picker-active-bg: rgba(229, 9, 20, 0.1);
+  --picker-fade: linear-gradient(180deg, transparent 0%, rgba(242, 243, 247, 0.96) 50%);
+  --picker-close-bg: #0f172a;
+  --picker-close-fg: #ffffff;
+
   --radius-xs: 6px;
   --radius-sm: 10px;
   --radius-md: 16px;
@@ -174,6 +181,17 @@ body {
   animation: overlayOut 0.24s cubic-bezier(0.32, 0, 0.67, 0) both;
 }
 
+/* While a poster flies to the title page (SharedElementTransitionOverlay) the
+   page must stay put - only fade it in - so the flight's target is stable. */
+:root[data-shared-transition] .overlay:not(.leaving) {
+  animation: overlayFadeIn 0.32s ease-out both;
+}
+
+@keyframes overlayFadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
 @keyframes overlayIn {
   from {
     opacity: 0;
@@ -208,8 +226,12 @@ body {
   cursor: pointer;
 }
 
-.interactive:hover {
-  transform: translateY(-2px);
+/* Hover lift only where a real pointer can hover: on touch screens :hover
+   sticks after a tap and left tiles raised with a stray shadow. */
+@media (hover: hover) and (pointer: fine) {
+  .interactive:hover {
+    transform: translateY(-2px);
+  }
 }
 
 .interactive:active {
@@ -224,9 +246,21 @@ body {
   will-change: transform;
 }
 
-.card-bouncy:hover {
-  transform: translateY(-5px) scale(1.025);
-  box-shadow: var(--card-shadow-hover);
+@media (hover: hover) and (pointer: fine) {
+  .card-bouncy:hover {
+    transform: translateY(-5px) scale(1.025);
+    box-shadow: var(--card-shadow-hover);
+  }
+}
+
+/* Poster tiles: the rounded poster inside carries the shadow. The wrapper is
+   a plain rectangle, so a shadow on it showed as a square card behind the
+   poster's rounded corners. */
+.poster-card,
+.poster-card:hover,
+.poster-card:active {
+  box-shadow: none;
+  background: transparent;
 }
 
 .card-bouncy:active {

@@ -79,6 +79,7 @@ public class ExoPlayerPlugin extends Plugin {
         String defaultQuality = call.getString("defaultQuality", "Auto");
         String aspectRatio = call.getString("aspectRatio", "fit");
         String spriteVtt = call.getString("spriteVtt");
+        boolean offline = call.getBoolean("offline", false);
 
         Intent intent = new Intent(getContext(), ExoPlayerActivity.class);
         intent.putExtra("url", url);
@@ -90,6 +91,7 @@ public class ExoPlayerPlugin extends Plugin {
         intent.putExtra("qualities", qualities != null ? qualities.toString() : null);
         intent.putExtra("episodes", episodes != null ? episodes.toString() : null);
         intent.putExtra("isFallback", isFallback);
+        intent.putExtra("offline", offline);
         intent.putExtra("autoSkipIntro", autoSkipIntro);
         intent.putExtra("autoPlayNext", autoPlayNext);
         intent.putExtra("hasDub", hasDub);

@@ -17,6 +17,9 @@ import {
 } from '../services/historyService';
 import { getAnimeDetails, hasDub, resolveAnime, type AnimeDetails } from '../providers/catalogService';
 import { PosterCard } from '../components/PosterCard';
+import { DownloadButton } from '../components/DownloadButton';
+import { downloadsSupported, downloadId, startDownload, removeDownload } from '../services/downloadService';
+import { useDownloads } from '../services/useDownloads';
 import { hapticLight, hapticMedium, hapticSuccess, hapticSelection } from '../services/hapticsService';
 
 interface AnimeDetailScreenProps {
@@ -52,6 +55,8 @@ export const AnimeDetailScreen: React.FC<AnimeDetailScreenProps> = ({
   const [tab, setTab] = useState<DetailTab>('episodes');
   const [history, setHistory] = useState<WatchHistoryItem | null>(null);
   const [expanded, setExpanded] = useState<boolean>(false);
+  const downloads = useDownloads();
+  const canDownload = downloadsSupported();
   // Whether an English dub exists: undefined until known (the option stays
   // visible meanwhile), false hides it everywhere.
   const [dubAvailable, setDubAvailable] = useState<boolean | undefined>(
@@ -480,9 +485,10 @@ export const AnimeDetailScreen: React.FC<AnimeDetailScreenProps> = ({
                   const pct = entry && entry.duration > 0
                     ? Math.min(100, Math.round((entry.currentTime / entry.duration) * 100))
                     : 0;
+                  const dl = downloads.find(d => d.id === downloadId(shown.id, ep.id, playMode));
                   return (
+                    <div key={ep.id} style={{ position: 'relative', display: 'flex' }}>
                     <button
-                      key={ep.id}
                       onClick={() => {
                         if (!playAnime) return;
                         hapticMedium();
@@ -505,6 +511,7 @@ export const AnimeDetailScreen: React.FC<AnimeDetailScreenProps> = ({
                       }}
                       className="interactive card-bouncy glass-panel"
                       style={{
+                        flex: 1,
                         padding: '14px 8px',
                         borderRadius: 'var(--radius-sm)',
                         display: 'flex',
@@ -534,6 +541,14 @@ export const AnimeDetailScreen: React.FC<AnimeDetailScreenProps> = ({
                         <span style={{ position: 'absolute', left: 0, bottom: 0, height: '3px', width: `${pct}%`, background: '#e50914' }} />
                       )}
                     </button>
+                    {canDownload && playAnime && (
+                      <DownloadButton
+                        record={dl}
+                        onStart={() => { hapticSelection(); startDownload(playAnime, ep, playMode).catch(err => console.warn('[downloads] start failed:', err)); }}
+                        onRemove={() => { hapticLight(); void removeDownload(downloadId(shown.id, ep.id, playMode)); }}
+                      />
+                    )}
+                    </div>
                   );
                 })}
               </div>

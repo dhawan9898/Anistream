@@ -1,6 +1,17 @@
-// SharedElementTransitionOverlay.tsx - Fluid Apple-style shared element proxy
-// that animates seamlessly between the clicked poster card and the anime detail view.
-import React, { useEffect, useState, useRef } from 'react';
+// SharedElementTransitionOverlay.tsx - Flies the tapped poster from its card to
+// its place on the title page.
+//
+// Why it is built this way (the earlier version looked glitchy):
+//  - The proxy is laid out ONCE at the destination and moved there with a
+//    compositor-only transform (translate + scale), never by animating
+//    top/left/width/height, which re-lays-out every frame.
+//  - The destination is measured only once the title page has mounted (it is
+//    lazy-loaded) and its position has stopped changing. While this runs the
+//    page only fades in (see `data-shared-transition` in index.css) instead of
+//    sliding and scaling, so the target is not moving underneath the proxy.
+//  - The proxy is removed with no fade at the end, exactly on top of the page's
+//    own poster, so there is no cross-fade "pop".
+import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import {
   subscribeSharedTransition,
   finishSharedTransition,
@@ -8,135 +19,142 @@ import {
   type CardRect
 } from '../services/sharedTransitionService';
 
+const FLIGHT_MS = 380;
+const FLIGHT_EASING = 'cubic-bezier(0.32, 0.72, 0, 1)';
+// Give up waiting for the (lazy) title page after this long.
+const TARGET_TIMEOUT_MS = 900;
+
+// Stacked title pages each have a poster target; the newest is the last.
+function findTarget(): HTMLElement | null {
+  const all = document.querySelectorAll<HTMLElement>('#detail-poster-target');
+  return all.length ? all[all.length - 1] : null;
+}
+
+const toRect = (r: DOMRect): CardRect => ({ top: r.top, left: r.left, width: r.width, height: r.height });
+
 export const SharedElementTransitionOverlay: React.FC = () => {
-  const [transition, setTransition] = useState<SharedTransitionState>({
-    active: false,
-    anime: null,
-    originRect: null,
-    phase: 'idle'
-  });
+  const [transition, setTransition] = useState<SharedTransitionState | null>(null);
+  const proxyRef = useRef<HTMLDivElement | null>(null);
+  // Bumped per transition so a stale one never finishes a newer one.
+  const runRef = useRef(0);
 
-  const [currentStyle, setCurrentStyle] = useState<React.CSSProperties | null>(null);
-  const [visible, setVisible] = useState(false);
-  const animTimerRef = useRef<number | null>(null);
-
-  useEffect(() => {
-    return subscribeSharedTransition(next => {
+  useEffect(() => subscribeSharedTransition(next => {
+    if (next.active && next.phase === 'expanding' && next.originRect && next.anime) {
+      runRef.current += 1;
       setTransition(next);
-      if (next.active && next.phase === 'expanding' && next.originRect && next.anime) {
-        const { originRect } = next;
-        setVisible(true);
+    } else if (!next.active) {
+      setTransition(null);
+    }
+  }), []);
 
-        // Frame 0: Exact geometry of the source poster card
-        setCurrentStyle({
-          position: 'fixed',
-          top: `${originRect.top}px`,
-          left: `${originRect.left}px`,
-          width: `${originRect.width}px`,
-          height: `${originRect.height}px`,
-          borderRadius: 'var(--radius-md, 16px)',
-          boxShadow: '0 12px 30px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(255, 255, 255, 0.15)',
-          transform: 'translate3d(0, 0, 0) scale(1)',
-          transition: 'none',
-          zIndex: 9999,
-          pointerEvents: 'none',
-          overflow: 'hidden',
-          opacity: 1
-        });
+  useLayoutEffect(() => {
+    if (!transition || !transition.originRect) return;
+    const run = runRef.current;
+    const origin = transition.originRect;
+    const reduceMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+    let raf = 0;
+    let animation: Animation | null = null;
+    let cancelled = false;
+    const started = performance.now();
+    let lastKey = '';
+    let stableFrames = 0;
 
-        // Frame 1: Morph to destination poster in AnimeDetailScreen
-        const frame = requestAnimationFrame(() => {
-          requestAnimationFrame(() => {
-            // Check if destination element is already in DOM
-            const targetEl = document.getElementById('detail-poster-target');
-            let targetRect: CardRect;
+    const end = () => {
+      if (cancelled || run !== runRef.current) return;
+      setTransition(null);
+      finishSharedTransition();
+    };
 
-            if (targetEl) {
-              const rect = targetEl.getBoundingClientRect();
-              targetRect = {
-                top: rect.top,
-                left: rect.left,
-                width: rect.width || 108,
-                height: rect.height || 154
-              };
-            } else {
-              // Standard Apple detail header target coordinate
-              const safeTop = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--safe-top')) || 0;
-              targetRect = {
-                top: safeTop + 136,
-                left: 20,
-                width: 108,
-                height: 154
-              };
-            }
+    const fly = (target: HTMLElement) => {
+      const proxy = proxyRef.current;
+      if (!proxy) return end();
+      const t = toRect(target.getBoundingClientRect());
+      if (t.width < 1 || t.height < 1 || reduceMotion) return end();
 
-            setCurrentStyle({
-              position: 'fixed',
-              top: `${targetRect.top}px`,
-              left: `${targetRect.left}px`,
-              width: `${targetRect.width}px`,
-              height: `${targetRect.height}px`,
-              borderRadius: 'var(--radius-md, 16px)',
-              boxShadow: 'var(--card-shadow-hover), 0 20px 48px rgba(0, 0, 0, 0.75)',
-              border: '1px solid rgba(255, 255, 255, 0.22)',
-              transform: 'translate3d(0, 0, 0) scale(1)',
-              transition: 'all 0.36s cubic-bezier(0.32, 0.72, 0, 1)',
-              zIndex: 9999,
-              pointerEvents: 'none',
-              overflow: 'hidden',
-              opacity: 1
-            });
-          });
-        });
+      // Lay the proxy out at the destination, then play origin -> destination.
+      Object.assign(proxy.style, {
+        top: `${t.top}px`, left: `${t.left}px`, width: `${t.width}px`, height: `${t.height}px`
+      });
+      const dx = origin.left - t.left;
+      const dy = origin.top - t.top;
+      const sx = origin.width / t.width;
+      const sy = origin.height / t.height;
+      animation = proxy.animate(
+        [
+          { transform: `translate3d(${dx}px, ${dy}px, 0) scale(${sx}, ${sy})` },
+          { transform: 'translate3d(0, 0, 0) scale(1, 1)' }
+        ],
+        { duration: FLIGHT_MS, easing: FLIGHT_EASING, fill: 'both' }
+      );
+      animation.onfinish = () => {
+        // Hand over only once the page's own poster has painted, so the
+        // proxy never uncovers an empty slot.
+        const img = target.querySelector('img');
+        if (!img || img.complete) return end();
+        const done = () => end();
+        img.addEventListener('load', done, { once: true });
+        img.addEventListener('error', done, { once: true });
+        window.setTimeout(done, 500);
+      };
+    };
 
-        // Clean up and hand off to real detail screen poster
-        if (animTimerRef.current) window.clearTimeout(animTimerRef.current);
-        animTimerRef.current = window.setTimeout(() => {
-          // Subtle fade out as real poster takes over
-          setCurrentStyle(prev => prev ? { ...prev, opacity: 0, transition: 'opacity 0.12s ease' } : null);
-          window.setTimeout(() => {
-            setVisible(false);
-            finishSharedTransition();
-          }, 120);
-        }, 360);
-
-        return () => cancelAnimationFrame(frame);
-      } else if (!next.active) {
-        setVisible(false);
+    // Until the title page is mounted and has stopped moving, the proxy simply
+    // sits on the card (it reads as the card lifting).
+    const waitForTarget = () => {
+      if (cancelled) return;
+      const target = findTarget();
+      if (target) {
+        const r = target.getBoundingClientRect();
+        const key = `${Math.round(r.top)}|${Math.round(r.left)}|${Math.round(r.width)}|${Math.round(r.height)}`;
+        stableFrames = key === lastKey ? stableFrames + 1 : 0;
+        lastKey = key;
+        if (stableFrames >= 2) return fly(target);
       }
-    });
-  }, []);
+      if (performance.now() - started > TARGET_TIMEOUT_MS) return end();
+      raf = requestAnimationFrame(waitForTarget);
+    };
+    raf = requestAnimationFrame(waitForTarget);
 
-  if (!visible || !transition.anime || !currentStyle) {
-    return null;
-  }
+    return () => {
+      cancelled = true;
+      cancelAnimationFrame(raf);
+      animation?.cancel();
+    };
+  }, [transition]);
 
-  const { anime } = transition;
+  if (!transition || !transition.anime || !transition.originRect) return null;
+
+  const { anime, originRect } = transition;
   const imageSrc = anime.poster || anime.banner;
 
   return (
-    <div style={currentStyle} aria-hidden="true">
+    <div
+      ref={proxyRef}
+      aria-hidden="true"
+      style={{
+        position: 'fixed',
+        top: originRect.top,
+        left: originRect.left,
+        width: originRect.width,
+        height: originRect.height,
+        transformOrigin: '0 0',
+        willChange: 'transform',
+        borderRadius: 'var(--radius-md, 16px)',
+        boxShadow: 'var(--card-shadow-hover)',
+        zIndex: 9999,
+        pointerEvents: 'none',
+        overflow: 'hidden',
+        backfaceVisibility: 'hidden'
+      }}
+    >
       {imageSrc && (
         <img
           src={imageSrc}
           alt=""
-          style={{
-            width: '100%',
-            height: '100%',
-            objectFit: 'cover',
-            display: 'block'
-          }}
+          draggable={false}
+          style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
         />
       )}
-      {/* Specular sheen during flight */}
-      <div
-        style={{
-          position: 'absolute',
-          inset: 0,
-          background: 'linear-gradient(180deg, rgba(255,255,255,0.18) 0%, transparent 40%, rgba(0,0,0,0.4) 100%)',
-          pointerEvents: 'none'
-        }}
-      />
     </div>
   );
 };

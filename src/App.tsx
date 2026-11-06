@@ -9,6 +9,7 @@ import { Home as HomeIcon, Search as SearchIcon, Library, Settings as SettingsIc
 import { Dock, type DockTab } from 'streamkit/ui/Dock.tsx';
 import { SharedElementTransitionOverlay } from './components/SharedElementTransitionOverlay';
 import { startSharedTransition } from './services/sharedTransitionService';
+import { completedEpisodes, findCompletedDownload, initDownloads, sourceFromDownload, type DownloadRecord } from './services/downloadService';
 import { hapticLight } from './services/hapticsService';
 import { saveSessionProgress, applyPreferredQuality, type PlaybackSession } from './services/playbackSession';
 import {
@@ -408,7 +409,8 @@ export const App: React.FC = () => {
     hasDub: anime.dubCount === undefined ? true : anime.dubCount > 0,
     subtitlesEnabled: prefs.subtitlesEnabled !== false,
     defaultQuality: prefs.defaultQuality,
-    aspectRatio: prefs.aspectRatio || 'fit'
+    aspectRatio: prefs.aspectRatio || 'fit',
+    offline: source.quality === 'Offline'
   });
 
   // The next episode's stream, resolved ahead of time and handed to the
@@ -476,7 +478,12 @@ export const App: React.FC = () => {
     // stream itself but awaited before use, so the very first episode
     // played for a given anime doesn't race a stale/empty list into the
     // native "Episodes" button.
-    const needsEpisodeList = loadedEpisodeListAnimeId.current !== anime.id;
+    // A downloaded copy plays offline, with no network round trip at all.
+    await initDownloads();
+    const found = options.fresh ? undefined : findCompletedDownload(anime.id, episode.id, mode);
+    const download = found && found.mode === mode ? found : undefined;
+
+    const needsEpisodeList = !download && loadedEpisodeListAnimeId.current !== anime.id;
     const episodeListPromise = needsEpisodeList
       // The list only powers next/episode picker - if it fails, still play
       // the episode that was asked for (and retry the list next time).
@@ -488,8 +495,8 @@ export const App: React.FC = () => {
 
     try {
       const [rawSource, resolvedEpisodeList, prefs] = await Promise.all([
-        resolveStream(anime, episode, mode, { fresh: options.fresh }),
-        episodeListPromise,
+        download ? Promise.resolve(sourceFromDownload(download)) : resolveStream(anime, episode, mode, { fresh: options.fresh }),
+        download ? Promise.resolve(completedEpisodes(anime.id, mode)) : episodeListPromise,
         getUserPreferences()
       ]);
       prefsRef.current = prefs;
@@ -515,7 +522,7 @@ export const App: React.FC = () => {
           await ExoPlayerPlugin.play(nativePlayOptions(anime, episode, mode, source, episodesForPlayer, startTime, prefs));
           // Resolve the following episode now and hand it to the player
           // (see prefetchNext).
-          if (!source.isFallback) prefetchNext(anime, episode, mode, episodesForPlayer, requestId);
+          if (!source.isFallback && !download) prefetchNext(anime, episode, mode, episodesForPlayer, requestId);
         } catch (e) {
           console.warn("[App] ExoPlayer plugin call failed:", e);
           // The native player is already open on its loading screen: report
@@ -562,6 +569,11 @@ export const App: React.FC = () => {
       item.mode,
       isEpisodeFinished(item) ? 0 : item.currentTime
     );
+  };
+
+  // Library > Downloads: play the saved copy (handlePlayEpisode finds it).
+  const handlePlayDownload = (rec: DownloadRecord) => {
+    handlePlayEpisode(rec.anime, rec.episode, rec.mode, 0);
   };
 
   // Progress handler bound to one committed session: the player captures it
@@ -743,6 +755,7 @@ export const App: React.FC = () => {
           <HistoryScreen
             active={currentTab === 'library' && !covered}
             onPlayHistoryItem={handlePlayFromHistory}
+            onPlayDownload={handlePlayDownload}
             onSelectAnime={pushAnime}
           />
         ))}

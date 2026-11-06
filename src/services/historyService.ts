@@ -22,6 +22,8 @@ export interface UserPreferences {
   autoPlayNext: boolean;
   subtitlesEnabled?: boolean;
   aspectRatio?: 'fit' | 'crop' | 'fill';
+  // Highest video height (px) fetched by Downloads.
+  downloadQuality?: '1080' | '720' | '480';
   // Bumped when a default changes, so old saved copies of it are reset once.
   prefsVersion?: number;
 }
@@ -51,6 +53,7 @@ export const DEFAULT_PREFERENCES: UserPreferences = {
   autoPlayNext: true,
   subtitlesEnabled: true,
   aspectRatio: 'fit',
+  downloadQuality: '720',
   prefsVersion: PREFS_VERSION
 };
 

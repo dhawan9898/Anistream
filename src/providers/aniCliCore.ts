@@ -2,7 +2,7 @@
 import { Capacitor } from '@capacitor/core';
 import { fetchTimed } from 'streamkit/core/http.ts';
 import { resolveHedged } from 'streamkit/providers/hedged.ts';
-import { MAX_STALE_MS, readPersisted, writePersisted } from '../services/persistentCache.ts';
+import { MAX_STALE_MS, isOffline, readPersisted, writePersisted } from '../services/persistentCache.ts';
 
 export interface AnimeItem {
   id: string;          // e.g. "solo-leveling-season-2-arise-from-the-shadow-19413"
@@ -200,8 +200,11 @@ async function loadPersisted(
   persist: boolean,
   load: () => Promise<string>
 ): Promise<string> {
-  const saved = persist ? readPersisted(key) : null;
+  const saved = persist ? await readPersisted(key) : null;
   if (saved && Date.now() - saved.savedAt < ttlMs) return saved.value;
+  // No connection: use the saved copy right away instead of waiting for the
+  // request to time out.
+  if (saved && isOffline() && Date.now() - saved.savedAt < MAX_STALE_MS) return saved.value;
   try {
     const fresh = await load();
     if (persist) writePersisted(key, fresh);

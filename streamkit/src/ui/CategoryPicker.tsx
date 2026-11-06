@@ -2,6 +2,8 @@
 // list, centered, optionally grouped into titled sections, with an optional
 // header (e.g. a Movies/TV filter) and a round close button pinned at the
 // bottom. Data-agnostic: each app supplies its own sections.
+// Colors come from --picker-* CSS variables (dark defaults), so a light theme
+// can re-skin the overlay instead of rendering dark text on a dark scrim.
 import React from 'react';
 import { createPortal } from 'react-dom';
 import { X } from 'lucide-react';
@@ -44,7 +46,7 @@ export const CategoryPicker: React.FC<CategoryPickerProps> = ({ open, sections, 
         position: 'fixed',
         inset: 0,
         zIndex: 9500,
-        backgroundColor: 'rgba(8, 8, 12, 0.82)',
+        backgroundColor: 'var(--picker-scrim, rgba(8, 8, 12, 0.82))',
         WebkitBackdropFilter: 'blur(28px) saturate(190%)',
         backdropFilter: 'blur(28px) saturate(190%)',
         display: 'flex',
@@ -75,7 +77,7 @@ export const CategoryPicker: React.FC<CategoryPickerProps> = ({ open, sections, 
                     cursor: 'pointer',
                     padding: '6px 16px',
                     borderRadius: 'var(--radius-pill)',
-                    backgroundColor: active ? 'rgba(255,255,255,0.08)' : 'transparent',
+                    backgroundColor: active ? 'var(--picker-active-bg, rgba(255,255,255,0.08))' : 'transparent',
                     transition: 'all 0.25s ease'
                   }}
                 >
@@ -86,7 +88,7 @@ export const CategoryPicker: React.FC<CategoryPickerProps> = ({ open, sections, 
           </section>
         ))}
       </div>
-      <div style={{ position: 'absolute', left: 0, right: 0, bottom: 0, padding: '24px 0 calc(var(--safe-bottom) + 28px) 0', display: 'flex', justifyContent: 'center', background: 'linear-gradient(180deg, transparent 0%, rgba(0,0,0,0.92) 50%)' }}>
+      <div style={{ position: 'absolute', left: 0, right: 0, bottom: 0, padding: '24px 0 calc(var(--safe-bottom) + 28px) 0', display: 'flex', justifyContent: 'center', background: 'var(--picker-fade, linear-gradient(180deg, transparent 0%, rgba(0,0,0,0.92) 50%))' }}>
         <button
           onClick={onClose}
           aria-label="Close categories"
@@ -96,8 +98,8 @@ export const CategoryPicker: React.FC<CategoryPickerProps> = ({ open, sections, 
             height: '56px',
             borderRadius: '50%',
             border: 'none',
-            backgroundColor: '#fff',
-            color: '#000',
+            backgroundColor: 'var(--picker-close-bg, #fff)',
+            color: 'var(--picker-close-fg, #000)',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',

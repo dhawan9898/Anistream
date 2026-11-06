@@ -1,6 +1,6 @@
 // HistoryScreen.tsx - User watch history, bookmarks, and preferences
 import React, { useState, useEffect } from 'react';
-import { Clock, Bookmark, Trash2, Play, Loader2, X } from 'lucide-react';
+import { Clock, Bookmark, Trash2, Play, Loader2, X, Download } from 'lucide-react';
 import {
   getWatchHistory, clearWatchHistory, removeWatchHistoryItem, getBookmarks,
   isEpisodeFinished, subscribeLibraryChanges, type WatchHistoryItem
@@ -8,6 +8,9 @@ import {
 import type { AnimeItem } from '../providers/aniCliCore';
 import { ConfirmModal } from 'streamkit/ui/ConfirmModal.tsx';
 import { FadeImage } from 'streamkit/ui/FadeImage.tsx';
+import { DownloadsList } from '../components/DownloadsList';
+import { useDownloads } from '../services/useDownloads';
+import type { DownloadRecord } from '../services/downloadService';
 import { hapticLight, hapticMedium, hapticWarning, hapticSuccess } from '../services/hapticsService';
 
 interface HistoryScreenProps {
@@ -16,14 +19,19 @@ interface HistoryScreenProps {
   // Plays that episode, continuing from where it was left.
   onPlayHistoryItem: (history: WatchHistoryItem) => void;
   onSelectAnime: (anime: AnimeItem) => void;
+  // Plays a downloaded episode (offline).
+  onPlayDownload: (record: DownloadRecord) => void;
 }
 
 export const HistoryScreen: React.FC<HistoryScreenProps> = ({
   active,
   onPlayHistoryItem,
-  onSelectAnime
+  onSelectAnime,
+  onPlayDownload
 }) => {
-  const [activeTab, setActiveTab] = useState<'history' | 'bookmarks'>('history');
+  const downloads = useDownloads();
+  const downloadedCount = downloads.filter(d => d.state === 'completed').length;
+  const [activeTab, setActiveTab] = useState<'history' | 'bookmarks' | 'downloads'>('history');
   const [historyList, setHistoryList] = useState<WatchHistoryItem[]>([]);
   const [bookmarkedAnime, setBookmarkedAnime] = useState<AnimeItem[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
@@ -137,12 +145,21 @@ export const HistoryScreen: React.FC<HistoryScreenProps> = ({
             <Bookmark size={16} />
             <span>My List ({bookmarkedAnime.length})</span>
           </button>
+          <button
+            onClick={() => { hapticLight(); setActiveTab('downloads'); }}
+            className={`interactive seg-pill ${activeTab === 'downloads' ? 'active' : ''}`}
+          >
+            <Download size={16} />
+            <span>Downloads ({downloadedCount})</span>
+          </button>
         </div>
       </div>
 
       {/* Content */}
       <div style={{ padding: '12px 20px' }}>
-        {loading ? (
+        {activeTab === 'downloads' ? (
+          <DownloadsList onPlay={onPlayDownload} />
+        ) : loading ? (
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '60px 0', gap: '10px', color: 'var(--text-secondary)' }}>
             <Loader2 size={24} className="animate-spin" />
           </div>

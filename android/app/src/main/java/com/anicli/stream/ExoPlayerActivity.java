@@ -100,6 +100,7 @@ public class ExoPlayerActivity extends AppCompatActivity {
     private View btnAudioSubs;
     private View btnNextEp;
     private TextView btnAspectRatio;
+    private TextView btnPip;
     private TextView btnQuality;
     private int aspectRatioMode = 0; // 0 = Fit, 1 = Crop, 2 = Fill
     private static final String[] ASPECT_RATIO_LABELS = new String[]{"Fit", "Crop", "Fill"};
@@ -328,6 +329,9 @@ public class ExoPlayerActivity extends AppCompatActivity {
     // playing audio there (onStop paused the player on purpose).
     private boolean activityStopped = false;
 
+    // True while the current episode is a download (see MediaDownloads).
+    private boolean offlinePlayback = false;
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -400,6 +404,8 @@ public class ExoPlayerActivity extends AppCompatActivity {
         String qualitiesJson = intent.getStringExtra("qualities");
         String episodesJson = intent.getStringExtra("episodes");
         boolean isFallback = intent.getBooleanExtra("isFallback", false);
+        // Playing a downloaded episode: read it from the offline store.
+        offlinePlayback = intent.getBooleanExtra("offline", false);
         if (intent.hasExtra("hasDub")) hasDub = intent.getBooleanExtra("hasDub", true);
         if (intent.hasExtra("autoSkipIntro")) autoSkipIntro = intent.getBooleanExtra("autoSkipIntro", false);
         if (intent.hasExtra("autoPlayNext")) autoPlayNext = intent.getBooleanExtra("autoPlayNext", true);
@@ -704,6 +710,7 @@ public class ExoPlayerActivity extends AppCompatActivity {
         btnAudioSubs = findViewById(R.id.btn_audio_subs);
         btnNextEp = findViewById(R.id.btn_next_ep);
         btnAspectRatio = findViewById(R.id.btn_aspect_ratio);
+        btnPip = findViewById(R.id.btn_pip);
         btnQuality = findViewById(R.id.btn_quality);
         btnSkipIntro = findViewById(R.id.btn_skip_intro);
         btnSkipOutro = findViewById(R.id.btn_skip_outro);
@@ -736,7 +743,7 @@ public class ExoPlayerActivity extends AppCompatActivity {
     private void styleGlassChrome() {
         float density = getResources().getDisplayMetrics().density;
 
-        for (TextView btn : new TextView[]{btnSkipIntro, btnSkipOutro, btnWatchCredits, btnAspectRatio, btnQuality}) {
+        for (TextView btn : new TextView[]{btnSkipIntro, btnSkipOutro, btnWatchCredits, btnPip, btnAspectRatio, btnQuality}) {
             if (btn == null) continue;
             GradientDrawable bg = new GradientDrawable();
             bg.setCornerRadius(4f * density);
@@ -860,6 +867,10 @@ public class ExoPlayerActivity extends AppCompatActivity {
         btnNextEp.setOnClickListener(v -> triggerNextEpisode());
         btnRetry.setOnClickListener(v -> retryPlayback());
         if (btnAspectRatio != null) btnAspectRatio.setOnClickListener(v -> toggleAspectRatio());
+        if (btnPip != null) {
+            btnPip.setVisibility(pipSupported() ? View.VISIBLE : View.GONE);
+            btnPip.setOnClickListener(v -> enterPip());
+        }
         if (btnQuality != null) btnQuality.setOnClickListener(this::showQualityMenu);
 
         seekBar.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
@@ -1880,7 +1891,10 @@ public class ExoPlayerActivity extends AppCompatActivity {
         }
 
         MediaItem mediaItem = buildMediaItem(videoUrl, subtitleConfigs);
-        DefaultMediaSourceFactory mediaSourceFactory = new DefaultMediaSourceFactory(dataSourceFactory)
+        androidx.media3.datasource.DataSource.Factory sourceFactory = offlinePlayback
+                ? MediaDownloads.get(this).cacheDataSourceFactory(dataSourceFactory)
+                : dataSourceFactory;
+        DefaultMediaSourceFactory mediaSourceFactory = new DefaultMediaSourceFactory(sourceFactory)
                 .setLoadErrorHandlingPolicy(new DefaultLoadErrorHandlingPolicy(LOAD_RETRY_COUNT));
 
         // Bigger read-ahead buffer than ExoPlayer's defaults - fewer visible
@@ -1915,8 +1929,14 @@ public class ExoPlayerActivity extends AppCompatActivity {
             @Override
             public void onIsPlayingChanged(boolean isPlaying) {
                 updateKeepScreenOn();
+                updatePipParams();
                 btnPlayPause.setImageResource(isPlaying ? R.drawable.ic_pause : R.drawable.ic_play);
                 if (isPlaying) scheduleAutoHide(); else handler.removeCallbacks(hideControlsRunnable);
+            }
+
+            @Override
+            public void onVideoSizeChanged(androidx.media3.common.VideoSize size) {
+                updatePipParams();
             }
 
             @Override
@@ -2415,6 +2435,112 @@ public class ExoPlayerActivity extends AppCompatActivity {
         }
     }
 
+    // ---- Picture-in-Picture -------------------------------------------------
+
+    private static final String ACTION_PIP_TOGGLE = "com.anicli.stream.PIP_TOGGLE";
+    private android.content.BroadcastReceiver pipReceiver;
+
+    private boolean pipSupported() {
+        return android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O
+                && getPackageManager().hasSystemFeature(android.content.pm.PackageManager.FEATURE_PICTURE_IN_PICTURE);
+    }
+
+    private boolean inPip() {
+        return android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.N && isInPictureInPictureMode();
+    }
+
+    private android.app.PictureInPictureParams buildPipParams() {
+        int w = 16, h = 9;
+        if (player != null) {
+            androidx.media3.common.VideoSize vs = player.getVideoSize();
+            if (vs.width > 0 && vs.height > 0) { w = vs.width; h = vs.height; }
+        }
+        // The system rejects ratios outside 1:2.39 .. 2.39:1.
+        double ratio = (double) w / h;
+        if (ratio > 2.39) { w = 239; h = 100; } else if (ratio < 1 / 2.39) { w = 100; h = 239; }
+
+        boolean playing = player != null && player.getPlayWhenReady();
+        java.util.ArrayList<android.app.RemoteAction> actions = new java.util.ArrayList<>();
+        android.app.PendingIntent pi = android.app.PendingIntent.getBroadcast(this, 0,
+                new Intent(ACTION_PIP_TOGGLE).setPackage(getPackageName()),
+                android.app.PendingIntent.FLAG_UPDATE_CURRENT | android.app.PendingIntent.FLAG_IMMUTABLE);
+        actions.add(new android.app.RemoteAction(
+                android.graphics.drawable.Icon.createWithResource(this, playing ? R.drawable.ic_pause : R.drawable.ic_play),
+                playing ? "Pause" : "Play", playing ? "Pause" : "Play", pi));
+
+        android.app.PictureInPictureParams.Builder b = new android.app.PictureInPictureParams.Builder()
+                .setAspectRatio(new android.util.Rational(w, h))
+                .setActions(actions);
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
+            // Swiping home while a video plays shrinks it to PiP automatically.
+            b.setAutoEnterEnabled(playing && !screenLocked);
+            b.setSeamlessResizeEnabled(true);
+        }
+        return b.build();
+    }
+
+    private void updatePipParams() {
+        if (!pipSupported()) return;
+        try {
+            setPictureInPictureParams(buildPipParams());
+        } catch (IllegalStateException | IllegalArgumentException e) {
+            Log.w("ExoPlayerActivity", "PiP params rejected", e);
+        }
+    }
+
+    private void enterPip() {
+        if (!pipSupported() || player == null) return;
+        try {
+            enterPictureInPictureMode(buildPipParams());
+        } catch (IllegalStateException | IllegalArgumentException e) {
+            Log.w("ExoPlayerActivity", "enter PiP failed", e);
+        }
+    }
+
+    @Override
+    protected void onUserLeaveHint() {
+        super.onUserLeaveHint();
+        // Android 12+ enters PiP by itself (setAutoEnterEnabled); older
+        // versions need it requested here while a video is playing.
+        if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.S
+                && player != null && player.getPlayWhenReady() && !screenLocked && !awaitingStream) {
+            enterPip();
+        }
+    }
+
+    @Override
+    public void onPictureInPictureModeChanged(boolean isInPip, android.content.res.Configuration newConfig) {
+        super.onPictureInPictureModeChanged(isInPip, newConfig);
+        if (isInPip) {
+            // A tiny window has no room for chrome: hide every overlay.
+            handler.removeCallbacks(hideControlsRunnable);
+            controlsRoot.setVisibility(View.INVISIBLE);
+            chromeVisible = false;
+            postPlayContainer.setVisibility(View.GONE);
+            unlockContainer.setVisibility(View.GONE);
+            pipReceiver = new android.content.BroadcastReceiver() {
+                @Override
+                public void onReceive(Context context, Intent intent) {
+                    if (player == null) return;
+                    player.setPlayWhenReady(!player.getPlayWhenReady());
+                    updatePipParams();
+                }
+            };
+            android.content.IntentFilter f = new android.content.IntentFilter(ACTION_PIP_TOGGLE);
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+                registerReceiver(pipReceiver, f, Context.RECEIVER_NOT_EXPORTED);
+            } else {
+                registerReceiver(pipReceiver, f);
+            }
+        } else {
+            if (pipReceiver != null) {
+                try { unregisterReceiver(pipReceiver); } catch (IllegalArgumentException ignored) { }
+                pipReceiver = null;
+            }
+            if (!activityStopped) setControlsVisible(true);
+        }
+    }
+
     @Override
     protected void onStart() {
         super.onStart();
@@ -2426,7 +2552,10 @@ public class ExoPlayerActivity extends AppCompatActivity {
         super.onStop();
         activityStopped = true;
         reportProgressNow();
-        if (player != null) {
+        // In Picture-in-Picture the window is still on screen: keep playing.
+        // (Closing the PiP window also stops the activity, but by then the
+        // system has already left PiP mode, so this pauses as before.)
+        if (player != null && !inPip()) {
             player.pause();
         }
     }
@@ -2437,6 +2566,10 @@ public class ExoPlayerActivity extends AppCompatActivity {
         if (isFinishing()) ExoPlayerPlugin.notifyPlayerClosed();
         if (currentActivity != null && currentActivity.get() == this) currentActivity = null;
         handler.removeCallbacksAndMessages(null);
+        if (pipReceiver != null) {
+            try { unregisterReceiver(pipReceiver); } catch (IllegalArgumentException ignored) { }
+            pipReceiver = null;
+        }
         resolveToken++;
         if (sprites != null) {
             sprites.release();

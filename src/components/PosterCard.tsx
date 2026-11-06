@@ -40,7 +40,7 @@ const PosterCardBase: React.FC<PosterCardProps> = ({ anime, onSelect, width, cap
       role="button"
       tabIndex={0}
       aria-label={caption && caption !== anime.title ? `${anime.title} - ${caption}` : anime.title}
-      className="interactive card-bouncy"
+      className="interactive card-bouncy poster-card"
       style={{
         flex: width ? `0 0 ${width}px` : undefined,
         width: width ? `${width}px` : '100%',
