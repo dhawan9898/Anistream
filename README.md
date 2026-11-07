@@ -227,6 +227,25 @@ Network requests to the site go through a small in-memory cache (5 min for pages
 
 ## 10. What's new
 
+### v10.4
+
+- **OLED and Slate themes**: AniStream now has Dark, OLED (pure black), Slate (navy with cyan accents) and Light, the same palettes as CineStream. Accent colours in the UI follow the theme.
+- **Transparent Glass** (Settings > Appearance): turns every backdrop blur off and makes the dock, popovers, search bar, buttons, tiles and badges see-through.
+
+### v10.3
+
+- **Expandable episode tiles**: tapping a tile opens its full description (one at a time); tapping the thumbnail plays.
+- **Seasons-only or episodes-only dropdown**: the picker lists either a franchise's seasons (TV entries only, no OVAs or movies) or the episode ranges of a single season.
+- **Seek-bar preview rework**: warmed-up preview player, one seek at a time, a frame cache and a fixed-size popup, also for downloaded episodes.
+
+### v10.2
+
+- **Netflix-style episode list**: each episode is a card with a thumbnail, title, description and download button; episode ranges are chosen from a dropdown.
+- **Per-episode thumbnails and synopses** from Kitsu, matched by exact title and cached for offline use.
+- **Seek-bar frame preview** instead of only a timestamp (native player).
+- **Resumable downloads**: they pause without a network and continue from what is saved; retrying reuses the saved link.
+- The title page no longer replays its slide-in when the poster flight ends.
+
 ### v10.1
 
 - **Picture-in-Picture**: a PiP button in the native player (and automatic PiP when you leave the app while playing) keeps the video in a small window with a play/pause control.

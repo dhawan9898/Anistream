@@ -173,6 +173,23 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
 
+      # Release notes: every commit since the previous release (a push can carry
+      # several), newest first, without the co-author trailers.
+      - name: Compose release notes
+        if: steps.version.outputs.release == 'true'
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          PREV=$(git tag --sort=-v:refname | grep -E '^v[0-9]+\.[0-9]+$' | grep -vx "$TAG" | head -1 || true)
+          {
+            echo "Android anime streaming app (powered by ani-cli). Download **AniStream-v${VERSION}.apk** below and install it on Android 8.0 or later. It updates earlier versions in place and keeps your history and My List."
+            echo
+            echo "## What's changed"
+            echo
+            git log --no-merges --format='### %s%n%n%b' "${PREV:+$PREV..}HEAD" | grep -v '^Co-Authored-By' | cat -s
+          } > release-notes.md
+
       # Tags created here with GITHUB_TOKEN do not start another workflow run,
       # so publishing from a push to main cannot loop.
       - name: Create GitHub Release
@@ -186,9 +203,6 @@ jobs:
           target_commitish: ${{ github.sha }}
           name: AniStream ${{ steps.version.outputs.tag }}
           make_latest: true
-          # Lists the commits / pull requests since the previous release.
-          generate_release_notes: true
-          body: |
-            Android anime streaming app (powered by ani-cli). Download **`AniStream-v${{ steps.version.outputs.version }}.apk`** below and install it on Android 8.0 or later. It updates earlier versions in place and keeps your history and My List.
+          body_path: release-notes.md
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
