@@ -673,7 +673,8 @@ body {
   backdrop-filter: none !important;
 }
 
-:root[data-glass="clear"] .glass-dock { background: var(--clear-fill); border-color: var(--clear-edge); }
+/* The dock sits over scrolling content, so it keeps a little more tint than the rest to keep its labels readable. */
+:root[data-glass="clear"] .glass-dock { background: var(--clear-fill-strong); border-color: var(--clear-edge); }
 :root[data-glass="clear"] .glass-nav { background: var(--clear-fill-strong); }
 :root[data-glass="clear"] .glass-panel { background: var(--clear-fill); border-color: var(--clear-edge-soft); }
 :root[data-glass="clear"] .glass-pill { background: var(--clear-fill); border-color: var(--clear-edge-soft); }
@@ -684,3 +685,7 @@ body {
 :root[data-glass="clear"] .apple-toast { background: var(--clear-dark-fill); }
 /* Badges and overlay chips that set their own dark fill + blur inline. */
 :root[data-glass="clear"] [style*="blur("] { background-color: var(--clear-dark-fill) !important; }
+/* Over see-through glass the inactive dock labels need the brighter text colour. */
+:root[data-glass="clear"] .dock-item:not(.active) { color: var(--text-secondary); }
+:root[data-glass="clear"] .dock-item span { text-shadow: 0 1px 3px rgba(0, 0, 0, 0.45); }
+:root[data-glass="clear"][data-theme="light"] .dock-item span { text-shadow: none; }
