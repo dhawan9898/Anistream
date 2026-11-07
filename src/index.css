@@ -684,8 +684,26 @@ body {
 :root[data-glass="clear"] .hero-dots,
 :root[data-glass="clear"] .apple-toast { background: var(--clear-dark-fill); }
 /* Badges and overlay chips that set their own dark fill + blur inline. */
-:root[data-glass="clear"] [style*="blur("] { background-color: var(--clear-dark-fill) !important; }
+:root[data-glass="clear"] [style*="blur("]:not([data-modal-root]):not([data-modal-root] *) { background-color: var(--clear-dark-fill) !important; }
 /* Over see-through glass the inactive dock labels need the brighter text colour. */
 :root[data-glass="clear"] .dock-item:not(.active) { color: var(--text-secondary); }
 :root[data-glass="clear"] .dock-item span { text-shadow: 0 1px 3px rgba(0, 0, 0, 0.45); }
 :root[data-glass="clear"][data-theme="light"] .dock-item span { text-shadow: none; }
+
+/* Overlays (season / category picker, confirm dialogs, trailer) keep a slight
+   blur behind them even with Transparent Glass on: the content underneath
+   stays visible but soft, so the list on top can be read. */
+:root[data-glass="clear"] {
+  --clear-modal-scrim: rgba(8, 8, 12, 0.58);
+}
+:root[data-glass="clear"][data-theme="light"] {
+  --clear-modal-scrim: rgba(242, 243, 247, 0.7);
+}
+:root[data-glass="clear"] [data-modal-root="true"],
+:root[data-glass="clear"] [data-modal-root="true"] [style*="blur("] {
+  -webkit-backdrop-filter: blur(16px) saturate(140%) !important;
+  backdrop-filter: blur(16px) saturate(140%) !important;
+}
+:root[data-glass="clear"] [data-modal-root="true"][aria-label="Categories"] {
+  background-color: var(--clear-modal-scrim) !important;
+}
