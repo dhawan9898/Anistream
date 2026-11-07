@@ -128,6 +128,7 @@
 
   /* Categories overlay (streamkit CategoryPicker) */
   --picker-scrim: rgba(242, 243, 247, 0.92);
+  --picker-card-scrim: rgba(226, 229, 238, 0.72);
   --picker-active-bg: rgba(229, 9, 20, 0.1);
   --picker-fade: linear-gradient(180deg, transparent 0%, rgba(242, 243, 247, 0.96) 50%);
   --picker-close-bg: #0f172a;

@@ -1,9 +1,10 @@
 // PosterCard.tsx - Apple TV-style fluid poster tile with squircle geometry,
 // liquid glass badges, and bouncy physics.
-import React, { memo, useRef } from 'react';
+import React, { memo, useEffect, useRef } from 'react';
 import type { AnimeItem } from '../providers/aniCliCore';
 import { FadeImage } from 'streamkit/ui/FadeImage.tsx';
 import { hapticMedium } from '../services/hapticsService';
+import { openPreview } from '../services/previewService';
 
 interface PosterCardProps {
   anime: AnimeItem;
@@ -17,10 +18,21 @@ interface PosterCardProps {
   badge?: string;
 }
 
+// Long press (finger held still) opens the title's details card.
+const LONG_PRESS_MS = 500;
+const MOVE_TOLERANCE_PX = 10;
+
 const PosterCardBase: React.FC<PosterCardProps> = ({ anime, onSelect, width, caption, highlighted, badge }) => {
   const posterRef = useRef<HTMLDivElement | null>(null);
+  const timer = useRef<number>(0);
+  const origin = useRef({ x: 0, y: 0 });
+  // Set when a long press fired so the click that follows the release is ignored.
+  const fired = useRef(false);
+  const cancel = () => { window.clearTimeout(timer.current); timer.current = 0; };
+  useEffect(() => cancel, []);
 
   const onClick = () => {
+    if (fired.current) { fired.current = false; return; }
     hapticMedium();
     const rect = posterRef.current?.getBoundingClientRect();
     onSelect?.(anime, rect);
@@ -31,10 +43,31 @@ const PosterCardBase: React.FC<PosterCardProps> = ({ anime, onSelect, width, cap
   return (
     <div
       onClick={onClick}
+      onPointerDown={e => {
+        fired.current = false;
+        origin.current = { x: e.clientX, y: e.clientY };
+        cancel();
+        timer.current = window.setTimeout(() => {
+          fired.current = true;
+          hapticMedium();
+          openPreview(anime);
+        }, LONG_PRESS_MS);
+      }}
+      onPointerMove={e => {
+        if (!timer.current) return;
+        if (Math.hypot(e.clientX - origin.current.x, e.clientY - origin.current.y) > MOVE_TOLERANCE_PX) cancel();
+      }}
+      onPointerUp={cancel}
+      onPointerCancel={cancel}
+      onPointerLeave={cancel}
+      onContextMenu={e => e.preventDefault()}
       onKeyDown={(e) => {
         if (e.key === 'Enter' || e.key === ' ') {
           e.preventDefault();
           onClick();
+        } else if (e.key === 'ContextMenu' || (e.key === 'F10' && e.shiftKey)) {
+          e.preventDefault();
+          openPreview(anime);
         }
       }}
       role="button"
@@ -48,7 +81,8 @@ const PosterCardBase: React.FC<PosterCardProps> = ({ anime, onSelect, width, cap
         flexDirection: 'column',
         gap: '8px',
         cursor: 'pointer',
-        userSelect: 'none'
+        userSelect: 'none',
+        WebkitTouchCallout: 'none'
       }}
     >
       <div

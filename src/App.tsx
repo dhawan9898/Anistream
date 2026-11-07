@@ -8,6 +8,7 @@ import { ConfirmModal } from 'streamkit/ui/ConfirmModal.tsx';
 import { Home as HomeIcon, Search as SearchIcon, Library, Settings as SettingsIcon } from 'lucide-react';
 import { Dock, type DockTab } from 'streamkit/ui/Dock.tsx';
 import { SharedElementTransitionOverlay } from './components/SharedElementTransitionOverlay';
+import { QuickPreview } from './components/QuickPreview';
 import { startSharedTransition } from './services/sharedTransitionService';
 import { completedEpisodes, findCompletedDownload, initDownloads, sourceFromDownload, type DownloadRecord } from './services/downloadService';
 import { hapticLight } from './services/hapticsService';
@@ -771,6 +772,7 @@ export const App: React.FC = () => {
 
         {renderOverlays()}
         <SharedElementTransitionOverlay />
+        <QuickPreview onOpenDetails={anime => pushAnime(anime)} />
       </div>
 
       {/* Stream loading: a slim, non-blocking bar at the top (the native

@@ -512,6 +512,8 @@ export const AnimeDetailScreen: React.FC<AnimeDetailScreenProps> = ({
 
             <CategoryPicker
               open={pickerOpen}
+              presentation="card"
+              title={seasonMode ? 'Seasons' : 'Episodes'}
               sections={pickerSections}
               selectedKey={pickerSelected}
               onSelect={key => {
