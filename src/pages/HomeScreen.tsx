@@ -284,8 +284,8 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
                     <div style={{
                       width: `${progressPct}%`,
                       height: '100%',
-                      background: 'linear-gradient(90deg, #ff3b45 0%, #e50914 100%)',
-                      boxShadow: '0 0 8px rgba(229, 9, 20, 0.5)'
+                      background: 'var(--accent-bar)',
+                      boxShadow: '0 0 8px var(--accent-shadow)'
                     }} />
                   </div>
 

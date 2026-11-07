@@ -2,14 +2,15 @@
 import React, { useEffect, useState } from 'react';
 import {
   PlayCircle, SkipForward, Rewind, Trash2,
-  Info, Terminal, Bookmark, Clock, Sun, Moon, Loader2, Vibrate
+  Info, Terminal, Bookmark, Clock, Loader2, Vibrate, Droplets
 } from 'lucide-react';
 import {
   getUserPreferences, saveUserPreferences, clearWatchHistory,
   getWatchHistory, getBookmarks,
   type UserPreferences
 } from '../services/historyService';
-import type { ThemeMode } from '../services/themeService';
+import { THEME_OPTIONS, type ThemeMode } from '../services/themeService';
+import { getGlassStyle, setGlassStyle } from '../services/glassService';
 import { Preferences } from '@capacitor/preferences';
 import { ConfirmModal } from 'streamkit/ui/ConfirmModal.tsx';
 import {
@@ -61,7 +62,7 @@ const ToggleRow: React.FC<ToggleRowProps> = ({ icon, label, description, value, 
       width: '40px',
       height: '40px',
       borderRadius: 'var(--radius-sm)',
-      background: 'rgba(229, 9, 20, 0.12)',
+      background: 'var(--accent-soft)',
       display: 'flex',
       alignItems: 'center',
       justifyContent: 'center',
@@ -103,6 +104,7 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({ active, theme, o
   const [historyCount, setHistoryCount] = useState<number>(0);
   const [bookmarkCount, setBookmarkCount] = useState<number>(0);
   const [haptics, setHaptics] = useState(getHapticSettings);
+  const [glassClear, setGlassClear] = useState(() => getGlassStyle() === 'clear');
   const [clearing, setClearing] = useState<boolean>(false);
   const [confirmingClearHistory, setConfirmingClearHistory] = useState<boolean>(false);
   const [confirmingClearBookmarks, setConfirmingClearBookmarks] = useState<boolean>(false);
@@ -167,21 +169,26 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({ active, theme, o
           <div style={{ padding: '16px' }}>
             <h4 style={{ fontSize: '14px', fontWeight: 700, color: 'var(--text-primary)', marginBottom: '10px' }}>Theme</h4>
             <div className="seg-track">
-              <button
-                onClick={() => { hapticMedium(); onChangeTheme('dark'); }}
-                className={`interactive seg-pill ${theme === 'dark' ? 'active' : ''}`}
-              >
-                <Moon size={15} />
-                <span>Dark</span>
-              </button>
-              <button
-                onClick={() => { hapticMedium(); onChangeTheme('light'); }}
-                className={`interactive seg-pill ${theme === 'light' ? 'active' : ''}`}
-              >
-                <Sun size={15} />
-                <span>Light</span>
-              </button>
+              {THEME_OPTIONS.map(t => (
+                <button
+                  key={t.id}
+                  onClick={() => { hapticMedium(); onChangeTheme(t.id); }}
+                  className={`interactive seg-pill ${theme === t.id ? 'active' : ''}`}
+                  style={{ padding: '8px 4px', fontSize: '13px' }}
+                >
+                  <span>{t.label}</span>
+                </button>
+              ))}
             </div>
+          </div>
+          <div style={{ borderTop: '1px solid var(--border-subtle)' }}>
+            <ToggleRow
+              icon={<Droplets size={20} />}
+              label="Transparent Glass"
+              description="Floating bars, buttons and tiles turn see-through instead of blurred."
+              value={glassClear}
+              onToggle={() => { const next = !glassClear; setGlassClear(next); setGlassStyle(next ? 'clear' : 'frosted'); }}
+            />
           </div>
         </div>
 
@@ -394,7 +401,7 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({ active, theme, o
           <div style={{ display: 'flex', alignItems: 'center', gap: '14px', padding: '14px 16px' }}>
             <div style={{
               width: '38px', height: '38px', borderRadius: 'var(--radius-sm)',
-              background: 'rgba(229, 9, 20, 0.14)', display: 'flex', alignItems: 'center',
+              background: 'var(--accent-soft)', display: 'flex', alignItems: 'center',
               justifyContent: 'center', color: 'var(--accent-primary)', flexShrink: 0
             }}>
               <PlayCircle size={18} />
@@ -408,7 +415,7 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({ active, theme, o
           <div style={{ display: 'flex', alignItems: 'center', gap: '14px', padding: '14px 16px' }}>
             <div style={{
               width: '38px', height: '38px', borderRadius: 'var(--radius-sm)',
-              background: 'rgba(229, 9, 20, 0.14)', display: 'flex', alignItems: 'center',
+              background: 'var(--accent-soft)', display: 'flex', alignItems: 'center',
               justifyContent: 'center', color: 'var(--accent-primary)', flexShrink: 0
             }}>
               <Terminal size={18} />
@@ -422,7 +429,7 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({ active, theme, o
           <div style={{ display: 'flex', alignItems: 'center', gap: '14px', padding: '14px 16px' }}>
             <div style={{
               width: '38px', height: '38px', borderRadius: 'var(--radius-sm)',
-              background: 'rgba(229, 9, 20, 0.14)', display: 'flex', alignItems: 'center',
+              background: 'var(--accent-soft)', display: 'flex', alignItems: 'center',
               justifyContent: 'center', color: 'var(--accent-primary)', flexShrink: 0
             }}>
               <Info size={18} />

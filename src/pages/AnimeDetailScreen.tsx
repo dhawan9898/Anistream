@@ -343,8 +343,8 @@ export const AnimeDetailScreen: React.FC<AnimeDetailScreenProps> = ({
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center',
-                boxShadow: isBookmarked ? '0 4px 16px rgba(229, 9, 20, 0.45)' : '0 4px 14px rgba(0,0,0,0.45)',
-                background: isBookmarked ? 'linear-gradient(135deg, #ff3b45 0%, #e50914 100%)' : undefined,
+                boxShadow: isBookmarked ? '0 4px 16px var(--accent-shadow)' : '0 4px 14px rgba(0,0,0,0.45)',
+                background: isBookmarked ? 'var(--accent-gradient)' : undefined,
                 color: isBookmarked ? '#ffffff' : 'var(--text-primary)'
               }}
             >
@@ -421,7 +421,7 @@ export const AnimeDetailScreen: React.FC<AnimeDetailScreenProps> = ({
                   <div style={{
                     width: `${Math.min(100, (history.currentTime / history.duration) * 100)}%`,
                     height: '100%',
-                    backgroundColor: '#e50914',
+                    backgroundColor: 'var(--accent-primary)',
                     borderRadius: '2px'
                   }} />
                 </div>
@@ -612,7 +612,7 @@ export const AnimeDetailScreen: React.FC<AnimeDetailScreenProps> = ({
                         </div>
                         {watchState === 'partial' && (
                           <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, height: '3px', backgroundColor: 'rgba(255,255,255,0.2)' }}>
-                            <div style={{ width: `${pct}%`, height: '100%', background: '#e50914' }} />
+                            <div style={{ width: `${pct}%`, height: '100%', background: 'var(--accent-primary)' }} />
                           </div>
                         )}
                       </div>

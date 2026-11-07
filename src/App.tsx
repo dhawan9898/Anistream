@@ -30,7 +30,7 @@ import {
   type UserPreferences,
   type WatchHistoryItem
 } from './services/historyService';
-import { getTheme, getStoredThemeSync, setTheme as persistTheme, type ThemeMode } from './services/themeService';
+import { getTheme, getStoredThemeSync, setTheme as persistTheme, THEME_META_COLORS, type ThemeMode } from './services/themeService';
 
 // The web player (and hls.js, the largest dependency) is only needed once
 // something actually plays in the browser - on Android the native
@@ -166,7 +166,7 @@ export const App: React.FC = () => {
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', theme);
     const meta = document.querySelector('meta[name="theme-color"]');
-    if (meta) meta.setAttribute('content', theme === 'light' ? '#f1f2f6' : '#0d0f17');
+    if (meta) meta.setAttribute('content', THEME_META_COLORS[theme]);
   }, [theme]);
 
   useEffect(() => {

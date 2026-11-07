@@ -212,7 +212,7 @@ export const HistoryScreen: React.FC<HistoryScreenProps> = ({
                         </div>
                       </div>
                       <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, height: '3px', backgroundColor: 'rgba(255,255,255,0.2)' }}>
-                        <div style={{ width: `${progressPct}%`, height: '100%', background: 'linear-gradient(90deg, #ff3b45 0%, #e50914 100%)' }} />
+                        <div style={{ width: `${progressPct}%`, height: '100%', background: 'var(--accent-bar)' }} />
                       </div>
                     </div>
 

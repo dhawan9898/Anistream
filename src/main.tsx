@@ -7,7 +7,11 @@ import 'streamkit/styles/dock.css'
 import 'streamkit/styles/shared.css'
 import './index.css'
 import App from './App.tsx'
+import { applyGlassStyle, getGlassStyle } from './services/glassService.ts'
 import { ErrorBoundary } from 'streamkit/ui/ErrorBoundary.tsx'
+
+// Transparent-glass setting (index.html applies it pre-paint too).
+applyGlassStyle(getGlassStyle())
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>

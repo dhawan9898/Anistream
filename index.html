@@ -13,14 +13,18 @@
     <meta name="description" content="Stream and discover anime titles with customizable playback, history tracking, and dark/light modes." />
     <meta property="og:title" content="AniStream" />
     <meta property="og:description" content="Stream and discover anime titles with customizable playback, history tracking, and dark/light modes." />
-    <style>html,body{background:#0b0b0d}html[data-theme="light"],html[data-theme="light"] body{background:#f1f2f6}</style>
+    <style>html,body{background:#0b0b0d}html[data-theme="obsidian"],html[data-theme="obsidian"] body{background:#000}html[data-theme="slate"],html[data-theme="slate"] body{background:#0a1120}html[data-theme="light"],html[data-theme="light"] body{background:#f1f2f6}</style>
     <script>
       // Apply the saved theme before first paint to avoid a flash of the
       // wrong theme while React and Capacitor Preferences spin up.
       (function () {
         try {
           var saved = window.localStorage.getItem('CapacitorStorage.anistream_theme');
-          document.documentElement.setAttribute('data-theme', saved === 'light' ? 'light' : 'dark');
+          var known = { dark: 1, obsidian: 1, slate: 1, light: 1 };
+          document.documentElement.setAttribute('data-theme', known[saved] ? saved : 'dark');
+          if (window.localStorage.getItem('anistream_glass') === 'clear') {
+            document.documentElement.setAttribute('data-glass', 'clear');
+          }
         } catch (e) {
           document.documentElement.setAttribute('data-theme', 'dark');
         }

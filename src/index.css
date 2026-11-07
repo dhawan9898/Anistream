@@ -23,6 +23,10 @@
   --border-glow: rgba(229, 9, 20, 0.4);
 
   --accent-primary: #e50914;
+  --accent-gradient: linear-gradient(135deg, #ff3b45 0%, #e50914 100%);
+  --accent-bar: linear-gradient(90deg, #ff3b45 0%, #e50914 100%);
+  --accent-soft: rgba(229, 9, 20, 0.14);
+  --accent-shadow: rgba(229, 9, 20, 0.45);
   --accent-secondary: #ff3b45;
   --accent-cyan: #06b6d4;
   --accent-amber: #f59e0b;
@@ -559,3 +563,124 @@ body {
     transition-duration: 0.01ms !important;
   }
 }
+
+/* ---- Extra themes (same palettes as CineStream) ---- */
+:root[data-theme="obsidian"] {
+  --bg-main: #000000;
+  --bg-main-rgb: 0, 0, 0;
+  --bg-surface: #0a0a0e;
+  --bg-surface-hover: #14141c;
+  --bg-glass: rgba(10, 10, 14, 0.78);
+  --bg-glass-heavy: rgba(0, 0, 0, 0.96);
+  --border-subtle: rgba(255, 255, 255, 0.11);
+  --border-hover: rgba(255, 255, 255, 0.25);
+  --border-glow: rgba(255, 31, 41, 0.55);
+
+
+  --accent-primary: #ff1f29;
+  --accent-secondary: #ff4d55;
+  --accent-hover: #ff666e;
+  --accent-dark: #cc1018;
+  --accent-gold: #fbbf24;
+  --accent-glow: 0 0 32px rgba(255, 31, 41, 0.6);
+  --accent-gradient: linear-gradient(135deg, #ff1f29 0%, #ff434c 100%);
+
+  --text-primary: #ffffff;
+  --text-secondary: #a3a3a3;
+  --text-muted: #737373;
+
+  --card-shadow: 0 12px 34px rgba(0, 0, 0, 0.8);
+  --bg-dock: rgba(10, 10, 14, 0.85);
+}
+
+:root[data-theme="slate"] {
+  --bg-main: #0a1120;
+  --bg-main-rgb: 10, 17, 32;
+  --bg-surface: #131e33;
+  --bg-surface-hover: #1e2e4d;
+  --bg-glass: rgba(19, 30, 51, 0.75);
+  --bg-glass-heavy: rgba(10, 17, 32, 0.94);
+  --border-subtle: rgba(255, 255, 255, 0.1);
+  --border-hover: rgba(255, 255, 255, 0.24);
+  --border-glow: rgba(56, 189, 248, 0.45);
+
+
+  --accent-primary: #38bdf8;
+  --accent-secondary: #818cf8;
+  --accent-hover: #60a5fa;
+  --accent-dark: #0284c7;
+  --accent-gold: #f59e0b;
+  --accent-glow: 0 0 28px rgba(56, 189, 248, 0.45);
+  --accent-gradient: linear-gradient(135deg, #38bdf8 0%, #818cf8 100%);
+
+  --text-primary: #f8fafc;
+  --text-secondary: #94a3b8;
+  --text-muted: #64748b;
+
+  --card-shadow: 0 10px 28px rgba(0, 0, 0, 0.6);
+  --bg-dock: rgba(19, 30, 51, 0.82);
+}
+
+
+/* Accent helpers follow each theme's accent colour. */
+:root[data-theme="slate"] {
+  --accent-gradient: linear-gradient(135deg, #38bdf8 0%, #818cf8 100%);
+  --accent-bar: linear-gradient(90deg, #38bdf8 0%, #818cf8 100%);
+  --accent-soft: rgba(56, 189, 248, 0.16);
+  --accent-shadow: rgba(56, 189, 248, 0.45);
+  --picker-active-bg: rgba(56, 189, 248, 0.14);
+}
+:root[data-theme="obsidian"] {
+  --accent-gradient: linear-gradient(135deg, #ff434c 0%, #ff1f29 100%);
+  --accent-bar: linear-gradient(90deg, #ff434c 0%, #ff1f29 100%);
+  --accent-soft: rgba(255, 31, 41, 0.16);
+  --accent-shadow: rgba(255, 31, 41, 0.5);
+}
+
+/* ---- Transparent glass (Settings > Appearance > Transparent Glass) ----
+   Off (default): frosted glass - translucent fills with a backdrop blur.
+   On: clear glass - no blur anywhere. The same floating surfaces (dock, popovers,
+   search bar, buttons, tiles, badges) become see-through panes with a bright
+   hairline edge, so whatever is behind them stays sharp.
+   Must stay after every theme block: it overrides their glass tokens. */
+:root[data-glass="clear"] {
+  --glass-blur: none;
+  --clear-fill: rgba(16, 16, 22, 0.24);
+  --clear-fill-strong: rgba(16, 16, 22, 0.38);
+  --clear-edge: rgba(255, 255, 255, 0.3);
+  --clear-edge-soft: rgba(255, 255, 255, 0.16);
+  /* Surfaces that are always dark glass (over photos / the video player). */
+  --clear-dark-fill: rgba(12, 12, 16, 0.3);
+
+  --glass-fill: var(--clear-fill);
+  --bg-glass: var(--clear-fill);
+  --bg-glass-heavy: var(--clear-fill-strong);
+  --bg-dock: var(--clear-fill);
+}
+
+:root[data-glass="clear"][data-theme="light"] {
+  --clear-fill: rgba(255, 255, 255, 0.3);
+  --clear-fill-strong: rgba(255, 255, 255, 0.5);
+  --clear-edge: rgba(255, 255, 255, 0.9);
+  --clear-edge-soft: rgba(255, 255, 255, 0.75);
+}
+
+/* No backdrop blur on anything - including inline styles. */
+:root[data-glass="clear"] *,
+:root[data-glass="clear"] *::before,
+:root[data-glass="clear"] *::after {
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
+}
+
+:root[data-glass="clear"] .glass-dock { background: var(--clear-fill); border-color: var(--clear-edge); }
+:root[data-glass="clear"] .glass-nav { background: var(--clear-fill-strong); }
+:root[data-glass="clear"] .glass-panel { background: var(--clear-fill); border-color: var(--clear-edge-soft); }
+:root[data-glass="clear"] .glass-pill { background: var(--clear-fill); border-color: var(--clear-edge-soft); }
+:root[data-glass="clear"] .seg-track { background-color: var(--clear-fill); border-color: var(--clear-edge-soft); }
+:root[data-glass="clear"] .glass-pill-dark,
+:root[data-glass="clear"] .glass-panel-dark,
+:root[data-glass="clear"] .hero-dots,
+:root[data-glass="clear"] .apple-toast { background: var(--clear-dark-fill); }
+/* Badges and overlay chips that set their own dark fill + blur inline. */
+:root[data-glass="clear"] [style*="blur("] { background-color: var(--clear-dark-fill) !important; }
