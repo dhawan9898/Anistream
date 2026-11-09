@@ -203,6 +203,8 @@ export const App: React.FC = () => {
   // the old episode's position ends up recorded under the new episode.
   const [nowPlaying, setNowPlaying] = useState<PlaybackSession | null>(null);
   const nowPlayingRef = useRef<PlaybackSession | null>(null);
+  // The latest play request, kept even when it failed before a stream existed (so Retry can repeat it).
+  const lastPlayRequestRef = useRef<{ anime: AnimeItem; episode: EpisodeItem; mode: 'sub' | 'dub' } | null>(null);
   nowPlayingRef.current = nowPlaying;
   const [streamErrorMessage, setStreamErrorMessage] = useState<string | null>(null);
   // Bumped on every play request and whenever the native player is closed,
@@ -347,13 +349,14 @@ export const App: React.FC = () => {
     // The stream hit an HTTP error (e.g. 404): look the same episode up
     // again - exactly what closing and reopening it does - and resume.
     const reloadHandle = ExoPlayerPlugin.addListener('reloadRequested', ({ episode, mode, positionMs }) => {
-      const session = nowPlayingRef.current;
-      if (!session || episode !== session.episode.number || (mode && mode !== session.mode)) {
+      // A stream that never started has no session yet: Retry then uses the request that failed.
+      const target = nowPlayingRef.current ?? lastPlayRequestRef.current;
+      if (!target || episode !== target.episode.number || (mode && mode !== target.mode)) {
         failInPlayer("Couldn't reload this episode. Go back and pick it again.");
         return;
       }
-      console.warn(`[App] reloading ${session.anime.title} E${episode} after a stream error`);
-      handlePlayEpisode(session.anime, session.episode, session.mode, Math.max(0, positionMs / 1000), { fresh: true });
+      console.warn(`[App] reloading ${target.anime.title} E${episode} after a stream error`);
+      handlePlayEpisode(target.anime, target.episode, target.mode, Math.max(0, positionMs / 1000), { fresh: true });
     });
     // The native player is the only place playback position lives - unlike
     // the web <VideoPlayer>, which reports progress via its own
@@ -460,6 +463,7 @@ export const App: React.FC = () => {
     options: { fresh?: boolean } = {}
   ) => {
     const requestId = ++playRequestRef.current;
+    lastPlayRequestRef.current = { anime, episode, mode };
     const isNative = Capacitor.isNativePlatform();
     setStreamLoading(true);
     // Native: open the player right away in its loading state (title +
