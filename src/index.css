@@ -322,6 +322,26 @@ body {
   border-color: var(--select-border) !important;
 }
 
+/* Library tabs: labels never wrap ("History (0)" used to break onto two lines on
+   phones); a count shows as a small badge, and on narrow screens the icons give
+   way so three tabs fit. */
+.seg-pill { min-width: 0; }
+.seg-label { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.seg-count {
+  flex-shrink: 0;
+  min-width: 18px;
+  padding: 1px 6px;
+  border-radius: 9999px;
+  background: var(--track-bg);
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 16px;
+  text-align: center;
+}
+@media (max-width: 400px) {
+  .seg-track .seg-pill > svg { display: none; }
+}
+
 /* Apple iOS-style toggle switch: fully rounded pill, tactile pop & spring glide */
 .toggle-switch {
   position: relative;

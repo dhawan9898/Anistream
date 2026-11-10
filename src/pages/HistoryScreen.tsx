@@ -136,21 +136,24 @@ export const HistoryScreen: React.FC<HistoryScreenProps> = ({
             className={`interactive seg-pill ${activeTab === 'history' ? 'active' : ''}`}
           >
             <Clock size={16} />
-            <span>History ({historyList.length})</span>
+            <span className="seg-label">History</span>
+            {historyList.length > 0 && <span className="seg-count">{historyList.length}</span>}
           </button>
           <button
             onClick={() => { hapticLight(); setActiveTab('bookmarks'); }}
             className={`interactive seg-pill ${activeTab === 'bookmarks' ? 'active' : ''}`}
           >
             <Bookmark size={16} />
-            <span>My List ({bookmarkedAnime.length})</span>
+            <span className="seg-label">My List</span>
+            {bookmarkedAnime.length > 0 && <span className="seg-count">{bookmarkedAnime.length}</span>}
           </button>
           <button
             onClick={() => { hapticLight(); setActiveTab('downloads'); }}
             className={`interactive seg-pill ${activeTab === 'downloads' ? 'active' : ''}`}
           >
             <Download size={16} />
-            <span>Downloads ({downloadedCount})</span>
+            <span className="seg-label">Downloads</span>
+            {downloadedCount > 0 && <span className="seg-count">{downloadedCount}</span>}
           </button>
         </div>
       </div>

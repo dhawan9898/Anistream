@@ -3,9 +3,11 @@
 // let the placeholder behind them show.
 import React, { useState } from 'react';
 
-type FadeImageProps = Omit<React.ImgHTMLAttributes<HTMLImageElement>, 'onLoad' | 'onError'>;
+interface FadeImageProps extends Omit<React.ImgHTMLAttributes<HTMLImageElement>, 'onError'> {
+  onLoad?: React.ReactEventHandler<HTMLImageElement>;
+}
 
-export const FadeImage: React.FC<FadeImageProps> = ({ className, ...rest }) => {
+export const FadeImage: React.FC<FadeImageProps> = ({ className, onLoad, ...rest }) => {
   const [loaded, setLoaded] = useState(false);
   return (
     <img
@@ -13,7 +15,10 @@ export const FadeImage: React.FC<FadeImageProps> = ({ className, ...rest }) => {
       decoding="async"
       draggable={false}
       className={`fade-img${loaded ? ' loaded' : ''}${className ? ` ${className}` : ''}`}
-      onLoad={() => setLoaded(true)}
+      onLoad={e => {
+        setLoaded(true);
+        onLoad?.(e);
+      }}
     />
   );
 };

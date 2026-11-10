@@ -4,6 +4,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { Search as SearchIcon, X, Loader2, ArrowLeft, Play, Sparkles } from 'lucide-react';
 import { getTrendingAnime, searchAnimeLive, type AnimeItem } from '../providers/aniCliCore';
 import { FadeImage } from 'streamkit/ui/FadeImage.tsx';
+import { ErrorState } from 'streamkit/ui/ErrorState.tsx';
 import { PosterCard } from '../components/PosterCard';
 import { hapticLight, hapticSelection } from '../services/hapticsService';
 
@@ -23,14 +24,21 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({
 }) => {
   // Shown while the box is empty, like Netflix/Apple "Top Searches".
   const [topSearches, setTopSearches] = useState<AnimeItem[]>([]);
+  // 'failed' replaces the skeletons with a retry; opening the tab again also retries.
+  const [topStatus, setTopStatus] = useState<'loading' | 'ready' | 'failed'>('loading');
+  const [topAttempt, setTopAttempt] = useState(0);
 
   useEffect(() => {
+    // Loads on mount (so the list is ready when the tab opens); after a failure, opening the tab retries.
+    if (topStatus === 'ready' || (!active && topStatus === 'failed')) return;
     let cancelled = false;
+    setTopStatus('loading');
     getTrendingAnime()
-      .then(list => { if (!cancelled) setTopSearches(list.slice(0, 12)); })
-      .catch(() => { /* the empty state simply stays blank */ });
+      .then(list => { if (!cancelled) { setTopSearches(list.slice(0, 12)); setTopStatus('ready'); } })
+      .catch(() => { if (!cancelled) setTopStatus('failed'); });
     return () => { cancelled = true; };
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- topStatus is the guard, not a trigger
+  }, [active, topAttempt]);
 
   const [query, setQuery] = useState<string>('');
   const [results, setResults] = useState<AnimeItem[]>([]);
@@ -221,9 +229,12 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({
             Top Searches
           </h2>
           <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-            {topSearches.length === 0 && Array.from({ length: 6 }).map((_, i) => (
+            {topSearches.length === 0 && topStatus === 'loading' && Array.from({ length: 6 }).map((_, i) => (
               <div key={i} className="skeleton" style={{ height: '72px', borderRadius: 'var(--radius-md)' }} />
             ))}
+            {topSearches.length === 0 && topStatus === 'failed' && (
+              <ErrorState compact message="Top searches couldn't load. Check your connection." onRetry={() => setTopAttempt(a => a + 1)} />
+            )}
             {topSearches.map(anime => (
               <button
                 key={anime.id}
