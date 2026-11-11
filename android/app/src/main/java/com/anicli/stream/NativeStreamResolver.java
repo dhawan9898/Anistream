@@ -42,11 +42,11 @@ import javax.crypto.spec.SecretKeySpec;
  */
 final class NativeStreamResolver {
     private static final String TAG = "NativeStreamResolver";
-    private static final String HOST = "https://hianimes.se";
+    private static final String HOST = "https://hianime.at";
     private static final String UA =
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
-    private static final int TIMEOUT_MS = 8_000;
-    private static final long HEDGE_MS = 2_500;
+    private static final int TIMEOUT_MS = 6_000;
+    private static final long HEDGE_MS = 1_500;
     private static final ExecutorService HEDGE_POOL = Executors.newFixedThreadPool(4);
     private static final int MAX_SERVERS = 4;
     // Same constants as aniCliCore.decryptToken (key is 16 chars zero-padded to 32 bytes).
@@ -333,6 +333,7 @@ final class NativeStreamResolver {
             HttpURLConnection c = null;
             try {
                 c = (HttpURLConnection) new URL(url).openConnection();
+                c.setInstanceFollowRedirects(true);
                 c.setConnectTimeout(TIMEOUT_MS);
                 c.setReadTimeout(TIMEOUT_MS);
                 c.setRequestProperty("User-Agent", userAgent);

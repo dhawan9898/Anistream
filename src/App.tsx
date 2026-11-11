@@ -250,8 +250,11 @@ export const App: React.FC = () => {
   // rather than fabricate an episode number/id that may not exist or use
   // the wrong id scheme.
   const findNextEpisode = (current: EpisodeItem | null, list: EpisodeItem[]): EpisodeItem | undefined => {
-    if (!current) return undefined;
-    const idx = list.findIndex(e => e.id === current.id);
+    if (!current || !list || list.length === 0) return undefined;
+    let idx = list.findIndex(e => e.id === current.id);
+    if (idx === -1 && current.number) {
+      idx = list.findIndex(e => String(e.number) === String(current.number));
+    }
     if (idx === -1 || idx + 1 >= list.length) return undefined;
     return list[idx + 1];
   };
@@ -320,9 +323,18 @@ export const App: React.FC = () => {
       }
       prefetchNext(anime, episode, mode, list, requestId);
     });
-    const nextEpHandle = ExoPlayerPlugin.addListener('nextEpisodeRequested', ({ episode: currentNumber }) => {
+    const nextEpHandle = ExoPlayerPlugin.addListener('nextEpisodeRequested', async ({ episode: currentNumber }) => {
       const anime = playingAnimeRef.current;
-      const list = episodeListRef.current;
+      let list = episodeListRef.current;
+      if ((!list || list.length === 0) && anime) {
+        try {
+          list = await getEpisodes(anime.id || anime.title);
+          episodeListRef.current = list;
+          setEpisodeList(list);
+        } catch {
+          // ignore
+        }
+      }
       // By the number the player was showing first (it is the authority on
       // what is on screen), then by the episode JS thinks is playing.
       const byNumber = list.findIndex(e => e.number === currentNumber);
@@ -334,9 +346,19 @@ export const App: React.FC = () => {
       }
       handlePlayEpisode(anime, next, playingModeRef.current, 0);
     });
-    const episodeSelectedHandle = ExoPlayerPlugin.addListener('episodeSelected', ({ selectedNumber }) => {
+    const episodeSelectedHandle = ExoPlayerPlugin.addListener('episodeSelected', async ({ selectedNumber }) => {
       const anime = playingAnimeRef.current;
-      const selected = episodeListRef.current.find(e => e.number === selectedNumber);
+      let list = episodeListRef.current;
+      if ((!list || list.length === 0) && anime) {
+        try {
+          list = await getEpisodes(anime.id || anime.title);
+          episodeListRef.current = list;
+          setEpisodeList(list);
+        } catch {
+          // ignore
+        }
+      }
+      const selected = list.find(e => e.number === selectedNumber);
       if (!anime || !selected) {
         failInPlayer(`Couldn't load episode ${selectedNumber}. Go back and pick it from the list.`);
         return;

@@ -18,6 +18,10 @@ android/.gradle/
 android/local.properties
 *.apk
 
+# Environment
+.env
+.env*.local
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

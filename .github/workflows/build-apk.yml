@@ -130,7 +130,7 @@ jobs:
       - name: Build Web Production Bundle
         run: npm run build
         env:
-          VITE_TMDB_API_KEY: ${{ secrets.TMDB_API_KEY }}
+          VITE_TMDB_API_KEY: ${{ secrets.TMDB_API_KEY || 'd56cb07bf9500bb94de196e6b7ae1967' }}
 
       - name: Sync Capacitor Android Project
         run: npx cap sync android

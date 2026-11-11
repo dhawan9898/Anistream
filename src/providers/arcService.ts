@@ -24,12 +24,15 @@ interface TmdbSearchTv { results?: { id: number; name?: string; original_name?: 
 interface TmdbGroupList { results?: { id: string; type: number; group_count: number; episode_count: number; name?: string }[] }
 interface TmdbGroupDetails { groups?: { name: string; order: number; episodes: { order: number }[] }[] }
 
+const DEFAULT_TMDB_API_KEY = 'd56cb07bf9500bb94de196e6b7ae1967';
+
 function apiKey(): string | undefined {
   try {
     const key = (import.meta as { env?: Record<string, string | undefined> }).env?.VITE_TMDB_API_KEY;
-    return key && key.trim() ? key.trim() : undefined;
+    if (key && key.trim()) return key.trim();
+    return DEFAULT_TMDB_API_KEY;
   } catch {
-    return undefined;
+    return DEFAULT_TMDB_API_KEY;
   }
 }
 

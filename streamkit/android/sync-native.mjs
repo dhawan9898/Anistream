@@ -33,7 +33,8 @@ export function syncNative({ packageName, javaDir, resDir, check = false }) {
   for (const file of sharedNativeFiles(packageName)) {
     const target = file.to(javaDir, resDir);
     const current = existsSync(target) ? readFileSync(target, 'utf8') : null;
-    if (current === file.content) continue;
+    const norm = (s) => (s ? s.replace(/\r\n/g, '\n') : s);
+    if (norm(current) === norm(file.content)) continue;
     changed.push(target);
     if (!check) {
       mkdirSync(dirname(target), { recursive: true });

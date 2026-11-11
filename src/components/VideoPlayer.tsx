@@ -303,6 +303,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
 
     const failStream = (message: string) => {
       if (disposed) return;
+      advancedRef.current = false;
       if (hlsRef.current) {
         hlsRef.current.destroy();
         hlsRef.current = null;
@@ -396,6 +397,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   }, [streamSource.streamUrl, streamSource.referer, initialTime, reloadToken]);
 
   const retryStream = () => {
+    advancedRef.current = false;
     resumeAtRef.current = lastPositionRef.current;
     setStreamError(null);
     setReloadToken(t => t + 1);
@@ -458,9 +460,13 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   };
 
   const playNextEpisode = () => {
-    if (advancedRef.current || !onNextEpisode) return;
+    if (!onNextEpisode || advancedRef.current) return;
     advancedRef.current = true;
+    setIsBuffering(true);
     onNextEpisode();
+    later(() => {
+      advancedRef.current = false;
+    }, 6000);
   };
 
   const dismissPostPlay = () => {

@@ -573,6 +573,7 @@ public class ExoPlayerActivity extends AppCompatActivity {
     // for this same episode again (as if it had been picked from the list).
     private void showLoadingStalled() {
         if (!awaitingStream) return; // a stream did arrive
+        nextEpisodeTriggered = false;
         final String episode = episodeNumber;
         bufferingSpinner.setVisibility(View.GONE);
         textErrorMessage.setText("This episode is taking too long to load.");
@@ -601,10 +602,20 @@ public class ExoPlayerActivity extends AppCompatActivity {
         showLoadingState();
     }
 
+    private static boolean episodeNumbersMatch(String a, String b) {
+        if (a == null || b == null) return false;
+        if (a.equals(b) || a.trim().equalsIgnoreCase(b.trim())) return true;
+        try {
+            return Double.parseDouble(a.trim()) == Double.parseDouble(b.trim());
+        } catch (Exception ignored) {
+            return false;
+        }
+    }
+
     private String episodeIdFor(String number) {
         if (number == null) return null;
         for (EpisodeOption option : episodeOptions) {
-            if (option.number.equals(number)) return option.id;
+            if (episodeNumbersMatch(option.number, number)) return option.id;
         }
         return null;
     }
@@ -691,6 +702,7 @@ public class ExoPlayerActivity extends AppCompatActivity {
     // Retry that really starts over: a fresh lookup (an old link may be dead)
     // at the position reached, falling back to the app's lookup.
     private void retryFresh(final Runnable fallback) {
+        nextEpisodeTriggered = false;
         final long resumeAt = Math.max(lastKnownPositionMs, player != null ? player.getCurrentPosition() : 0);
         final String number = episodeNumber;
         final String mode = currentMode;
@@ -703,6 +715,7 @@ public class ExoPlayerActivity extends AppCompatActivity {
     void showLoadFailure(String message) {
         handler.removeCallbacks(loadingWatchdog);
         awaitingStream = false;
+        nextEpisodeTriggered = false;
         releasePlayer();
         playerView.setPlayer(null);
         bufferingSpinner.setVisibility(View.GONE);
@@ -2078,6 +2091,11 @@ public class ExoPlayerActivity extends AppCompatActivity {
         if (nextEpisodeTriggered) return;
         nextEpisodeTriggered = true;
         String next = nextEpisodeNumber();
+        if (next == null) {
+            nextEpisodeTriggered = false;
+            Log.w(TAG, "No next episode found for E" + episodeNumber);
+            return;
+        }
 
         // Prefetched stream for exactly this transition: start it right here,
         // without a round trip through JavaScript (see setNextEpisode).
@@ -2673,7 +2691,7 @@ public class ExoPlayerActivity extends AppCompatActivity {
     // the last one or no list was given (never a guessed number).
     private String nextEpisodeNumber() {
         for (int i = 0; i < episodeOptions.size() - 1; i++) {
-            if (episodeOptions.get(i).number.equals(episodeNumber)) return episodeOptions.get(i + 1).number;
+            if (episodeNumbersMatch(episodeOptions.get(i).number, episodeNumber)) return episodeOptions.get(i + 1).number;
         }
         return null;
     }

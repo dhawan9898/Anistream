@@ -343,8 +343,10 @@ export function sitePathOf(href: string): string {
 // Throws when the list can't be loaded (failures aren't cached, so the
 // next call retries) - it never invents episodes.
 export function getEpisodes(animeId: string): Promise<EpisodeItem[]> {
-  return cached(`episodes:${animeId}`, EPISODE_LIST_TTL_MS, async () => {
-    const json = await loadPersisted(`episodes:${animeId}`, EPISODE_LIST_TTL_MS, true,
+  const normId = animeId.includes("-") ? (animeId.split("-").pop() || animeId) : animeId;
+  const cacheKey = `episodes:${normId}`;
+  return cached(cacheKey, EPISODE_LIST_TTL_MS, async () => {
+    const json = await loadPersisted(cacheKey, EPISODE_LIST_TTL_MS, true,
       async () => JSON.stringify(await loadEpisodes(animeId)));
     return JSON.parse(json) as EpisodeItem[];
   });
@@ -469,20 +471,23 @@ export async function getEpisodeStream(
   try {
     let targetEpisodeId = episodeIdOrNumber;
     // Resolve targetEpisodeId if needed (e.g. if it is an episode number like '1' rather than an episode data-id)
-    let numericAnimeId = (animeId || animeTitleOrId).includes("-") ? (animeId || animeTitleOrId).split("-").pop() : "";
-    if (!numericAnimeId || !/^\d+$/.test(numericAnimeId)) {
-      const found = await searchAnime(animeTitleOrId);
-      if (found.length > 0) {
-        numericAnimeId = found[0].id.split("-").pop() || "";
+    const isDataId = /^\d{4,}$/.test(episodeIdOrNumber);
+    if (!isDataId) {
+      let numericAnimeId = (animeId || animeTitleOrId).includes("-") ? (animeId || animeTitleOrId).split("-").pop() : "";
+      if (!numericAnimeId || !/^\d+$/.test(numericAnimeId)) {
+        const found = await searchAnime(animeTitleOrId);
+        if (found.length > 0) {
+          numericAnimeId = found[0].id.split("-").pop() || "";
+        }
       }
-    }
-    if (numericAnimeId && /^\d+$/.test(numericAnimeId)) {
-      const list = await getEpisodes(numericAnimeId);
-      const epNum = episodeIdOrNumber.replace(/^.*-ep-/, '').replace(/[^0-9.]/g, '') || '1';
-      // Match by exact episode ID first; if none matches (e.g. targetEpisodeId was '1'), match by episode number
-      const match = list.find(e => e.id === targetEpisodeId) || list.find(e => e.number === epNum || e.number === episodeIdOrNumber || e.id === episodeIdOrNumber);
-      if (match && match.id) {
-        targetEpisodeId = match.id;
+      if (numericAnimeId && /^\d+$/.test(numericAnimeId)) {
+        const list = await getEpisodes(numericAnimeId);
+        const epNum = episodeIdOrNumber.replace(/^.*-ep-/, '').replace(/[^0-9.]/g, '') || '1';
+        // Match by exact episode ID first; if none matches (e.g. targetEpisodeId was '1'), match by episode number
+        const match = list.find(e => e.id === targetEpisodeId) || list.find(e => e.number === epNum || e.number === episodeIdOrNumber || e.id === episodeIdOrNumber);
+        if (match && match.id) {
+          targetEpisodeId = match.id;
+        }
       }
     }
 
@@ -525,7 +530,7 @@ export class SourceUnavailableError extends Error {
 
 // If the server being tried hasn't produced a stream after this long, the
 // next one is started alongside it.
-const HEDGE_DELAY_MS = 2500;
+const HEDGE_DELAY_MS = 1500;
 
 // Resolves the first server (of `hashes`, in the site's preference order)
 // that yields a playable stream. Servers aren't tried strictly one after
@@ -620,7 +625,7 @@ async function resolveEmbed(hash: string, episodeId: string, mode: 'sub' | 'dub'
       ...UPSTREAM_HEADERS,
       'Referer': `${REMOTE_HOST}/`
     }
-  });
+  }, 7000);
   if (!embedRes.ok) return null;
   const embedHtml = await embedRes.text();
   const embedOrigin = new URL(embedUrl).origin;
@@ -651,7 +656,7 @@ async function resolveEmbed(hash: string, episodeId: string, mode: 'sub' | 'dub'
       'Referer': embedUrl,
       'X-Requested-With': 'XMLHttpRequest'
     }
-  });
+  }, 7000);
   if (!sourcesRes.ok) return null;
   const sourcesJson = (await sourcesRes.json()) as SourcesJson;
 
