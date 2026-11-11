@@ -16,5 +16,6 @@ test('syncNative stamps the package, copies drawables, and reports drift in chec
   assert.ok(!java.includes('__APP_PACKAGE__'));
   assert.ok(existsSync(join(resDir, 'drawable', 'ic_play.xml')));
   assert.deepEqual(syncNative({ packageName: 'com.example.app', javaDir, resDir, check: true }), []);
-  assert.equal(syncNative({ packageName: 'com.other', javaDir, resDir, check: true }).length, 1, 'only the Java file depends on the package');
+  assert.equal(syncNative({ packageName: 'com.other', javaDir, resDir, check: true }).length, 2, 'only the Java files (ThumbnailSprites, SubtitleSync) depend on the package');
+  assert.match(readFileSync(join(javaDir, 'SubtitleSync.java'), 'utf8'), /^package com\.example\.app;/);
 });

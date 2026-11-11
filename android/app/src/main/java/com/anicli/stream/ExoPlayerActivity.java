@@ -201,6 +201,23 @@ public class ExoPlayerActivity extends AppCompatActivity {
     // showing (matched against Format.id, which parseSubtitles() sets to the
     // same label, once ExoPlayer reports its track groups).
     private final java.util.List<String> subtitleLabels = new java.util.ArrayList<>();
+    // Subtitle timing (see SubtitleSync): each side-loaded track's file, the offset the viewer set
+    // (positive = later), and the layer that draws the shifted lines while the offset is not zero.
+    private final java.util.Map<String, String> subtitleUrlByLabel = new java.util.HashMap<>();
+    private long subtitleOffsetMs = 0;
+    private SubtitleSync subtitleSync;
+    private SubtitleView syncSubtitleView;
+    private String subtitleReferer;
+    private String shownSyncText = "";
+    private static final long SUBTITLE_STEP_MS = 250;
+    private static final long SUBTITLE_MAX_OFFSET_MS = 60_000;
+    private final Runnable subtitleSyncTicker = new Runnable() {
+        @Override
+        public void run() {
+            renderSyncedSubtitles();
+            handler.postDelayed(this, 100);
+        }
+    };
     private String defaultSubtitleLabel;
     private String currentSubtitleLabel;
     private boolean subtitleSelectionInitialized = false;
@@ -516,6 +533,7 @@ public class ExoPlayerActivity extends AppCompatActivity {
     }
 
     private void releasePlayer() {
+        handler.removeCallbacks(subtitleSyncTicker);
         handler.removeCallbacks(progressTicker);
         handler.removeCallbacks(autoRetryRunnable);
         if (player != null) {
@@ -824,6 +842,192 @@ public class ExoPlayerActivity extends AppCompatActivity {
         scrimBottom.setBackground(edgeScrim(GradientDrawable.Orientation.BOTTOM_TOP));
         // Chrome starts out visible, so start the skip buttons above it.
         postPlayContainer.setTranslationY(-dp(84));
+        applyLiquidGlass();
+    }
+
+    // ---- Liquid glass -------------------------------------------------------------------------
+    // The same look as the apps' own buttons: a translucent pane, brighter at the top like light on
+    // curved glass, over a faint dark base (readable on bright scenes), with a bright hairline rim.
+
+    private android.graphics.drawable.Drawable glass(boolean round, float radiusDp, boolean strong) {
+        float d = getResources().getDisplayMetrics().density;
+        GradientDrawable base = new GradientDrawable();
+        GradientDrawable pane = new GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM, new int[]{
+                Color.argb(strong ? 84 : 64, 255, 255, 255), Color.argb(strong ? 34 : 22, 255, 255, 255)});
+        if (round) {
+            base.setShape(GradientDrawable.OVAL);
+            pane.setShape(GradientDrawable.OVAL);
+        } else {
+            base.setCornerRadius(radiusDp * d);
+            pane.setCornerRadius(radiusDp * d);
+        }
+        base.setColor(Color.argb(strong ? 96 : 72, 0, 0, 0));
+        pane.setStroke(Math.max(1, Math.round(d)), Color.argb(strong ? 150 : 110, 255, 255, 255));
+        return new android.graphics.drawable.LayerDrawable(new android.graphics.drawable.Drawable[]{base, pane});
+    }
+
+    private void applyLiquidGlass() {
+        // Round glass behind the transport controls and the icon buttons.
+        for (View v : new View[]{btnPlayPause, btnRewind, btnForward, btnBack, btnUnlock}) {
+            if (v != null) v.setBackground(glass(true, 0, v == btnPlayPause));
+        }
+        if (btnPlayPause != null) btnPlayPause.setPadding(dp(18), dp(18), dp(18), dp(18));
+        if (btnBack != null) btnBack.setPadding(dp(8), dp(8), dp(8), dp(8));
+        // Pills for the labelled buttons: top bar, bottom action row, skip / credits.
+        for (View v : new View[]{btnPip, btnAspectRatio, btnQuality, btnSpeed, btnLock, btnEpisodes, btnAudioSubs, btnNextEp}) {
+            if (v == null) continue;
+            v.setBackground(glass(false, 22, false));
+            v.setPadding(Math.max(v.getPaddingLeft(), dp(14)), Math.max(v.getPaddingTop(), dp(8)), Math.max(v.getPaddingRight(), dp(14)), Math.max(v.getPaddingBottom(), dp(8)));
+        }
+        for (TextView v : new TextView[]{btnSkipIntro, btnSkipOutro, btnWatchCredits}) {
+            if (v != null) v.setBackground(glass(false, 22, true));
+        }
+        if (gestureIndicator != null) gestureIndicator.setBackground(glass(false, 24, true));
+    }
+
+    // ---- Subtitle timing ----------------------------------------------------------------------
+
+    /** Offset 0: the player draws subtitles itself. Otherwise the shifted lines are drawn here. */
+    private void updateSubtitleSync() {
+        String url = currentSubtitleLabel != null ? subtitleUrlByLabel.get(currentSubtitleLabel) : null;
+        SubtitleView nativeView = playerView != null ? playerView.getSubtitleView() : null;
+        handler.removeCallbacks(subtitleSyncTicker);
+        if (subtitleOffsetMs == 0 || url == null) {
+            if (syncSubtitleView != null) {
+                syncSubtitleView.setCues(java.util.Collections.emptyList());
+                syncSubtitleView.setVisibility(View.GONE);
+            }
+            shownSyncText = "";
+            if (nativeView != null) nativeView.setAlpha(1f);
+            return;
+        }
+        ensureSyncSubtitleView();
+        if (nativeView != null) nativeView.setAlpha(0f);
+        syncSubtitleView.setVisibility(View.VISIBLE);
+        if (subtitleSync == null || !subtitleSync.url.equals(url)) {
+            final SubtitleSync sync = new SubtitleSync(url);
+            subtitleSync = sync;
+            shownSyncText = "";
+            sync.load(subtitleRequestHeaders(), handler, () -> {
+                if (subtitleSync != sync || !sync.isFailed()) return;
+                // Not a file this layer can read: back to the player's own subtitles, in sync.
+                subtitleOffsetMs = 0;
+                android.widget.Toast.makeText(this, "This subtitle's timing can't be changed", android.widget.Toast.LENGTH_SHORT).show();
+                updateSubtitleSync();
+            });
+        }
+        handler.post(subtitleSyncTicker);
+    }
+
+    private void renderSyncedSubtitles() {
+        if (player == null || syncSubtitleView == null || subtitleSync == null || !subtitleSync.isReady()) return;
+        java.util.List<CharSequence> lines = subtitleSync.textAt(player.getCurrentPosition() - subtitleOffsetMs);
+        android.text.SpannableStringBuilder text = new android.text.SpannableStringBuilder();
+        for (CharSequence line : lines) {
+            if (text.length() > 0) text.append('\n');
+            text.append(line);
+        }
+        if (text.toString().equals(shownSyncText)) return;
+        shownSyncText = text.toString();
+        java.util.List<androidx.media3.common.text.Cue> cues = new java.util.ArrayList<>();
+        if (text.length() > 0) cues.add(new androidx.media3.common.text.Cue.Builder().setText(text).build());
+        syncSubtitleView.setCues(cues);
+    }
+
+    private void ensureSyncSubtitleView() {
+        if (syncSubtitleView != null) return;
+        syncSubtitleView = new SubtitleView(this);
+        syncSubtitleView.setStyle(new CaptionStyleCompat(Color.WHITE, Color.TRANSPARENT, Color.TRANSPARENT,
+                CaptionStyleCompat.EDGE_TYPE_OUTLINE, Color.BLACK, null));
+        syncSubtitleView.setFractionalTextSize(0.058f);
+        syncSubtitleView.setBottomPaddingFraction(0.08f);
+        playerView.addView(syncSubtitleView, new android.widget.FrameLayout.LayoutParams(
+                android.widget.FrameLayout.LayoutParams.MATCH_PARENT, android.widget.FrameLayout.LayoutParams.MATCH_PARENT));
+    }
+
+    private Map<String, String> subtitleRequestHeaders() {
+        Map<String, String> headers = new HashMap<>();
+        headers.put("User-Agent", "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36");
+        if (subtitleReferer != null && !subtitleReferer.isEmpty()) {
+            headers.put("Referer", subtitleReferer);
+            try {
+                Uri u = Uri.parse(subtitleReferer);
+                if (u.getScheme() != null && u.getHost() != null) headers.put("Origin", u.getScheme() + "://" + u.getHost());
+            } catch (Exception ignored) {
+            }
+        }
+        return headers;
+    }
+
+    private void shiftSubtitles(long deltaMs, TextView value) {
+        if (currentSubtitleLabel == null) {
+            android.widget.Toast.makeText(this, "Turn subtitles on first", android.widget.Toast.LENGTH_SHORT).show();
+            return;
+        }
+        if (subtitleUrlByLabel.get(currentSubtitleLabel) == null) {
+            android.widget.Toast.makeText(this, "This subtitle's timing can't be changed", android.widget.Toast.LENGTH_SHORT).show();
+            return;
+        }
+        subtitleOffsetMs = deltaMs == 0 ? 0 : Math.max(-SUBTITLE_MAX_OFFSET_MS, Math.min(SUBTITLE_MAX_OFFSET_MS, subtitleOffsetMs + deltaMs));
+        value.setText(formatSubtitleOffset());
+        updateSubtitleSync();
+    }
+
+    private String formatSubtitleOffset() {
+        if (subtitleOffsetMs == 0) return "In sync";
+        String amount = String.format(java.util.Locale.US, "%.2f s", Math.abs(subtitleOffsetMs) / 1000.0);
+        return subtitleOffsetMs > 0 ? amount + " later" : amount + " earlier";
+    }
+
+    /** "Subtitle timing": Earlier / Reset / Later, a quarter second at a time. */
+    private View buildSubtitleTimingColumn() {
+        LinearLayout column = new LinearLayout(this);
+        column.setOrientation(LinearLayout.VERTICAL);
+
+        TextView header = new TextView(this);
+        header.setText("Subtitle timing");
+        header.setTextColor(Color.WHITE);
+        header.setTextSize(18);
+        header.setTypeface(header.getTypeface(), android.graphics.Typeface.BOLD);
+        header.setPadding(0, 0, 0, dp(12));
+        column.addView(header);
+
+        TextView value = new TextView(this);
+        value.setText(formatSubtitleOffset());
+        value.setTextColor(Color.WHITE);
+        value.setTextSize(22);
+        value.setTypeface(value.getTypeface(), android.graphics.Typeface.BOLD);
+        column.addView(value);
+
+        TextView hint = new TextView(this);
+        hint.setText("Words before the voice? Press Later. After it? Press Earlier.");
+        hint.setTextColor(Color.parseColor("#B3B3B3"));
+        hint.setTextSize(13);
+        hint.setPadding(0, dp(4), 0, dp(14));
+        column.addView(hint);
+
+        LinearLayout buttons = new LinearLayout(this);
+        buttons.setOrientation(LinearLayout.HORIZONTAL);
+        String[] labels = {"Earlier", "Reset", "Later"};
+        long[] deltas = {-SUBTITLE_STEP_MS, 0, SUBTITLE_STEP_MS};
+        for (int i = 0; i < labels.length; i++) {
+            TextView b = new TextView(this);
+            b.setText(labels[i]);
+            b.setTextColor(Color.WHITE);
+            b.setTextSize(14);
+            b.setTypeface(b.getTypeface(), android.graphics.Typeface.BOLD);
+            b.setGravity(Gravity.CENTER);
+            b.setPadding(dp(14), dp(10), dp(14), dp(10));
+            b.setBackground(glass(false, 20, false));
+            b.setClickable(true);
+            final long delta = deltas[i];
+            b.setOnClickListener(v -> shiftSubtitles(delta, value));
+            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f);
+            if (i > 0) lp.setMarginStart(dp(8));
+            buttons.addView(b, lp);
+        }
+        column.addView(buttons);
+        return column;
     }
 
     private void darkPanel(View view, float radiusDp, float alpha) {
@@ -1307,6 +1511,9 @@ public class ExoPlayerActivity extends AppCompatActivity {
             subtitleRows.add(new MenuRow(label, label.equals(currentSubtitleLabel), () -> selectSubtitle(label)));
         }
         columns.addView(buildOptionColumn("Subtitles", subtitleRows), new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, 1f));
+        if (!subtitleUrlByLabel.isEmpty()) {
+            columns.addView(buildSubtitleTimingColumn(), new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, 1f));
+        }
 
         dialogRef[0] = showFullScreenPanel(columns);
     }
@@ -1558,6 +1765,11 @@ public class ExoPlayerActivity extends AppCompatActivity {
     // Shows the track labelled currentSubtitleLabel and nothing else, or turns
     // captions off entirely when it is null ("Off").
     private void applySubtitleSelection(Tracks tracks) {
+        applySubtitleTrack(tracks);
+        updateSubtitleSync();
+    }
+
+    private void applySubtitleTrack(Tracks tracks) {
         if (player == null) return;
         refreshTextTracks(tracks);
         if (currentSubtitleLabel == null) {
@@ -2049,6 +2261,7 @@ public class ExoPlayerActivity extends AppCompatActivity {
         videoQualityOptions.clear();
         currentVideoTrackIndex = -1;
 
+        subtitleReferer = referer;
         DefaultHttpDataSource.Factory dataSourceFactory = buildDataSourceFactory(referer);
 
         java.util.List<MediaItem.SubtitleConfiguration> subtitleConfigs = parseSubtitles(subtitlesJson);
@@ -2253,6 +2466,9 @@ public class ExoPlayerActivity extends AppCompatActivity {
     private java.util.List<MediaItem.SubtitleConfiguration> parseSubtitles(String subtitlesJson) {
         java.util.List<MediaItem.SubtitleConfiguration> configs = new java.util.ArrayList<>();
         subtitleLabels.clear();
+        subtitleUrlByLabel.clear();
+        subtitleOffsetMs = 0;
+        subtitleSync = null;
         defaultSubtitleLabel = null;
         if (subtitlesJson == null || subtitlesJson.isEmpty()) return configs;
         try {
@@ -2278,6 +2494,7 @@ public class ExoPlayerActivity extends AppCompatActivity {
                         .build();
                 configs.add(config);
                 subtitleLabels.add(label);
+                subtitleUrlByLabel.put(label, src);
                 if (isDefault && defaultSubtitleLabel == null) defaultSubtitleLabel = label;
             }
         } catch (Exception e) {
