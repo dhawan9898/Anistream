@@ -17,6 +17,7 @@ import {
   type WatchHistoryItem
 } from '../services/historyService';
 import { getEpisodeInfo, type EpisodeInfo } from '../providers/episodeInfoService';
+import { getStoryArcs, type StoryArc } from '../providers/arcService';
 import { getAnimeDetails, hasDub, resolveAnime, type AnimeDetails } from '../providers/catalogService';
 import { PosterCard } from '../components/PosterCard';
 import { DownloadButton } from '../components/DownloadButton';
@@ -61,8 +62,7 @@ export const AnimeDetailScreen: React.FC<AnimeDetailScreenProps> = ({
   const [pickerOpen, setPickerOpen] = useState<boolean>(false);
   // The one episode tile whose full description is open (accordion).
   const [expandedEp, setExpandedEp] = useState<string | null>(null);
-  // Season mode lists every episode of the season, revealed 50 at a time.
-  const [shownCount, setShownCount] = useState<number>(50);
+  const [arcs, setArcs] = useState<StoryArc[]>([]);
   // Per-episode thumbnails/synopses (Kitsu), filled in for the visible range.
   const [epInfo, setEpInfo] = useState<Record<string, EpisodeInfo>>({});
   const canDownload = downloadsSupported();
@@ -227,22 +227,41 @@ export const AnimeDetailScreen: React.FC<AnimeDetailScreenProps> = ({
       ? (isEpisodeFinished(history) ? `Rewatch E${history.episodeNumber}` : `Resume E${history.episodeNumber}`)
       : episodes.length > 0 ? `Play E${episodes[0].number}` : 'Play';
 
-  // Pagination for large episode lists (50 per range)
+  // Story arcs (when TMDB has them for this show) replace the blocks of 50 in the picker.
+  useEffect(() => {
+    if (!resolved || episodes.length < 2) { setArcs([]); return; }
+    let cancelled = false;
+    getStoryArcs(resolved, episodes.length).then(found => {
+      if (cancelled) return;
+      setArcs(found);
+      setActiveRange(null); // range indexes changed meaning: follow the episode the viewer is on
+    });
+    return () => { cancelled = true; };
+  }, [resolved, episodes.length]);
+
+  // The episode picker lists ranges: the show's story arcs when TMDB knows them (arcService),
+  // otherwise blocks of 50. (It used to list the franchise's other entries - sequels, related
+  // series - as "seasons"; those stay in the Collection tab.)
   const chunkSize = 50;
-  const rangeCount = Math.max(1, Math.ceil(episodes.length / chunkSize));
+  const rangeLabel = (i: number) => {
+    const start = i * chunkSize + 1;
+    const end = Math.min(episodes.length, (i + 1) * chunkSize);
+    return start === end ? `Episode ${start}` : `Episodes ${start}\u2013${end}`;
+  };
+  const arcMode = arcs.length > 1;
+  const ranges = arcMode
+    ? arcs.map(a => ({ name: `${a.name} \u00b7 ${a.start === a.end ? a.start : `${a.start}\u2013${a.end}`}`, start: a.start - 1, end: a.end }))
+    : Array.from({ length: Math.max(1, Math.ceil(episodes.length / chunkSize)) }, (_, i) => ({
+        name: rangeLabel(i), start: i * chunkSize, end: Math.min(episodes.length, (i + 1) * chunkSize)
+      }));
+  const rangeCount = ranges.length;
 
   // Long series: until the user picks a range, show the one holding the
-  // episode they're on instead of always 1-50.
+  // episode they're on instead of always the first.
   const upNextIndex = upNext ? historyIndex + 1 : historyIndex;
-  const autoRange = upNextIndex >= 0 ? Math.floor(upNextIndex / chunkSize) : 0;
-  const activeRange = pickedRange ?? autoRange;
-  // The dropdown lists EITHER the franchise's seasons (TV entries only - no
-  // OVAs, movies or specials) OR, for a single-season title, its episode ranges.
-  const seasons = (details?.collection || []).filter(c => !/movie|ova|ona|special|music/i.test(c.type || ''));
-  const seasonMode = seasons.length > 1;
-  const listEpisodes = seasonMode
-    ? episodes.slice(0, Math.max(shownCount, upNextIndex + 1))
-    : episodes.slice(activeRange * chunkSize, (activeRange + 1) * chunkSize);
+  const autoRange = upNextIndex >= 0 ? Math.max(0, ranges.findIndex(r => upNextIndex >= r.start && upNextIndex < r.end)) : 0;
+  const activeRange = Math.min(pickedRange ?? autoRange, rangeCount - 1);
+  const listEpisodes = episodes.slice(ranges[activeRange]?.start ?? 0, ranges[activeRange]?.end ?? chunkSize);
   const chunkKey = listEpisodes.map(e => e.number).join(',');
   useEffect(() => {
     if (!resolved || !chunkKey) return;
@@ -255,26 +274,14 @@ export const AnimeDetailScreen: React.FC<AnimeDetailScreenProps> = ({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [resolved, chunkKey]);
 
-  const rangeLabel = (i: number) => {
-    const start = i * chunkSize + 1;
-    const end = Math.min(episodes.length, (i + 1) * chunkSize);
-    return start === end ? `Episode ${start}` : `Episodes ${start}\u2013${end}`;
-  };
 
   const description = shown.description || details?.description;
   const genres = (details?.genres.length ? details.genres : shown.genres) || [];
   const collection = details?.collection || [];
 
-  const seasonName = (c: AnimeItem) => c.seasonLabel || c.title;
-  const pickerSections: CategorySection[] = [{
-    items: seasonMode
-      ? seasons.map(c => ({ key: `s:${c.id}`, name: seasonName(c) }))
-      : Array.from({ length: rangeCount }, (_, i) => ({ key: `r:${i}`, name: rangeLabel(i) }))
-  }];
-  const pickerSelected = seasonMode ? `s:${shown.id}` : `r:${activeRange}`;
-  const pickerLabel = seasonMode
-    ? seasonName(seasons.find(c => c.id === shown.id) || shown)
-    : rangeLabel(activeRange);
+  const pickerSections: CategorySection[] = [{ items: ranges.map((r, i) => ({ key: `r:${i}`, name: r.name })) }];
+  const pickerSelected = `r:${activeRange}`;
+  const pickerLabel = ranges[activeRange]?.name ?? '';
   const suggestions = details?.suggestions || [];
 
   const tabs: { id: DetailTab; label: string }[] = [
@@ -486,7 +493,7 @@ export const AnimeDetailScreen: React.FC<AnimeDetailScreenProps> = ({
 
         {settled && tab === 'episodes' && (
           <>
-            {(seasonMode || rangeCount > 1) && (
+            {rangeCount > 1 && (
               <button
                 onClick={() => { hapticLight(); setPickerOpen(true); }}
                 className="interactive"
@@ -513,17 +520,13 @@ export const AnimeDetailScreen: React.FC<AnimeDetailScreenProps> = ({
             <CategoryPicker
               open={pickerOpen}
               presentation="card"
-              title={seasonMode ? 'Seasons' : 'Episodes'}
+              title={arcMode ? 'Story arcs' : 'Episodes'}
               sections={pickerSections}
               selectedKey={pickerSelected}
               onSelect={key => {
                 hapticSelection();
                 setPickerOpen(false);
                 if (key.startsWith('r:')) setActiveRange(Number(key.slice(2)));
-                else {
-                  const season = seasons.find(c => `s:${c.id}` === key);
-                  if (season && season.id !== shown.id) onSelectAnime(season);
-                }
               }}
               onClose={() => { hapticLight(); setPickerOpen(false); }}
             />
@@ -652,15 +655,6 @@ export const AnimeDetailScreen: React.FC<AnimeDetailScreenProps> = ({
                     </div>
                   );
                 })}
-                {seasonMode && listEpisodes.length < episodes.length && (
-                  <button
-                    onClick={() => { hapticLight(); setShownCount(listEpisodes.length + 50); }}
-                    className="interactive glass-pill"
-                    style={{ alignSelf: 'center', padding: '10px 22px', borderRadius: '4px', border: 'none', color: 'var(--text-primary)', fontSize: '13px', fontWeight: 700 }}
-                  >
-                    Show more episodes ({episodes.length - listEpisodes.length} left)
-                  </button>
-                )}
               </div>
             )}
           </>

@@ -125,8 +125,12 @@ jobs:
       - name: Unit Tests
         run: npm test
 
+      # VITE_TMDB_API_KEY (optional repository secret TMDB_API_KEY, the same key CineStream uses)
+      # turns on story arcs in the episode picker; without it the picker shows episode ranges.
       - name: Build Web Production Bundle
         run: npm run build
+        env:
+          VITE_TMDB_API_KEY: ${{ secrets.TMDB_API_KEY }}
 
       - name: Sync Capacitor Android Project
         run: npx cap sync android
