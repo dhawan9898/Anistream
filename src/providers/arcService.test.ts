@@ -16,9 +16,9 @@ test('story arcs become consecutive episode ranges', () => {
 });
 
 test('arcs come in the group order, not the order TMDB lists them', () => {
-  const g = group([['First', 10], ['Second', 10]]);
+  const g = group([['First', 30], ['Second', 30]]);
   g.groups.reverse();
-  assert.deepEqual(arcsFromGroup(g, 20).map(a => a.name), ['First', 'Second']);
+  assert.deepEqual(arcsFromGroup(g, 60).map(a => a.name), ['First', 'Second']);
 });
 
 test('an ongoing show: episodes past the last arc get their own range', () => {
@@ -35,4 +35,8 @@ test('no arcs when they would not help or do not fit the site', () => {
   assert.deepEqual(arcsFromGroup(group([['Only arc', 24]]), 24), [], 'a single arc is no picker');
   assert.deepEqual(arcsFromGroup(group([['A', 12], ['B', 12]]), 1000), [], 'a different season split');
   assert.deepEqual(arcsFromGroup({}, 50), []);
+});
+
+test('a single short season is never split into arcs', () => {
+  assert.deepEqual(arcsFromGroup(group([['A', 6], ['B', 6]]), 12), []);
 });

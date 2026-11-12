@@ -78,7 +78,17 @@ public class ExoPlayerActivity extends AppCompatActivity {
     // A stalled CDN connection is abandoned after this long and the load
     // retried (was 45 s - the player sat "buffering" that whole time).
     private static final int CONNECT_TIMEOUT_MS = 8_000;
-    private static final int READ_TIMEOUT_MS = 12_000;
+    private static final int READ_TIMEOUT_MS = 8_000;
+    // Mid-playback stall recovery (see checkStall): buffering this long with the buffer not growing
+    // at all means a dead connection or CDN node, not a slow one.
+    private static final long STALL_RECOVER_MS = 10_000;
+    // Adaptive quality: switch up only after this much steady bandwidth, and keep a safety margin.
+    // Fewer switches means fewer of the 1-2 s repeats that unaligned renditions cause on a switch,
+    // and the margin means fewer stalls when the connection dips.
+    private static final int ABR_MIN_UP_MS = 20_000;
+    private static final int ABR_MAX_DOWN_MS = 25_000;
+    private static final int ABR_RETAIN_MS = 25_000;
+    private static final float ABR_BANDWIDTH_FRACTION = 0.65f;
     // Retries per playlist/segment load before it becomes a player error
     // (ExoPlayer's default is 3) - these CDNs drop requests now and then.
     private static final int LOAD_RETRY_COUNT = 6;
@@ -284,12 +294,22 @@ public class ExoPlayerActivity extends AppCompatActivity {
     private static final class EpisodeOption {
         final String id;
         final String number;
+        final String title;
+        final String synopsis;
+        final String thumbnail;
 
-        EpisodeOption(String id, String number) {
+        EpisodeOption(String id, String number, String title, String synopsis, String thumbnail) {
             this.id = id;
             this.number = number;
+            this.title = title;
+            this.synopsis = synopsis;
+            this.thumbnail = thumbnail;
         }
     }
+
+    // Episode thumbnails for the list, decoded once and shared (a few MB at most).
+    private final android.util.LruCache<String, android.graphics.Bitmap> thumbCache = new android.util.LruCache<>(80);
+    private final java.util.concurrent.ExecutorService thumbLoader = java.util.concurrent.Executors.newFixedThreadPool(3);
 
     private static final class VideoQualityOption {
         final String label;
@@ -322,6 +342,10 @@ public class ExoPlayerActivity extends AppCompatActivity {
     private static final int MAX_AUTO_RETRIES = 3;
     private int autoRetryCount = 0;
     private long lastKnownPositionMs = 0;
+    private long stallSinceMs = -1;
+    private long stallBufferedMs = -1;
+    private int stallRecoveries = 0;
+    private long lastStallRecoveryAt = 0;
     private final Runnable autoRetryRunnable = this::retryPlayback;
     // Loading watchdog: if no stream arrives this long after the player went
     // into its loading state (next episode, episode pick, audio switch), show
@@ -866,7 +890,7 @@ public class ExoPlayerActivity extends AppCompatActivity {
         float d = getResources().getDisplayMetrics().density;
         GradientDrawable base = new GradientDrawable();
         GradientDrawable pane = new GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM, new int[]{
-                Color.argb(strong ? 84 : 64, 255, 255, 255), Color.argb(strong ? 34 : 22, 255, 255, 255)});
+                Color.argb(strong ? 46 : 34, 255, 255, 255), Color.argb(strong ? 14 : 8, 255, 255, 255)});
         if (round) {
             base.setShape(GradientDrawable.OVAL);
             pane.setShape(GradientDrawable.OVAL);
@@ -874,7 +898,7 @@ public class ExoPlayerActivity extends AppCompatActivity {
             base.setCornerRadius(radiusDp * d);
             pane.setCornerRadius(radiusDp * d);
         }
-        base.setColor(Color.argb(strong ? 96 : 72, 0, 0, 0));
+        base.setColor(Color.argb(strong ? 40 : 28, 0, 0, 0));
         pane.setStroke(Math.max(1, Math.round(d)), Color.argb(strong ? 150 : 110, 255, 255, 255));
         return new android.graphics.drawable.LayerDrawable(new android.graphics.drawable.Drawable[]{base, pane});
     }
@@ -887,7 +911,7 @@ public class ExoPlayerActivity extends AppCompatActivity {
         if (btnPlayPause != null) btnPlayPause.setPadding(dp(18), dp(18), dp(18), dp(18));
         if (btnBack != null) btnBack.setPadding(dp(8), dp(8), dp(8), dp(8));
         // Pills for the labelled buttons: top bar, bottom action row, skip / credits.
-        for (View v : new View[]{btnPip, btnAspectRatio, btnQuality, btnSpeed, btnLock, btnEpisodes, btnAudioSubs, btnNextEp}) {
+        for (View v : new View[]{btnPip, btnAspectRatio, btnQuality}) {
             if (v == null) continue;
             v.setBackground(glass(false, 22, false));
             v.setPadding(Math.max(v.getPaddingLeft(), dp(14)), Math.max(v.getPaddingTop(), dp(8)), Math.max(v.getPaddingRight(), dp(14)), Math.max(v.getPaddingBottom(), dp(8)));
@@ -895,12 +919,58 @@ public class ExoPlayerActivity extends AppCompatActivity {
         for (TextView v : new TextView[]{btnSkipIntro, btnSkipOutro, btnWatchCredits}) {
             if (v != null) v.setBackground(glass(false, 22, true));
         }
+        // Bottom action row: no glass until tapped (see highlightAction).
+        for (View v : new View[]{btnSpeed, btnLock, btnEpisodes, btnAudioSubs, btnNextEp}) {
+            if (v == null) continue;
+            v.setBackground(null);
+            v.setPadding(dp(14), dp(8), dp(14), dp(8));
+        }
         if (gestureIndicator != null) gestureIndicator.setBackground(glass(false, 24, true));
     }
 
     // ---- Subtitle timing ----------------------------------------------------------------------
 
     /** Offset 0: the player draws subtitles itself. Otherwise the shifted lines are drawn here. */
+    /**
+     * Dubs often start their story a different number of seconds in than the subbed episode, while the
+     * provider serves the same caption file for both. When the dub's captions are literally the sub's
+     * files, shift them by how far the provider's own intro marker moved between the two streams, so the
+     * subtitles follow the dub without any manual setting. Nothing happens when the files differ (the
+     * provider already timed them for this stream) or a marker is missing.
+     */
+    private void autoSyncDubSubtitles() {
+        final String number = episodeNumber;
+        final String id = episodeIdFor(number);
+        if (!"dub".equals(currentMode) || id == null || subtitleUrlByLabel.isEmpty()
+                || introInterval == null || introInterval.startMs < 0) return;
+        final long dubIntroStart = introInterval.startMs;
+        final java.util.Set<String> dubFiles = new java.util.HashSet<>(subtitleUrlByLabel.values());
+        NativeStreamResolver.runAsync(() -> {
+            long offset = 0;
+            try {
+                NativeStreamResolver.Result sub = NativeStreamResolver.resolve(id, "sub", false);
+                if (sub.introStartMs < 0 || sub.subtitlesJson == null) return;
+                boolean shared = false;
+                JSONArray tracks = new JSONArray(sub.subtitlesJson);
+                for (int i = 0; i < tracks.length(); i++) {
+                    if (dubFiles.contains(tracks.getJSONObject(i).optString("src", ""))) shared = true;
+                }
+                if (!shared) return;
+                offset = dubIntroStart - sub.introStartMs;
+            } catch (Exception e) {
+                Log.w(TAG, "Dub subtitle sync unavailable: " + e);
+                return;
+            }
+            final long shift = Math.abs(offset) >= 300 && Math.abs(offset) <= 45_000 ? offset : 0;
+            if (shift == 0) return;
+            handler.post(() -> {
+                if (isFinishing() || isDestroyed() || !number.equals(episodeNumber) || !"dub".equals(currentMode)) return;
+                subtitleOffsetMs = shift;
+                updateSubtitleSync();
+            });
+        });
+    }
+
     private void updateSubtitleSync() {
         String url = currentSubtitleLabel != null ? subtitleUrlByLabel.get(currentSubtitleLabel) : null;
         SubtitleView nativeView = playerView != null ? playerView.getSubtitleView() : null;
@@ -972,76 +1042,29 @@ public class ExoPlayerActivity extends AppCompatActivity {
         return headers;
     }
 
-    private void shiftSubtitles(long deltaMs, TextView value) {
-        if (currentSubtitleLabel == null) {
-            android.widget.Toast.makeText(this, "Turn subtitles on first", android.widget.Toast.LENGTH_SHORT).show();
-            return;
-        }
-        if (subtitleUrlByLabel.get(currentSubtitleLabel) == null) {
-            android.widget.Toast.makeText(this, "This subtitle's timing can't be changed", android.widget.Toast.LENGTH_SHORT).show();
-            return;
-        }
-        subtitleOffsetMs = deltaMs == 0 ? 0 : Math.max(-SUBTITLE_MAX_OFFSET_MS, Math.min(SUBTITLE_MAX_OFFSET_MS, subtitleOffsetMs + deltaMs));
-        value.setText(formatSubtitleOffset());
-        updateSubtitleSync();
+    private View activeAction;
+
+    /** Tapped bottom option: glass highlight + slight magnification, then its popup opens. */
+    private void highlightAction(View v, Runnable action) {
+        clearActiveAction();
+        activeAction = v;
+        v.setBackground(glass(false, 22, true));
+        v.animate().scaleX(1.12f).scaleY(1.12f).setDuration(140).start();
+        handler.postDelayed(() -> {
+            action.run();
+            // Actions that open no popup (Lock, Next Ep.) just flash the highlight.
+            handler.postDelayed(() -> { if (activeAction == v && !panelOpen) clearActiveAction(); }, 350);
+        }, 120);
     }
 
-    private String formatSubtitleOffset() {
-        if (subtitleOffsetMs == 0) return "In sync";
-        String amount = String.format(java.util.Locale.US, "%.2f s", Math.abs(subtitleOffsetMs) / 1000.0);
-        return subtitleOffsetMs > 0 ? amount + " later" : amount + " earlier";
+    private void clearActiveAction() {
+        if (activeAction == null) return;
+        activeAction.animate().scaleX(1f).scaleY(1f).setDuration(140).start();
+        activeAction.setBackground(null);
+        activeAction = null;
     }
 
-    /** "Subtitle timing": Earlier / Reset / Later, a quarter second at a time. */
-    private View buildSubtitleTimingColumn() {
-        LinearLayout column = new LinearLayout(this);
-        column.setOrientation(LinearLayout.VERTICAL);
-
-        TextView header = new TextView(this);
-        header.setText("Subtitle timing");
-        header.setTextColor(Color.WHITE);
-        header.setTextSize(18);
-        header.setTypeface(header.getTypeface(), android.graphics.Typeface.BOLD);
-        header.setPadding(0, 0, 0, dp(12));
-        column.addView(header);
-
-        TextView value = new TextView(this);
-        value.setText(formatSubtitleOffset());
-        value.setTextColor(Color.WHITE);
-        value.setTextSize(22);
-        value.setTypeface(value.getTypeface(), android.graphics.Typeface.BOLD);
-        column.addView(value);
-
-        TextView hint = new TextView(this);
-        hint.setText("Words before the voice? Press Later. After it? Press Earlier.");
-        hint.setTextColor(Color.parseColor("#B3B3B3"));
-        hint.setTextSize(13);
-        hint.setPadding(0, dp(4), 0, dp(14));
-        column.addView(hint);
-
-        LinearLayout buttons = new LinearLayout(this);
-        buttons.setOrientation(LinearLayout.HORIZONTAL);
-        String[] labels = {"Earlier", "Reset", "Later"};
-        long[] deltas = {-SUBTITLE_STEP_MS, 0, SUBTITLE_STEP_MS};
-        for (int i = 0; i < labels.length; i++) {
-            TextView b = new TextView(this);
-            b.setText(labels[i]);
-            b.setTextColor(Color.WHITE);
-            b.setTextSize(14);
-            b.setTypeface(b.getTypeface(), android.graphics.Typeface.BOLD);
-            b.setGravity(Gravity.CENTER);
-            b.setPadding(dp(14), dp(10), dp(14), dp(10));
-            b.setBackground(glass(false, 20, false));
-            b.setClickable(true);
-            final long delta = deltas[i];
-            b.setOnClickListener(v -> shiftSubtitles(delta, value));
-            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f);
-            if (i > 0) lp.setMarginStart(dp(8));
-            buttons.addView(b, lp);
-        }
-        column.addView(buttons);
-        return column;
-    }
+    private boolean panelOpen = false;
 
     private void darkPanel(View view, float radiusDp, float alpha) {
         float density = getResources().getDisplayMetrics().density;
@@ -1088,12 +1111,12 @@ public class ExoPlayerActivity extends AppCompatActivity {
             hidePostPlay();
         });
         btnNextEpisode.setOnClickListener(v -> triggerNextEpisode());
-        btnSpeed.setOnClickListener(v -> showSpeedPanel());
-        btnLock.setOnClickListener(v -> lockScreen());
+        btnSpeed.setOnClickListener(v -> highlightAction(v, () -> showSpeedPanel()));
+        btnLock.setOnClickListener(v -> highlightAction(v, () -> lockScreen()));
         btnUnlock.setOnClickListener(v -> unlockScreen());
-        btnAudioSubs.setOnClickListener(this::showAudioSubtitlesMenu);
-        btnEpisodes.setOnClickListener(this::showEpisodeMenu);
-        btnNextEp.setOnClickListener(v -> triggerNextEpisode());
+        btnAudioSubs.setOnClickListener(v -> highlightAction(v, () -> showAudioSubtitlesMenu(v)));
+        btnEpisodes.setOnClickListener(v -> highlightAction(v, () -> showEpisodeMenu(v)));
+        btnNextEp.setOnClickListener(v -> highlightAction(v, () -> triggerNextEpisode()));
         btnRetry.setOnClickListener(v -> retryPlayback());
         if (btnAspectRatio != null) btnAspectRatio.setOnClickListener(v -> toggleAspectRatio());
         if (btnPip != null) {
@@ -1391,7 +1414,7 @@ public class ExoPlayerActivity extends AppCompatActivity {
     private Dialog showFullScreenPanel(View content) {
         Dialog dialog = new Dialog(this, android.R.style.Theme_Black_NoTitleBar_Fullscreen);
         android.widget.FrameLayout root = new android.widget.FrameLayout(this);
-        root.setBackgroundColor(Color.argb(235, 0, 0, 0));
+        root.setBackgroundColor(Color.argb(150, 0, 0, 0));
         root.setPadding(dp(28), dp(20), dp(28), dp(16));
 
         root.addView(content, new android.widget.FrameLayout.LayoutParams(
@@ -1419,7 +1442,8 @@ public class ExoPlayerActivity extends AppCompatActivity {
             window.getDecorView().setSystemUiVisibility(getWindow().getDecorView().getSystemUiVisibility());
         }
         handler.removeCallbacks(hideControlsRunnable);
-        dialog.setOnDismissListener(d -> scheduleAutoHide());
+        panelOpen = true;
+        dialog.setOnDismissListener(d -> { panelOpen = false; clearActiveAction(); scheduleAutoHide(); });
         dialog.show();
         if (window != null) window.clearFlags(WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE);
         return dialog;
@@ -1524,9 +1548,6 @@ public class ExoPlayerActivity extends AppCompatActivity {
             subtitleRows.add(new MenuRow(label, label.equals(currentSubtitleLabel), () -> selectSubtitle(label)));
         }
         columns.addView(buildOptionColumn("Subtitles", subtitleRows), new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, 1f));
-        if (!subtitleUrlByLabel.isEmpty()) {
-            columns.addView(buildSubtitleTimingColumn(), new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, 1f));
-        }
 
         dialogRef[0] = showFullScreenPanel(columns);
     }
@@ -1907,18 +1928,54 @@ public class ExoPlayerActivity extends AppCompatActivity {
                 String id = obj.optString("id", "");
                 String number = obj.optString("number", "");
                 if (id.isEmpty() || number.isEmpty()) continue;
-                episodeOptions.add(new EpisodeOption(id, number));
+                episodeOptions.add(new EpisodeOption(id, number,
+                        obj.optString("title", ""), obj.optString("synopsis", ""), obj.optString("thumbnail", "")));
             }
         } catch (Exception e) {
             Log.w(TAG, "Failed to parse episodes JSON", e);
         }
     }
 
-    // Floating window centered over the video: a rounded card with a grid of
-    // episode-number tiles (current one highlighted and scrolled into view),
-    // dismissed by the close button, a tap outside, or back.
+    // Loads [url] into [view] off the main thread; [view]'s tag says which URL it is waiting for, so
+    // a recycled row never shows a stale image.
+    private void loadThumbnail(String url, ImageView view) {
+        view.setTag(url);
+        view.setImageDrawable(null);
+        if (url == null || url.isEmpty()) return;
+        android.graphics.Bitmap hit = thumbCache.get(url);
+        if (hit != null) {
+            view.setImageBitmap(hit);
+            return;
+        }
+        thumbLoader.execute(() -> {
+            android.graphics.Bitmap bmp = null;
+            try {
+                java.net.HttpURLConnection c = (java.net.HttpURLConnection) new java.net.URL(url).openConnection();
+                c.setConnectTimeout(8000);
+                c.setReadTimeout(8000);
+                try (java.io.InputStream in = c.getInputStream()) {
+                    android.graphics.BitmapFactory.Options o = new android.graphics.BitmapFactory.Options();
+                    o.inSampleSize = 2;
+                    bmp = android.graphics.BitmapFactory.decodeStream(in, null, o);
+                } finally {
+                    c.disconnect();
+                }
+            } catch (Exception ignored) {
+            }
+            if (bmp == null) return;
+            thumbCache.put(url, bmp);
+            final android.graphics.Bitmap done = bmp;
+            handler.post(() -> {
+                if (url.equals(view.getTag())) view.setImageBitmap(done);
+            });
+        });
+    }
+
+    // Netflix-style episode list over the video: a card with one row per episode - thumbnail (with
+    // the number), title and description - the playing one marked and scrolled into view. Closed by
+    // the close button, a tap outside, or back.
     private void showEpisodeMenu(View anchor) {
-        float density = getResources().getDisplayMetrics().density;
+        final float density = getResources().getDisplayMetrics().density;
         int screenW = getResources().getDisplayMetrics().widthPixels;
         int screenH = getResources().getDisplayMetrics().heightPixels;
 
@@ -1928,35 +1985,35 @@ public class ExoPlayerActivity extends AppCompatActivity {
         LinearLayout card = new LinearLayout(this);
         card.setOrientation(LinearLayout.VERTICAL);
         GradientDrawable cardBg = new GradientDrawable();
-        cardBg.setColor(Color.parseColor("#181818"));
-        cardBg.setCornerRadius(8f * density);
+        cardBg.setColor(Color.parseColor("#E6141414"));
+        cardBg.setCornerRadius(12f * density);
+        cardBg.setStroke(Math.max(1, Math.round(density)), Color.argb(60, 255, 255, 255));
         card.setBackground(cardBg);
         card.setElevation(16f * density);
         int pad = Math.round(16 * density);
-        card.setPadding(pad, Math.round(14 * density), pad, pad);
+        card.setPadding(pad, Math.round(14 * density), pad, Math.round(8 * density));
 
-        // Header: title + subtitle on the left, close button on the right.
         LinearLayout header = new LinearLayout(this);
         header.setOrientation(LinearLayout.HORIZONTAL);
         header.setGravity(Gravity.CENTER_VERTICAL);
-        header.setPadding(0, 0, 0, Math.round(12 * density));
+        header.setPadding(0, 0, 0, Math.round(8 * density));
 
         LinearLayout titles = new LinearLayout(this);
         titles.setOrientation(LinearLayout.VERTICAL);
         titles.setLayoutParams(new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
         TextView titleView = new TextView(this);
-        titleView.setText("Episodes");
+        titleView.setText(animeTitle != null && !animeTitle.isEmpty() ? animeTitle : "Episodes");
         titleView.setTextColor(Color.WHITE);
         titleView.setTextSize(17);
+        titleView.setMaxLines(1);
+        titleView.setEllipsize(android.text.TextUtils.TruncateAt.END);
         titleView.setTypeface(titleView.getTypeface(), android.graphics.Typeface.BOLD);
         titles.addView(titleView);
-        TextView subtitleView = new TextView(this);
-        subtitleView.setText((animeTitle != null ? animeTitle + " · " : "") + episodeOptions.size() + " episodes");
-        subtitleView.setTextColor(Color.parseColor("#B3B3B3"));
-        subtitleView.setMaxLines(1);
-        subtitleView.setEllipsize(android.text.TextUtils.TruncateAt.END);
-        subtitleView.setTextSize(12);
-        titles.addView(subtitleView);
+        TextView countView = new TextView(this);
+        countView.setText(episodeOptions.size() + " episodes");
+        countView.setTextColor(Color.parseColor("#B3B3B3"));
+        countView.setTextSize(12);
+        titles.addView(countView);
         header.addView(titles);
 
         ImageView close = new ImageView(this);
@@ -1969,73 +2026,114 @@ public class ExoPlayerActivity extends AppCompatActivity {
         header.addView(close);
         card.addView(header);
 
-        // Grid of episode tiles; column count adapts to the card width.
-        int cardWidth = Math.min(Math.round(440 * density), screenW - Math.round(32 * density));
-        int tileSize = Math.round(56 * density);
-        int gap = Math.round(6 * density);
-        int columns = Math.max(3, (cardWidth - 2 * pad + gap) / (tileSize + gap));
+        final int thumbW = Math.round(136 * density);
+        final int thumbH = Math.round(77 * density);
+        android.widget.ListView list = new android.widget.ListView(this);
+        list.setDivider(null);
+        list.setVerticalScrollBarEnabled(false);
+        list.setSelector(new ColorDrawable(Color.TRANSPARENT));
+        list.setAdapter(new android.widget.BaseAdapter() {
+            @Override public int getCount() { return episodeOptions.size(); }
+            @Override public Object getItem(int i) { return episodeOptions.get(i); }
+            @Override public long getItemId(int i) { return i; }
 
-        android.widget.GridLayout grid = new android.widget.GridLayout(this);
-        grid.setColumnCount(columns);
-        View currentTile = null;
-        for (EpisodeOption option : episodeOptions) {
-            boolean isCurrent = option.number.equals(episodeNumber);
-            TextView tile = new TextView(this);
-            tile.setText(option.number);
-            tile.setGravity(Gravity.CENTER);
-            tile.setTextSize(14);
-            // Netflix-style: the playing episode is a solid white tile.
-            tile.setTextColor(isCurrent ? Color.BLACK : Color.parseColor("#D2D2D2"));
-            if (isCurrent) tile.setTypeface(tile.getTypeface(), android.graphics.Typeface.BOLD);
-            GradientDrawable tileBg = new GradientDrawable();
-            tileBg.setCornerRadius(4f * density);
-            tileBg.setColor(isCurrent ? Color.WHITE : Color.parseColor("#2F2F2F"));
-            tile.setBackground(tileBg);
-            android.widget.GridLayout.LayoutParams lp = new android.widget.GridLayout.LayoutParams(
-                    android.widget.GridLayout.spec(android.widget.GridLayout.UNDEFINED),
-                    android.widget.GridLayout.spec(android.widget.GridLayout.UNDEFINED, 1f));
-            lp.width = 0;
-            lp.height = Math.round(44 * density);
-            lp.setMargins(gap / 2, gap / 2, gap / 2, gap / 2);
-            tile.setLayoutParams(lp);
-            tile.setClickable(true);
-            tile.setOnClickListener(v -> {
-                dialog.dismiss();
-                selectEpisode(option);
-            });
-            grid.addView(tile);
-            if (isCurrent) currentTile = tile;
+            @Override
+            public View getView(int position, View convert, android.view.ViewGroup parent) {
+                EpisodeOption option = episodeOptions.get(position);
+                boolean isCurrent = option.number.equals(episodeNumber);
+
+                LinearLayout row = new LinearLayout(parent.getContext());
+                row.setOrientation(LinearLayout.HORIZONTAL);
+                row.setGravity(Gravity.CENTER_VERTICAL);
+                int p = Math.round(8 * density);
+                row.setPadding(p, p, p, p);
+                GradientDrawable rowBg = new GradientDrawable();
+                rowBg.setCornerRadius(8f * density);
+                rowBg.setColor(isCurrent ? Color.argb(46, 255, 255, 255) : Color.TRANSPARENT);
+                row.setBackground(rowBg);
+
+                android.widget.FrameLayout thumbBox = new android.widget.FrameLayout(parent.getContext());
+                GradientDrawable thumbBg = new GradientDrawable();
+                thumbBg.setCornerRadius(6f * density);
+                thumbBg.setColor(Color.parseColor("#2F2F2F"));
+                thumbBox.setBackground(thumbBg);
+                thumbBox.setClipToOutline(true);
+                ImageView thumb = new ImageView(parent.getContext());
+                thumb.setScaleType(ImageView.ScaleType.CENTER_CROP);
+                thumbBox.addView(thumb, new android.widget.FrameLayout.LayoutParams(thumbW, thumbH));
+                TextView badge = new TextView(parent.getContext());
+                badge.setText(isCurrent ? "\u25B6 " + option.number : option.number);
+                badge.setTextColor(Color.WHITE);
+                badge.setTextSize(12);
+                badge.setTypeface(badge.getTypeface(), android.graphics.Typeface.BOLD);
+                badge.setPadding(Math.round(6 * density), Math.round(2 * density), Math.round(6 * density), Math.round(2 * density));
+                GradientDrawable badgeBg = new GradientDrawable();
+                badgeBg.setCornerRadius(4f * density);
+                badgeBg.setColor(Color.argb(170, 0, 0, 0));
+                badge.setBackground(badgeBg);
+                android.widget.FrameLayout.LayoutParams bp = new android.widget.FrameLayout.LayoutParams(
+                        android.view.ViewGroup.LayoutParams.WRAP_CONTENT, android.view.ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.BOTTOM | Gravity.START);
+                bp.setMargins(Math.round(6 * density), 0, 0, Math.round(6 * density));
+                thumbBox.addView(badge, bp);
+                row.addView(thumbBox, new LinearLayout.LayoutParams(thumbW, thumbH));
+                loadThumbnail(option.thumbnail, thumb);
+
+                LinearLayout text = new LinearLayout(parent.getContext());
+                text.setOrientation(LinearLayout.VERTICAL);
+                LinearLayout.LayoutParams tp = new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f);
+                tp.setMarginStart(Math.round(12 * density));
+                TextView name = new TextView(parent.getContext());
+                name.setText(option.title != null && !option.title.isEmpty()
+                        ? option.number + ". " + option.title : "Episode " + option.number);
+                name.setTextColor(Color.WHITE);
+                name.setTextSize(14);
+                name.setMaxLines(2);
+                name.setEllipsize(android.text.TextUtils.TruncateAt.END);
+                name.setTypeface(name.getTypeface(), android.graphics.Typeface.BOLD);
+                text.addView(name);
+                if (option.synopsis != null && !option.synopsis.isEmpty()) {
+                    TextView desc = new TextView(parent.getContext());
+                    desc.setText(option.synopsis);
+                    desc.setTextColor(Color.parseColor("#B3B3B3"));
+                    desc.setTextSize(12);
+                    desc.setMaxLines(3);
+                    desc.setEllipsize(android.text.TextUtils.TruncateAt.END);
+                    desc.setPadding(0, Math.round(3 * density), 0, 0);
+                    text.addView(desc);
+                }
+                row.addView(text, tp);
+                return row;
+            }
+        });
+        list.setOnItemClickListener((parent, view, position, id) -> {
+            dialog.dismiss();
+            selectEpisode(episodeOptions.get(position));
+        });
+        card.addView(list, new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT,
+                Math.round(screenH * 0.78f) - Math.round(80 * density)));
+
+        int currentIndex = 0;
+        for (int i = 0; i < episodeOptions.size(); i++) {
+            if (episodeOptions.get(i).number.equals(episodeNumber)) { currentIndex = i; break; }
         }
-
-        android.widget.ScrollView scrollView = new android.widget.ScrollView(this);
-        int rows = (episodeOptions.size() + columns - 1) / columns;
-        int gridHeight = rows * (Math.round(44 * density) + gap);
-        int maxGridHeight = Math.round(screenH * 0.8f) - Math.round(90 * density);
-        scrollView.setLayoutParams(new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                gridHeight > maxGridHeight ? maxGridHeight : LinearLayout.LayoutParams.WRAP_CONTENT));
-        scrollView.addView(grid);
-        card.addView(scrollView);
-
-        if (currentTile != null) {
-            final View target = currentTile;
-            scrollView.post(() -> scrollView.scrollTo(0,
-                    Math.max(0, target.getTop() - scrollView.getHeight() / 2 + target.getHeight() / 2)));
-        }
+        final int scrollTo = currentIndex;
+        list.post(() -> list.setSelectionFromTop(scrollTo, Math.round(40 * density)));
 
         dialog.setContentView(card);
         dialog.setCanceledOnTouchOutside(true);
         Window window = dialog.getWindow();
         if (window != null) {
             window.setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));
-            window.setLayout(cardWidth, WindowManager.LayoutParams.WRAP_CONTENT);
+            window.setLayout(Math.min(Math.round(560 * density), screenW - Math.round(32 * density)), WindowManager.LayoutParams.WRAP_CONTENT);
             window.setGravity(Gravity.CENTER);
-            window.setDimAmount(0.6f);
+            window.setDimAmount(0.45f);
             // Keep the player immersive while the window is up.
             window.setFlags(WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
                     WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE);
             window.getDecorView().setSystemUiVisibility(getWindow().getDecorView().getSystemUiVisibility());
         }
+        panelOpen = true;
+        dialog.setOnDismissListener(d -> { panelOpen = false; clearActiveAction(); });
         dialog.show();
         if (window != null) window.clearFlags(WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE);
     }
@@ -2283,6 +2381,7 @@ public class ExoPlayerActivity extends AppCompatActivity {
         DefaultHttpDataSource.Factory dataSourceFactory = buildDataSourceFactory(referer);
 
         java.util.List<MediaItem.SubtitleConfiguration> subtitleConfigs = parseSubtitles(subtitlesJson);
+        autoSyncDubSubtitles();
         if (!subtitleSelectionInitialized) {
             // Dub: subtitles start off. The tracks a dub server lists are
             // usually the subbed release's captions, timed to the Japanese
@@ -2318,8 +2417,12 @@ public class ExoPlayerActivity extends AppCompatActivity {
         previewMediaItem = mediaItem;
         previewSourceFactory = mediaSourceFactory;
 
+        androidx.media3.exoplayer.trackselection.AdaptiveTrackSelection.Factory abr =
+                new androidx.media3.exoplayer.trackselection.AdaptiveTrackSelection.Factory(
+                        ABR_MIN_UP_MS, ABR_MAX_DOWN_MS, ABR_RETAIN_MS, ABR_BANDWIDTH_FRACTION);
         player = new ExoPlayer.Builder(this)
                 .setMediaSourceFactory(mediaSourceFactory)
+                .setTrackSelector(new DefaultTrackSelector(this, abr))
                 .setLoadControl(loadControl)
                 .setAudioAttributes(audioAttributes, true)
                 .setHandleAudioBecomingNoisy(true)
@@ -2586,12 +2689,49 @@ public class ExoPlayerActivity extends AppCompatActivity {
         player.seekTo(resumeGuardMs);
     }
 
+    /**
+     * A segment request that hangs can keep the player "buffering" for a minute or more before
+     * ExoPlayer's own retries give up. When the buffer has not grown at all for STALL_RECOVER_MS,
+     * rebuild the player at the same spot (fresh connections); if that happens again soon after,
+     * the link or CDN node is bad, so look the episode up again and continue from here.
+     */
+    private void checkStall() {
+        if (player == null || activityStopped || offlinePlayback
+                || player.getPlaybackState() != Player.STATE_BUFFERING || !player.getPlayWhenReady()
+                || player.getCurrentPosition() <= 0) {
+            stallSinceMs = -1;
+            return;
+        }
+        long now = android.os.SystemClock.elapsedRealtime();
+        long buffered = player.getBufferedPosition();
+        if (stallSinceMs < 0 || buffered > stallBufferedMs + 500) {
+            // Data is still arriving: a slow connection, not a dead one.
+            stallSinceMs = now;
+            stallBufferedMs = buffered;
+            return;
+        }
+        if (now - stallSinceMs < STALL_RECOVER_MS) return;
+        stallSinceMs = -1;
+        if (now - lastStallRecoveryAt > 120_000) stallRecoveries = 0;
+        lastStallRecoveryAt = now;
+        stallRecoveries++;
+        if (stallRecoveries == 1) {
+            Log.w(TAG, "Playback stalled at " + player.getCurrentPosition() + "ms, rebuilding the player");
+            retryPlayback();
+        } else {
+            Log.w(TAG, "Playback stalled again, fetching a fresh stream link");
+            final long resumeAt = Math.max(lastKnownPositionMs, player.getCurrentPosition());
+            resolveNatively(episodeNumber, currentMode, resumeAt, true, false, this::retryPlayback);
+        }
+    }
+
     private void updateProgress() {
         if (player == null || userSeeking || awaitingStream) return;
         enforceResumePosition();
         long duration = Math.max(player.getDuration(), 0);
         long position = Math.max(player.getCurrentPosition(), 0);
         if (position > 0) lastKnownPositionMs = position;
+        checkStall();
         if (duration > 0) {
             seekBar.setProgress((int) ((position * 1000) / duration));
             seekBar.setSecondaryProgress(player.getBufferedPercentage() * 10);
@@ -2977,6 +3117,7 @@ public class ExoPlayerActivity extends AppCompatActivity {
     @Override
     protected void onDestroy() {
         super.onDestroy();
+        thumbLoader.shutdownNow();
         if (isFinishing()) ExoPlayerPlugin.notifyPlayerClosed();
         if (currentActivity != null && currentActivity.get() == this) currentActivity = null;
         handler.removeCallbacksAndMessages(null);

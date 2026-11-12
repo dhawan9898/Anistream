@@ -12,6 +12,9 @@ import type { AnimeItem } from './aniCliCore';
 const TMDB = 'https://api.themoviedb.org/3';
 const STORY_ARC = 5;
 const ARC_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+// A single season (12-26 episodes) is not split into arcs: TMDB's arc groups for a franchise
+// span several seasons, and cutting one season by them gives meaningless "arcs".
+export const MIN_EPISODES_FOR_ARCS = 40;
 
 /** Episodes [start, end] (1-based, inclusive) of one arc. */
 export interface StoryArc {
@@ -52,7 +55,7 @@ async function tmdb<T>(path: string, key: string): Promise<T> {
 export function arcsFromGroup(details: TmdbGroupDetails, siteEpisodes: number): StoryArc[] {
   const groups = [...(details.groups ?? [])].sort((a, b) => a.order - b.order).filter(g => g.episodes.length > 0);
   const total = groups.reduce((n, g) => n + g.episodes.length, 0);
-  if (groups.length < 2 || siteEpisodes <= 0) return [];
+  if (groups.length < 2 || siteEpisodes < MIN_EPISODES_FOR_ARCS) return [];
   // Recaps / specials counted differently are fine; a different show or season split is not.
   if (total < siteEpisodes * 0.8 || total > siteEpisodes * 1.25 + 30) return [];
   const arcs: StoryArc[] = [];
@@ -82,8 +85,8 @@ const memory = new Map<string, Promise<StoryArc[]>>();
 /** The story arcs for a title with [siteEpisodes] episodes, or [] when there are none to show. */
 export function getStoryArcs(anime: AnimeItem, siteEpisodes: number): Promise<StoryArc[]> {
   const key = apiKey();
-  if (!key || siteEpisodes < 2) return Promise.resolve([]);
-  const cacheKey = `arcs:${anime.id}:${siteEpisodes}`;
+  if (!key || siteEpisodes < MIN_EPISODES_FOR_ARCS) return Promise.resolve([]);
+  const cacheKey = `arcs2:${anime.id}:${siteEpisodes}`;
   const hit = memory.get(cacheKey);
   if (hit) return hit;
   const pending = (async () => {

@@ -80,7 +80,97 @@ function findKitsuId(anime: AnimeItem, totalEpisodes: number): Promise<string | 
   return pending;
 }
 
+// Kitsu fills in a placeholder when it has no real title.
+const PLACEHOLDER_TITLE = /^(title|tba|tbd|n\/a|episode\s*\d+)$/i;
+const realTitle = (t?: string) => (t && !PLACEHOLDER_TITLE.test(t.trim()) ? t.trim() : undefined);
+
+// ---- Jikan (MyAnimeList): fills the gaps Kitsu leaves in long series (e.g. no title or synopsis
+// past episode ~100 of Naruto). Optional: any failure just leaves the Kitsu data as it is. ----
+const JIKAN = 'https://api.jikan.moe/v4';
+const malIdCache = new Map<string, Promise<string | null>>();
+
+function findMalId(kitsuId: string): Promise<string | null> {
+  const hit = malIdCache.get(kitsuId);
+  if (hit) return hit;
+  const pending = getJson<{ data?: { attributes?: { externalId?: string } }[] }>(
+    `/anime/${kitsuId}/mappings?filter%5BexternalSite%5D=myanimelist%2Fanime&fields%5Bmappings%5D=externalId`
+  ).then(j => j.data?.[0]?.attributes?.externalId ?? null).catch(() => null);
+  malIdCache.set(kitsuId, pending);
+  pending.then(v => { if (v === null) malIdCache.delete(kitsuId); });
+  return pending;
+}
+
+const jikanTitles = new Map<string, Promise<Map<string, string>>>();
+
+/** Episode titles by number from MyAnimeList's episode list (100 per page, fetched as needed). */
+function getJikanTitles(malId: string, upTo: number): Promise<Map<string, string>> {
+  const key = `${malId}:${Math.ceil(upTo / 100)}`;
+  const hit = jikanTitles.get(key);
+  if (hit) return hit;
+  const pending = (async () => {
+    const out = new Map<string, string>();
+    for (let page = 1; page <= Math.ceil(upTo / 100) && page <= 12; page++) {
+      const res = await request(`${JIKAN}/anime/${malId}/episodes?page=${page}`, {}, { timeoutMs: 10000, retries: 1 });
+      const json = (await res.json()) as { data?: { mal_id: number; title?: string }[]; pagination?: { has_next_page?: boolean } };
+      for (const e of json.data ?? []) {
+        const t = realTitle(e.title);
+        if (t) out.set(String(e.mal_id), t);
+      }
+      if (!json.pagination?.has_next_page) break;
+    }
+    return out;
+  })().catch(() => new Map<string, string>());
+  jikanTitles.set(key, pending);
+  pending.then(m => { if (m.size === 0) jikanTitles.delete(key); });
+  return pending;
+}
+
+/** One episode's synopsis from MyAnimeList, for a row the viewer opened. Undefined when unknown. */
+export async function getEpisodeSynopsis(anime: AnimeItem, number: string, totalEpisodes: number): Promise<string | undefined> {
+  if (!/^\d+$/.test(number)) return undefined;
+  const key = `epsyn:${anime.id}|${number}`;
+  const saved = await readPersistedJson<string | null>(key);
+  if (saved) return saved.value ?? undefined;
+  try {
+    const kitsu = await findKitsuId(anime, totalEpisodes);
+    const mal = kitsu ? await findMalId(kitsu) : null;
+    if (!mal) return undefined;
+    const res = await request(`${JIKAN}/anime/${mal}/episodes/${number}`, {}, { timeoutMs: 10000, retries: 1 });
+    const json = (await res.json()) as { data?: { synopsis?: string | null } };
+    const text = json.data?.synopsis?.replace(/\s*\(Source:[^)]*\)\s*$/i, '').trim() || undefined;
+    writePersistedJson(key, text ?? null);
+    return text;
+  } catch {
+    return undefined;
+  }
+}
+
 const memory = new Map<string, EpisodeInfo | null>();
+
+/** What is already known about an episode (memory only, never touches the network). */
+export function peekEpisodeInfo(anime: AnimeItem, number: string): EpisodeInfo | undefined {
+  return memory.get(`${anime.id}|${number}`) ?? undefined;
+}
+
+/**
+ * Loads info for the 50 episodes around [currentNumber] so the player's episode list has it, but
+ * never holds playback up for more than [maxWaitMs].
+ */
+export async function warmEpisodeInfo(
+  anime: AnimeItem,
+  episodes: { number: string }[],
+  currentNumber: string,
+  maxWaitMs = 1500
+): Promise<void> {
+  const at = Math.max(0, episodes.findIndex(e => e.number === currentNumber));
+  const start = Math.max(0, at - 10);
+  const numbers = episodes.slice(start, start + 50).map(e => e.number);
+  if (numbers.length === 0) return;
+  await Promise.race([
+    getEpisodeInfo(anime, numbers, episodes.length).catch(() => ({})),
+    new Promise(resolve => setTimeout(resolve, maxWaitMs))
+  ]);
+}
 
 /**
  * Info for the given episode numbers of a title, keyed by the number as the
@@ -104,7 +194,7 @@ export async function getEpisodeInfo(
   // Disk first (also covers offline).
   const stillMissing: string[] = [];
   await Promise.all(missing.map(async n => {
-    const saved = await readPersistedJson<EpisodeInfo | null>(`epinfo:${anime.id}|${n}`);
+    const saved = await readPersistedJson<EpisodeInfo | null>(`epinfo2:${anime.id}|${n}`);
     if (saved) {
       memory.set(`${anime.id}|${n}`, saved.value);
       if (saved.value) out[n] = saved.value;
@@ -114,36 +204,64 @@ export async function getEpisodeInfo(
   }));
   if (stillMissing.length === 0 || (typeof navigator !== 'undefined' && navigator.onLine === false)) return out;
 
+  let kitsuId: string | null = null;
   try {
-    const id = await findKitsuId(anime, totalEpisodes);
-    if (!id) return out;
-    const whole = stillMissing.filter(n => /^\d+$/.test(n)); // "2.5"-style specials aren't on Kitsu's list
-    for (let i = 0; i < whole.length; i += NUMBERS_PER_REQUEST) {
-      const batch = whole.slice(i, i + NUMBERS_PER_REQUEST);
+    kitsuId = await findKitsuId(anime, totalEpisodes);
+  } catch (err) {
+    console.warn('[episodeInfo] unavailable:', err);
+  }
+  if (!kitsuId) return out;
+  const id = kitsuId;
+
+  const whole = stillMissing.filter(n => /^\d+$/.test(n)); // "2.5"-style specials aren't on Kitsu's list
+  const batches: string[][] = [];
+  for (let i = 0; i < whole.length; i += NUMBERS_PER_REQUEST) batches.push(whole.slice(i, i + NUMBERS_PER_REQUEST));
+
+  // Batches run side by side and fail on their own: one bad page no longer drops the rest of the
+  // range (which left everything past the first page without thumbnails), and a batch that
+  // failed is not remembered as "no data", so it is retried next time.
+  const found = new Map<string, EpisodeInfo>();
+  const answered = new Set<string>();
+  await Promise.all(batches.map(async batch => {
+    try {
       const json = await getJson<{ data?: KitsuEpisode[] }>(
         `/anime/${id}/episodes?filter%5Bnumber%5D=${batch.join(',')}&page%5Blimit%5D=${NUMBERS_PER_REQUEST}` +
         `&fields%5Bepisodes%5D=number,canonicalTitle,titles,synopsis,thumbnail`
       );
-      const byNumber = new Map<string, EpisodeInfo>();
       for (const ep of json.data || []) {
         const a = ep.attributes;
         if (a.number === undefined) continue;
-        const title = a.canonicalTitle || a.titles?.en_us || a.titles?.en_jp;
-        byNumber.set(String(a.number), {
-          title: title || undefined,
+        found.set(String(a.number), {
+          title: realTitle(a.canonicalTitle) || realTitle(a.titles?.en_us) || realTitle(a.titles?.en_jp),
           synopsis: a.synopsis?.trim() || undefined,
           thumbnail: a.thumbnail?.original || a.thumbnail?.large || undefined
         });
       }
-      for (const n of batch) {
-        const info = byNumber.get(n) ?? null;
-        memory.set(`${anime.id}|${n}`, info);
-        writePersistedJson(`epinfo:${anime.id}|${n}`, info);
-        if (info) out[n] = info;
+      batch.forEach(n => answered.add(n));
+    } catch (err) {
+      console.warn('[episodeInfo] batch unavailable:', err);
+    }
+  }));
+
+  // Titles Kitsu lacks come from MyAnimeList's list.
+  const untitled = whole.filter(n => !found.get(n)?.title);
+  if (untitled.length > 0) {
+    const mal = await findMalId(id);
+    if (mal) {
+      const titles = await getJikanTitles(mal, Math.max(...untitled.map(Number)));
+      for (const n of untitled) {
+        const title = titles.get(n);
+        if (title) found.set(n, { ...found.get(n), title });
       }
     }
-  } catch (err) {
-    console.warn('[episodeInfo] unavailable:', err);
+  }
+
+  for (const n of whole) {
+    if (!answered.has(n)) continue;
+    const info = found.get(n) ?? null;
+    memory.set(`${anime.id}|${n}`, info);
+    writePersistedJson(`epinfo2:${anime.id}|${n}`, info);
+    if (info) out[n] = info;
   }
   return out;
 }

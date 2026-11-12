@@ -43,6 +43,9 @@ export interface AnimeDetails {
   // Other seasons/parts/movies of the same franchise. May include the anime
   // itself (same id) so the rail reads as a whole collection.
   collection: AnimeItem[];
+  // The franchise's TV seasons in watch order (only when there are two or more), each carrying a
+  // seasonLabel. Drives the season switcher on the episode list.
+  seasons: AnimeItem[];
   suggestions: AnimeItem[];
 }
 
@@ -195,6 +198,41 @@ function franchiseKey(title: string): string {
     .replace(/\b\d+(st|nd|rd|th)\s+season\b.*$/, '')
     .replace(/\b(ii|iii|iv|2|3|4|5)$/, '')
     .trim();
+}
+
+// Season number a title announces ("Season 2", "3rd Season", "Part 2", trailing "2" / "III").
+// Plain titles are season 1; a plain title with only a subtitle ("Naruto: Shippuden") sorts after them.
+function seasonRank(title: string): number {
+  const t = title.toLowerCase();
+  const m = t.match(/season\s*(\d+)/) || t.match(/(\d+)(?:st|nd|rd|th)\s+season/) || t.match(/\bpart\s*(\d+)/)
+    || t.match(/\s(\d)$/);
+  if (m) return parseInt(m[1], 10);
+  const roman = t.match(/\b(ii|iii|iv|v)$/);
+  if (roman) return { ii: 2, iii: 3, iv: 4, v: 5 }[roman[1] as 'ii' | 'iii' | 'iv' | 'v'];
+  return /[:\-–]/.test(title) ? 1.5 : 1;
+}
+
+const NOT_A_SEASON = /movie|special|ova|ona|music|pv|cm/i;
+
+/**
+ * The TV seasons of the franchise [anime] belongs to, in watch order, labelled "Season N".
+ * Movies, OVAs and specials are not seasons (they stay in the Collection tab). Fewer than two
+ * seasons means there is nothing to switch between, so the result is empty.
+ */
+export function pickSeasons(anime: AnimeItem, candidates: AnimeItem[]): AnimeItem[] {
+  const key = franchiseKey(anime.title);
+  const isSeason = (c: AnimeItem) => !NOT_A_SEASON.test(c.type || '') && franchiseKey(c.title) === key && key.length >= 3;
+  const seen = new Set<string>();
+  const family = [anime, ...candidates].filter(c => {
+    if (seen.has(c.id) || (c.id !== anime.id && !isSeason(c))) return false;
+    seen.add(c.id);
+    return true;
+  });
+  if (family.length < 2) return [];
+  const ranked = family
+    .map((item, index) => ({ item, index, rank: seasonRank(item.title) }))
+    .sort((a, b) => a.rank - b.rank || a.index - b.index);
+  return ranked.map((r, i) => ({ ...r.item, seasonLabel: `Season ${i + 1}` }));
 }
 
 // Next-page link as the site itself renders it (?page=N or /page/N/),
@@ -659,17 +697,30 @@ async function loadAnimeDetails(anime: AnimeItem): Promise<AnimeDetails> {
     collection = dedupe([anime, ...aniList.relations])
       .sort((a, b) => (order.get(a.id) ?? Infinity) - (order.get(b.id) ?? Infinity));
   }
-  if (collection.length <= 1) {
-    const key = franchiseKey(anime.title);
-    if (key.length >= 3) {
-      try {
-        const results = await searchAnimeLive(key);
-        const family = results.filter(r => franchiseKey(r.title) === key || normalizeTitle(r.title).startsWith(key));
-        if (family.some(r => r.id !== anime.id)) collection = dedupe([anime, ...family]);
-      } catch (err) {
-        console.warn('[catalogService] Collection search failed:', err);
-      }
+
+  // Seasons are worked out on their own: a related block holding only movies used to make the
+  // collection look complete, so the franchise search below never ran and a show like
+  // My Hero Academia had no seasons at all.
+  // The site's own season switcher is authoritative (its titles are just "Season 2" labels).
+  let seasons: AnimeItem[] = parsed.seasons.length >= 2
+    ? dedupe(parsed.seasons).map((x, i) => ({ ...x, seasonLabel: x.seasonLabel || `Season ${i + 1}` }))
+    : [];
+  let family: AnimeItem[] = [];
+  const key = franchiseKey(anime.title);
+  if ((seasons.length === 0 || collection.length <= 1) && key.length >= 3) {
+    try {
+      const results = await searchAnimeLive(key);
+      family = results.filter(r => franchiseKey(r.title) === key || normalizeTitle(r.title).startsWith(key));
+    } catch (err) {
+      console.warn('[catalogService] Collection search failed:', err);
     }
+  }
+  if (seasons.length === 0) seasons = pickSeasons(anime, [...family, ...collection]);
+  if (collection.length <= 1 && family.some(r => r.id !== anime.id)) collection = dedupe([anime, ...family]);
+  // Every season belongs in the collection too, under its season label.
+  if (seasons.length > 0) {
+    const labelled = new Map(seasons.map(x => [x.id, x]));
+    collection = dedupe([...seasons, ...collection.map(c => labelled.get(c.id) ?? c)]);
   }
 
   // More Like This: real similarity first (AniList recommendations), then
@@ -686,5 +737,5 @@ async function loadAnimeDetails(anime: AnimeItem): Promise<AnimeDetails> {
     suggestions = dedupe(parsed.recommended, exclude).filter(notSameShow);
   }
 
-  return { description, genres, collection: collection.length > 1 ? collection : [], suggestions };
+  return { description, genres, collection: collection.length > 1 ? collection : [], seasons, suggestions };
 }

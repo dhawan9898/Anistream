@@ -4,7 +4,7 @@
 //
 // CLI:   node sync-native.mjs --package com.example.app --java <dir> --res <dir> [--check true]
 // --check only reports drift (exit 1) instead of writing.
-import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 

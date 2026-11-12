@@ -21,6 +21,7 @@ import {
   type StreamSource
 } from './providers/aniCliCore';
 import { resolveStream } from './providers/streamResolver';
+import { peekEpisodeInfo, warmEpisodeInfo } from './providers/episodeInfoService';
 import { handleLayerBack } from 'streamkit/core/backStack.ts';
 import {
   getUserPreferences,
@@ -430,7 +431,17 @@ export const App: React.FC = () => {
     mode,
     subtitles: source.subtitles,
     qualities: source.qualities,
-    episodes: episodes.map(e => ({ id: e.id, number: e.number })),
+    episodes: episodes.map(e => {
+      const info = peekEpisodeInfo(anime, e.number);
+      const siteTitle = e.title && e.title.trim().toLowerCase() !== `episode ${e.number}` ? e.title : undefined;
+      return {
+        id: e.id,
+        number: e.number,
+        title: siteTitle || info?.title,
+        synopsis: info?.synopsis,
+        thumbnail: info?.thumbnail
+      };
+    }),
     isFallback: source.isFallback,
     intro: source.intro,
     outro: source.outro,
@@ -543,6 +554,10 @@ export const App: React.FC = () => {
         episodeListRef.current = episodesForPlayer;
         loadedEpisodeListAnimeId.current = resolvedEpisodeList ? anime.id : null;
       }
+
+      // Titles, descriptions and thumbnails for the player's episode list (short wait at most).
+      if (isNative && !download) await warmEpisodeInfo(anime, episodesForPlayer, episode.number);
+      if (requestId !== playRequestRef.current) return;
 
       const source = applyPreferredQuality(rawSource, prefs);
       const session: PlaybackSession = { anime, episode, mode, source, startTime };

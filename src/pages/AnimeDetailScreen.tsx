@@ -16,7 +16,7 @@ import {
   subscribeLibraryChanges,
   type WatchHistoryItem
 } from '../services/historyService';
-import { getEpisodeInfo, type EpisodeInfo } from '../providers/episodeInfoService';
+import { getEpisodeInfo, getEpisodeSynopsis, type EpisodeInfo } from '../providers/episodeInfoService';
 import { getStoryArcs, type StoryArc } from '../providers/arcService';
 import { getAnimeDetails, hasDub, resolveAnime, type AnimeDetails } from '../providers/catalogService';
 import { PosterCard } from '../components/PosterCard';
@@ -60,6 +60,9 @@ export const AnimeDetailScreen: React.FC<AnimeDetailScreenProps> = ({
   const [expanded, setExpanded] = useState<boolean>(false);
   const downloads = useDownloads();
   const [pickerOpen, setPickerOpen] = useState<boolean>(false);
+  const [seasonPickerOpen, setSeasonPickerOpen] = useState<boolean>(false);
+  // Synopses fetched on demand for an opened episode (MyAnimeList), by episode number.
+  const [extraSynopsis, setExtraSynopsis] = useState<Record<string, string>>({});
   // The one episode tile whose full description is open (accordion).
   const [expandedEp, setExpandedEp] = useState<string | null>(null);
   const [arcs, setArcs] = useState<StoryArc[]>([]);
@@ -284,11 +287,28 @@ export const AnimeDetailScreen: React.FC<AnimeDetailScreenProps> = ({
   const pickerLabel = ranges[activeRange]?.name ?? '';
   const suggestions = details?.suggestions || [];
 
+  // A movie has one "episode": no Episodes tab, just Play and the rest.
+  const isMovie = /^movie$/i.test(shown.type || '');
+  const seasons = details?.seasons ?? [];
+  const currentSeason = seasons.find(x => x.id === shown.id);
+  const seasonSections: CategorySection[] = [{ items: seasons.map(x => ({ key: x.id, name: x.seasonLabel || x.title })) }];
   const tabs: { id: DetailTab; label: string }[] = [
-    { id: 'episodes', label: 'Episodes' },
+    ...(isMovie ? [] : [{ id: 'episodes' as DetailTab, label: 'Episodes' }]),
     ...(collection.length > 0 ? [{ id: 'collection' as DetailTab, label: 'Collection' }] : []),
     { id: 'similar', label: 'More Like This' }
   ];
+
+  const activeTab: DetailTab = isMovie && tab === 'episodes' ? (collection.length > 0 ? 'collection' : 'similar') : tab;
+
+  // Opening an episode whose synopsis Kitsu lacks asks MyAnimeList for it.
+  const openEpisode = (ep: { id: string; number: string }, willOpen: boolean) => {
+    setExpandedEp(willOpen ? ep.id : null);
+    if (willOpen && resolved && !epInfo[ep.number]?.synopsis && extraSynopsis[ep.number] === undefined) {
+      getEpisodeSynopsis(resolved, ep.number, episodes.length).then(text => {
+        if (text) setExtraSynopsis(prev => ({ ...prev, [ep.number]: text }));
+      });
+    }
+  };
 
   const metaParts = [
     shown.type || 'TV',
@@ -469,7 +489,7 @@ export const AnimeDetailScreen: React.FC<AnimeDetailScreenProps> = ({
         {/* Tabs - Apple segmented pill control */}
         <div className="seg-track" style={{ marginBottom: '18px' }}>
           {tabs.map(t => {
-            const active = tab === t.id;
+            const active = activeTab === t.id;
             return (
               <button
                 key={t.id}
@@ -491,8 +511,38 @@ export const AnimeDetailScreen: React.FC<AnimeDetailScreenProps> = ({
           </div>
         )}
 
-        {settled && tab === 'episodes' && (
+        {settled && activeTab === 'episodes' && (
           <>
+            {seasons.length > 1 && (
+              <button
+                onClick={() => { hapticLight(); setSeasonPickerOpen(true); }}
+                className="interactive"
+                aria-haspopup="dialog"
+                style={{
+                  display: 'inline-flex', alignItems: 'center', gap: '12px', padding: '10px 14px',
+                  marginRight: '10px', marginBottom: '14px', background: 'var(--track-bg)',
+                  border: '1px solid var(--border-subtle)', borderRadius: '4px',
+                  color: 'var(--text-primary)', fontSize: '15px', fontWeight: 700
+                }}
+              >
+                <span>{currentSeason?.seasonLabel || 'Seasons'}</span>
+                <ChevronDown size={18} />
+              </button>
+            )}
+            <CategoryPicker
+              open={seasonPickerOpen}
+              presentation="card"
+              title="Seasons"
+              sections={seasonSections}
+              selectedKey={currentSeason?.id ?? ''}
+              onSelect={key => {
+                hapticSelection();
+                setSeasonPickerOpen(false);
+                const next = seasons.find(x => x.id === key);
+                if (next && next.id !== shown.id) onSelectAnime(next);
+              }}
+              onClose={() => { hapticLight(); setSeasonPickerOpen(false); }}
+            />
             {rangeCount > 1 && (
               <button
                 onClick={() => { hapticLight(); setPickerOpen(true); }}
@@ -583,11 +633,11 @@ export const AnimeDetailScreen: React.FC<AnimeDetailScreenProps> = ({
                       aria-expanded={expanded}
                       // Tapping the tile opens (or closes) its description; opening
                       // another one closes this one. Only the thumbnail plays.
-                      onClick={() => { hapticSelection(); setExpandedEp(expanded ? null : ep.id); }}
+                      onClick={() => { hapticSelection(); openEpisode(ep, !expanded); }}
                       onKeyDown={e => {
                         if (e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ')) {
                           e.preventDefault();
-                          setExpandedEp(expanded ? null : ep.id);
+                          openEpisode(ep, !expanded);
                         }
                       }}
                       className="interactive glass-panel"
@@ -635,12 +685,12 @@ export const AnimeDetailScreen: React.FC<AnimeDetailScreenProps> = ({
                             {status}
                           </p>
                         )}
-                        {(info?.synopsis || expanded) && (
+                        {(info?.synopsis || extraSynopsis[ep.number] || expanded) && (
                           <p style={{
                             fontSize: '12px', lineHeight: 1.45, color: 'var(--text-secondary)', marginTop: '4px',
                             ...(expanded ? {} : { display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' as const, overflow: 'hidden' })
                           }}>
-                            {info?.synopsis || 'No description available for this episode.'}
+                            {info?.synopsis || extraSynopsis[ep.number] || 'No description available for this episode.'}
                           </p>
                         )}
                       </div>
@@ -660,7 +710,7 @@ export const AnimeDetailScreen: React.FC<AnimeDetailScreenProps> = ({
           </>
         )}
 
-        {settled && tab === 'collection' && (
+        {settled && activeTab === 'collection' && (
           <div className="grid-collection">
             {collection.map(item => {
               const isCurrent = item.id === shown.id;
@@ -678,7 +728,7 @@ export const AnimeDetailScreen: React.FC<AnimeDetailScreenProps> = ({
           </div>
         )}
 
-        {settled && tab === 'similar' && (
+        {settled && activeTab === 'similar' && (
           details === null ? (
             <div className="grid-collection">
               {Array.from({ length: 6 }).map((_, i) => (
