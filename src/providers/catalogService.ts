@@ -20,6 +20,7 @@ import {
   type AnimeItem
 } from './aniCliCore';
 import { request } from 'streamkit/core/http.ts';
+import { seasonLabels, walkSeasons, type SeasonMedia } from './seasonService.ts';
 import { readPersistedJson, writePersistedJson } from '../services/persistentCache.ts';
 
 export interface Genre {
@@ -40,8 +41,8 @@ export interface GenrePage {
 export interface AnimeDetails {
   description?: string;
   genres: string[];
-  // Other seasons/parts/movies of the same franchise. May include the anime
-  // itself (same id) so the rail reads as a whole collection.
+  // The rest of the franchise, Netflix style: movies, OVAs, specials, spin-offs and separate shows.
+  // Never this title itself and never one of its seasons (those are in the season picker).
   collection: AnimeItem[];
   // The franchise's TV seasons in watch order (only when there are two or more), each carrying a
   // seasonLabel. Drives the season switcher on the episode list.
@@ -83,6 +84,8 @@ interface AniListMedia {
   type?: string;
   format?: string;
   episodes?: number | null;
+  status?: string | null;
+  nextAiringEpisode?: { episode?: number | null } | null;
   genres?: string[] | null;
   synonyms?: string[] | null;
   title?: { romaji?: string | null; english?: string | null } | null;
@@ -113,7 +116,7 @@ async function anilist(query: string, variables: Record<string, unknown>): Promi
   return json?.data;
 }
 
-const MEDIA_FIELDS = `id format episodes genres synonyms
+const MEDIA_FIELDS = `id format episodes status nextAiringEpisode { episode } genres synonyms
   title { romaji english }
   coverImage { extraLarge large }
   startDate { year month }
@@ -179,7 +182,7 @@ function dedupe(items: AnimeItem[], exclude: Set<string> = new Set()): AnimeItem
 }
 
 function normalizeTitle(title: string): string {
-  return decodeHtmlEntities(title).toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+  return decodeHtmlEntities(title).normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
 }
 
 function titlesMatch(a: string, b: string): boolean {
@@ -198,41 +201,6 @@ function franchiseKey(title: string): string {
     .replace(/\b\d+(st|nd|rd|th)\s+season\b.*$/, '')
     .replace(/\b(ii|iii|iv|2|3|4|5)$/, '')
     .trim();
-}
-
-// Season number a title announces ("Season 2", "3rd Season", "Part 2", trailing "2" / "III").
-// Plain titles are season 1; a plain title with only a subtitle ("Naruto: Shippuden") sorts after them.
-function seasonRank(title: string): number {
-  const t = title.toLowerCase();
-  const m = t.match(/season\s*(\d+)/) || t.match(/(\d+)(?:st|nd|rd|th)\s+season/) || t.match(/\bpart\s*(\d+)/)
-    || t.match(/\s(\d)$/);
-  if (m) return parseInt(m[1], 10);
-  const roman = t.match(/\b(ii|iii|iv|v)$/);
-  if (roman) return { ii: 2, iii: 3, iv: 4, v: 5 }[roman[1] as 'ii' | 'iii' | 'iv' | 'v'];
-  return /[:\-–]/.test(title) ? 1.5 : 1;
-}
-
-const NOT_A_SEASON = /movie|special|ova|ona|music|pv|cm/i;
-
-/**
- * The TV seasons of the franchise [anime] belongs to, in watch order, labelled "Season N".
- * Movies, OVAs and specials are not seasons (they stay in the Collection tab). Fewer than two
- * seasons means there is nothing to switch between, so the result is empty.
- */
-export function pickSeasons(anime: AnimeItem, candidates: AnimeItem[]): AnimeItem[] {
-  const key = franchiseKey(anime.title);
-  const isSeason = (c: AnimeItem) => !NOT_A_SEASON.test(c.type || '') && franchiseKey(c.title) === key && key.length >= 3;
-  const seen = new Set<string>();
-  const family = [anime, ...candidates].filter(c => {
-    if (seen.has(c.id) || (c.id !== anime.id && !isSeason(c))) return false;
-    seen.add(c.id);
-    return true;
-  });
-  if (family.length < 2) return [];
-  const ranked = family
-    .map((item, index) => ({ item, index, rank: seasonRank(item.title) }))
-    .sort((a, b) => a.rank - b.rank || a.index - b.index);
-  return ranked.map((r, i) => ({ ...r.item, seasonLabel: `Season ${i + 1}` }));
 }
 
 // Next-page link as the site itself renders it (?page=N or /page/N/),
@@ -350,6 +318,17 @@ export async function resolveAnime(anime: AnimeItem): Promise<AnimeItem> {
   }
 }
 
+// "season 2" / "2nd season" / "part 2" / a trailing number, as one comparable key ("" for none).
+export function seasonMarker(title: string): string {
+  const t = normalizeTitle(title);
+  const season = t.match(/\bseason (\d+)/)?.[1] ?? t.match(/\b(\d+)(?:st|nd|rd|th) season/)?.[1]
+    ?? t.match(/\b(ii|iii|iv|v|\d)$/)?.[1] ?? '';
+  const part = t.match(/\b(?:part|cour) (\d+)/)?.[1] ?? '';
+  const roman: Record<string, string> = { ii: '2', iii: '3', iv: '4', v: '5' };
+  const n = roman[season] ?? season;
+  return `${n === '1' ? '' : n}|${part === '1' ? '' : part}`;
+}
+
 async function resolveFromSite(anime: AnimeItem): Promise<AnimeItem> {
   const titles = Array.from(new Set([anime.title, ...(anime.altTitles || [])]));
   for (const title of titles) {
@@ -360,8 +339,11 @@ async function resolveFromSite(anime: AnimeItem): Promise<AnimeItem> {
       console.warn('[catalogService] resolve search failed:', err);
       continue;
     }
+    // Exact title first; a looser match must at least be the same season and kind ("Solo Leveling"
+    // is a prefix of "Solo Leveling Season 2", but it is not that season).
     const best = results.find(r => normalizeTitle(r.title) === normalizeTitle(title))
-      || results.find(r => titlesMatch(r.title, title));
+      || results.find(r => titlesMatch(r.title, title) && seasonMarker(r.title) === seasonMarker(title)
+        && (!anime.type || !r.type || anime.type === r.type));
     if (best) {
       return {
         ...best,
@@ -497,6 +479,8 @@ interface AniListInfo {
   // Release-order sort key (year*12+month) per relation id.
   order: Map<string, number>;
   selfOrder?: number;
+  // The matched entry itself, with its relations (the start of the season walk).
+  self: AniListMedia;
 }
 
 const RELATION_TYPES = new Set(['PREQUEL', 'SEQUEL', 'PARENT', 'SIDE_STORY', 'SPIN_OFF', 'ALTERNATIVE', 'SUMMARY']);
@@ -596,7 +580,8 @@ async function loadAniListInfo(anime: AnimeItem): Promise<AniListInfo | null> {
       relations,
       recommendations,
       order,
-      selfOrder: dateKey(media)
+      selfOrder: dateKey(media),
+      self: media
     };
   } catch (err) {
     console.warn('[catalogService] AniList lookup failed:', err);
@@ -645,7 +630,8 @@ export function getAnimeDetails(anime: AnimeItem): Promise<AnimeDetails> {
 // Title details are kept on disk after every successful load; when nothing
 // useful can be loaded (offline), the copy from the last visit is shown.
 async function loadDetailsOrSaved(anime: AnimeItem): Promise<AnimeDetails> {
-  const key = `details:${anime.id}`;
+  // v3: seasons from AniList only, and kept out of the collection; older copies differ.
+  const key = `details3:${anime.id}`;
   let fresh: AnimeDetails;
   try {
     fresh = await loadAnimeDetails(anime);
@@ -675,6 +661,79 @@ async function loadSiteDetailPage(anime: AnimeItem): Promise<ParsedDetailPage> {
   return { genres: [], seasons: [], related: [], recommended: [] };
 }
 
+// One AniList entry with its relations, for the season walk (memory-cached per session). Each
+// request also brings the relations of the entries it links to, which are cached as well, so a show
+// with eight seasons takes three or four requests instead of eight (AniList rate-limits hard).
+const seasonMediaCache = new Map<number, Promise<AniListMedia | null>>();
+const LINK_FIELDS = 'id type format episodes status nextAiringEpisode { episode } startDate { year month day }';
+function fetchSeasonMedia(id: number): Promise<AniListMedia | null> {
+  const hit = seasonMediaCache.get(id);
+  if (hit) return hit;
+  const pending = anilist(`query ($id: Int) {
+    Media(id: $id, type: ANIME) {
+      ${MEDIA_FIELDS}
+      relations { edges { relationType node {
+        ${LINK_FIELDS} synonyms title { romaji english } coverImage { extraLarge large }
+        relations { edges { relationType node { ${LINK_FIELDS} } } }
+      } } }
+    }
+  }`, { id }).then(d => {
+    const media = d?.Media ?? null;
+    for (const edge of media?.relations?.edges ?? []) {
+      const node = edge?.node;
+      // A linked entry arrives with its own links: good enough for the walk, so keep it.
+      if (node && node.relations && !seasonMediaCache.has(node.id)) seasonMediaCache.set(node.id, Promise.resolve(node));
+    }
+    return media;
+  });
+  seasonMediaCache.set(id, pending);
+  pending.catch(() => seasonMediaCache.delete(id));
+  return pending;
+}
+
+/**
+ * The show's seasons as playable items labelled "Season N", from AniList's sequel links (see
+ * seasonService). Each is the site's own entry when one with exactly that title is known, else an
+ * AniList item the detail page matches to the site when opened. [] when there is no season picker.
+ */
+async function loadSeasons(
+  anime: AnimeItem,
+  self: AniListMedia,
+  siteItems: AnimeItem[]
+): Promise<{ seasons: AnimeItem[]; names: Set<string> }> {
+  const chain = await walkSeasons(self as SeasonMedia, id => fetchSeasonMedia(id) as Promise<SeasonMedia | null>);
+  // Every name a season goes by, so the collection can drop its copies of them.
+  const names = new Set<string>();
+  for (const entry of chain) {
+    const m = entry as AniListMedia;
+    [m.title?.english, m.title?.romaji, ...(m.synonyms || [])].forEach(t => { if (t) names.add(normalizeTitle(t)); });
+  }
+  const labels = seasonLabels(chain.map(e => {
+    const m = e as AniListMedia;
+    return m.title?.english || m.title?.romaji || '';
+  }));
+  // A site entry stands for one season only (a later part often lists the earlier title among its
+  // synonyms), and its season / part marker must agree with the AniList entry's own title.
+  const used = new Set<string>([anime.id]);
+  const seasons = chain.map((entry, i) => {
+    const media = entry as AniListMedia;
+    const seasonLabel = labels[i];
+    if (media.id === self.id) return { ...anime, seasonLabel };
+    const ownTitle = media.title?.english || media.title?.romaji || '';
+    const site = siteItems.find(c => !used.has(c.id) && matchScore(media, c.title) === 3
+      && seasonMarker(c.title) === seasonMarker(ownTitle));
+    if (site) {
+      used.add(site.id);
+      return { ...site, seasonLabel };
+    }
+    const fromAniList = anilistToAnime(media);
+    const title = media.title?.english || media.title?.romaji || anime.title;
+    return { ...(fromAniList ?? { id: `al-${media.id}`, title, poster: anime.poster, type: 'TV' }), seasonLabel };
+  });
+  // Never the same entry twice in the picker.
+  return { seasons: dedupe(seasons), names };
+}
+
 async function loadAnimeDetails(anime: AnimeItem): Promise<AnimeDetails> {
   const [parsed, aniList] = await Promise.all([loadSiteDetailPage(anime), loadAniListInfo(anime)]);
 
@@ -690,7 +749,8 @@ async function loadAnimeDetails(anime: AnimeItem): Promise<AnimeDetails> {
   // Collection: the site's season switcher / related block (directly
   // playable), else AniList's relations in release order, else other site
   // titles sharing this franchise's base title.
-  let collection = dedupe([...parsed.seasons, ...parsed.related]);
+  // (The site's season switcher is not used here: those entries are seasons.)
+  let collection = dedupe(parsed.related);
   if (collection.length <= 1 && aniList && aniList.relations.length > 0) {
     const order = new Map(aniList.order);
     if (aniList.selfOrder) order.set(anime.id, aniList.selfOrder);
@@ -698,16 +758,11 @@ async function loadAnimeDetails(anime: AnimeItem): Promise<AnimeDetails> {
       .sort((a, b) => (order.get(a.id) ?? Infinity) - (order.get(b.id) ?? Infinity));
   }
 
-  // Seasons are worked out on their own: a related block holding only movies used to make the
-  // collection look complete, so the franchise search below never ran and a show like
-  // My Hero Academia had no seasons at all.
-  // The site's own season switcher is authoritative (its titles are just "Season 2" labels).
-  let seasons: AnimeItem[] = parsed.seasons.length >= 2
-    ? dedupe(parsed.seasons).map((x, i) => ({ ...x, seasonLabel: x.seasonLabel || `Season ${i + 1}` }))
-    : [];
+  // Other site titles of the same franchise: a fallback for the collection, and candidates for
+  // matching seasons to the site's own entries.
   let family: AnimeItem[] = [];
   const key = franchiseKey(anime.title);
-  if ((seasons.length === 0 || collection.length <= 1) && key.length >= 3) {
+  if (key.length >= 3 && (collection.length <= 1 || aniList)) {
     try {
       const results = await searchAnimeLive(key);
       family = results.filter(r => franchiseKey(r.title) === key || normalizeTitle(r.title).startsWith(key));
@@ -715,12 +770,24 @@ async function loadAnimeDetails(anime: AnimeItem): Promise<AnimeDetails> {
       console.warn('[catalogService] Collection search failed:', err);
     }
   }
-  if (seasons.length === 0) seasons = pickSeasons(anime, [...family, ...collection]);
   if (collection.length <= 1 && family.some(r => r.id !== anime.id)) collection = dedupe([anime, ...family]);
-  // Every season belongs in the collection too, under its season label.
+
+  // Seasons come only from AniList's sequel links between TV entries - never from the site's
+  // season switcher or title look-alikes, which mix in movies, recaps and spin-offs.
+  let seasons: AnimeItem[] = [];
+  let seasonNames = new Set<string>();
+  if (aniList) {
+    try {
+      ({ seasons, names: seasonNames } = await loadSeasons(
+        anime, aniList.self, dedupe([...parsed.seasons, ...parsed.related, ...family, ...collection])));
+    } catch (err) {
+      console.warn('[catalogService] Seasons unavailable:', err);
+    }
+  }
   if (seasons.length > 0) {
-    const labelled = new Map(seasons.map(x => [x.id, x]));
-    collection = dedupe([...seasons, ...collection.map(c => labelled.get(c.id) ?? c)]);
+    // Seasons live in the season picker only.
+    const seasonIds = new Set(seasons.map(x => x.id));
+    collection = collection.filter(c => !seasonIds.has(c.id) && !seasonNames.has(normalizeTitle(c.title)));
   }
 
   // More Like This: real similarity first (AniList recommendations), then
@@ -737,5 +804,8 @@ async function loadAnimeDetails(anime: AnimeItem): Promise<AnimeDetails> {
     suggestions = dedupe(parsed.recommended, exclude).filter(notSameShow);
   }
 
-  return { description, genres, collection: collection.length > 1 ? collection : [], seasons, suggestions };
+  // Never the title itself (Netflix doesn't list what you are looking at).
+  const selfName = normalizeTitle(anime.title);
+  collection = collection.filter(c => c.id !== anime.id && normalizeTitle(c.title) !== selfName);
+  return { description, genres, collection, seasons, suggestions };
 }

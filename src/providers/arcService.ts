@@ -24,8 +24,8 @@ export interface StoryArc {
 }
 
 interface TmdbSearchTv { results?: { id: number; name?: string; original_name?: string; origin_country?: string[]; genre_ids?: number[] }[] }
-interface TmdbGroupList { results?: { id: string; type: number; group_count: number; episode_count: number; name?: string }[] }
-interface TmdbGroupDetails { groups?: { name: string; order: number; episodes: { order: number }[] }[] }
+interface TmdbGroupList { results?: TmdbGroupSummary[] }
+interface TmdbGroupDetails { groups?: { name: string; order: number; episodes: { order: number; season_number?: number; episode_number?: number }[] }[] }
 
 const DEFAULT_TMDB_API_KEY = 'd56cb07bf9500bb94de196e6b7ae1967';
 
@@ -39,7 +39,8 @@ function apiKey(): string | undefined {
   }
 }
 
-const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+// Lower case, accents folded ("Shippūden" = "Shippuden"), punctuation as spaces.
+const norm = (s: string) => s.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
 
 async function tmdb<T>(path: string, key: string): Promise<T> {
   const sep = path.includes('?') ? '&' : '?';
@@ -48,27 +49,80 @@ async function tmdb<T>(path: string, key: string): Promise<T> {
 }
 
 /**
- * The arcs of an episode group, as consecutive episode ranges in the group's order, cut to the
- * episodes the site actually has. Empty when the result would not be a useful picker (one arc), or
- * when the group's numbering clearly does not match the site's (very different episode totals).
+ * The arcs of an episode group as episode ranges in the group's order, cut to the episodes the site
+ * actually has. When TMDB numbers the show's episodes absolutely (One Piece: 1, 2, ... 1180 across
+ * its seasons), each arc spans its real episode numbers and the filler between two arcs joins the arc
+ * before it; otherwise arcs are laid end to end by their episode counts. Empty when the result would
+ * not be a useful picker (one arc), or when the group clearly does not match the site's numbering.
  */
 export function arcsFromGroup(details: TmdbGroupDetails, siteEpisodes: number): StoryArc[] {
-  const groups = [...(details.groups ?? [])].sort((a, b) => a.order - b.order).filter(g => g.episodes.length > 0);
+  // Specials (TMDB's season 0) are not in the site's numbering: counting them shifted every arc
+  // after them (One Piece's official list opens with 7 TV specials).
+  const groups = [...(details.groups ?? [])]
+    .sort((a, b) => a.order - b.order)
+    .map(g => ({ ...g, episodes: g.episodes.filter(e => e.season_number !== 0) }))
+    .filter(g => g.episodes.length > 0);
   const total = groups.reduce((n, g) => n + g.episodes.length, 0);
   if (groups.length < 2 || siteEpisodes < MIN_EPISODES_FOR_ARCS) return [];
   // Recaps / specials counted differently are fine; a different show or season split is not.
   if (total < siteEpisodes * 0.8 || total > siteEpisodes * 1.25 + 30) return [];
+  const name = (g: { name: string }, i: number) => g.name.trim() || `Arc ${i + 1}`;
+
+  const numbers = groups.flatMap(g => g.episodes.map(e => e.episode_number));
+  const absolute = numbers.every((n, i) => typeof n === 'number' && (i === 0 || n > (numbers[i - 1] as number)))
+    && (numbers[numbers.length - 1] as number) <= siteEpisodes + 30;
+
   const arcs: StoryArc[] = [];
-  let next = 1;
-  for (const g of groups) {
-    if (next > siteEpisodes) break;
-    const end = Math.min(siteEpisodes, next + g.episodes.length - 1);
-    arcs.push({ name: g.name.trim() || `Arc ${arcs.length + 1}`, start: next, end });
-    next = end + 1;
+  if (absolute) {
+    groups.forEach((g, i) => {
+      const own = g.episodes.map(e => e.episode_number as number);
+      const nextStart = groups[i + 1]?.episodes[0]?.episode_number as number | undefined;
+      const start = i === 0 ? 1 : arcs[arcs.length - 1].end + 1;
+      const end = Math.min(siteEpisodes, nextStart !== undefined ? nextStart - 1 : Math.max(...own));
+      if (start <= end) arcs.push({ name: name(g, i), start, end });
+    });
+  } else {
+    let next = 1;
+    groups.forEach((g, i) => {
+      if (next > siteEpisodes) return;
+      const end = Math.min(siteEpisodes, next + g.episodes.length - 1);
+      arcs.push({ name: name(g, i), start: next, end });
+      next = end + 1;
+    });
   }
   // Episodes the group does not cover yet (an ongoing show): one last range, labelled as such.
-  if (next <= siteEpisodes) arcs.push({ name: 'Latest episodes', start: next, end: siteEpisodes });
+  const covered = arcs.length > 0 ? arcs[arcs.length - 1].end : 0;
+  if (covered < siteEpisodes) arcs.push({ name: 'Latest episodes', start: covered + 1, end: siteEpisodes });
   return arcs.length > 1 ? arcs : [];
+}
+
+export interface TmdbGroupSummary { id: string; type: number; group_count: number; episode_count: number; name?: string }
+
+// Groups that cut the show some other way (broadcast seasons, release orders, a streaming service's
+// split), even when TMDB files them as story arcs.
+const FOREIGN = /french|italian|german|spanish|portugu|brazil|latin|castellano|chinese|japanese|korean|arabic|polish|russian|turkish|hindi/i;
+const NOT_ARCS = /season|order|blu-?ray|dvd|release|wikipedia|netflix|crunchyroll|hulu|funimation|prime|iplayer|apple|tvdb|correct/i;
+
+/**
+ * The episode groups worth trying as story arcs, best first. TMDB files arcs under "Story Arc"
+ * (type 5) for some shows and under other types for others (Naruto Shippuden's official arcs are a
+ * type 2 group), so any group named as arcs or sagas counts. Groups whose episode total does not
+ * fit the site's count are left out; then the official list wins, then an English one, then type 5,
+ * then the closest total.
+ */
+export function rankArcGroups(groups: TmdbGroupSummary[], siteEpisodes: number): TmdbGroupSummary[] {
+  const fits = (g: TmdbGroupSummary) =>
+    g.episode_count >= siteEpisodes * 0.8 && g.episode_count <= siteEpisodes * 1.25 + 30;
+  const official = (g: TmdbGroupSummary) => (/official/i.test(g.name || '') ? 0 : 1);
+  // A list made for one country ("French Arcs", "Italian Sagas") may carry translated names.
+  const localized = (g: TmdbGroupSummary) => (FOREIGN.test(g.name || '') || [...(g.name || '')].some(c => c.charCodeAt(0) > 127) ? 1 : 0);
+  return groups
+    .filter(g => g.group_count > 1 && (g.type === STORY_ARC || /\barcs?\b|\bsagas?\b/i.test(g.name || ''))
+      && !NOT_ARCS.test(g.name || '') && fits(g))
+    .sort((a, b) => official(a) - official(b)
+      || localized(a) - localized(b)
+      || (a.type === STORY_ARC ? 0 : 1) - (b.type === STORY_ARC ? 0 : 1)
+      || Math.abs(a.episode_count - siteEpisodes) - Math.abs(b.episode_count - siteEpisodes));
 }
 
 /** TMDB's id for the show, matched by name (and its alternative titles) among animated series. */
@@ -86,7 +140,7 @@ const memory = new Map<string, Promise<StoryArc[]>>();
 export function getStoryArcs(anime: AnimeItem, siteEpisodes: number): Promise<StoryArc[]> {
   const key = apiKey();
   if (!key || siteEpisodes < MIN_EPISODES_FOR_ARCS) return Promise.resolve([]);
-  const cacheKey = `arcs2:${anime.id}:${siteEpisodes}`;
+  const cacheKey = `arcs3:${anime.id}:${siteEpisodes}`;
   const hit = memory.get(cacheKey);
   if (hit) return hit;
   const pending = (async () => {
@@ -96,11 +150,12 @@ export function getStoryArcs(anime: AnimeItem, siteEpisodes: number): Promise<St
       const tvId = await findTv(anime, key);
       if (!tvId) return [];
       const list = await tmdb<TmdbGroupList>(`/tv/${tvId}/episode_groups`, key);
-      // The story-arc group whose size is closest to the site's episode count.
-      const group = (list.results ?? [])
-        .filter(g => g.type === STORY_ARC && g.group_count > 1)
-        .sort((a, b) => Math.abs(a.episode_count - siteEpisodes) - Math.abs(b.episode_count - siteEpisodes))[0];
-      const arcs = group ? arcsFromGroup(await tmdb<TmdbGroupDetails>(`/tv/episode_group/${group.id}`, key), siteEpisodes) : [];
+      // The best few candidates, in order, until one cuts the site's episodes into arcs.
+      let arcs: StoryArc[] = [];
+      for (const group of rankArcGroups(list.results ?? [], siteEpisodes).slice(0, 3)) {
+        arcs = arcsFromGroup(await tmdb<TmdbGroupDetails>(`/tv/episode_group/${group.id}`, key), siteEpisodes);
+        if (arcs.length > 0) break;
+      }
       writePersistedJson(cacheKey, arcs);
       return arcs;
     } catch {

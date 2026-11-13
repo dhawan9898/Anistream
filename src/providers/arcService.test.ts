@@ -40,3 +40,54 @@ test('no arcs when they would not help or do not fit the site', () => {
 test('a single short season is never split into arcs', () => {
   assert.deepEqual(arcsFromGroup(group([['A', 6], ['B', 6]]), 12), []);
 });
+
+import { rankArcGroups } from './arcService.ts';
+
+test('the official arc list wins, whatever type TMDB files it under (Naruto Shippuden)', () => {
+  // Real episode_groups of TMDB show 31910, trimmed.
+  const groups = [
+    { id: 'a', type: 1, group_count: 23, episode_count: 505, name: 'Released Order Episodes' },
+    { id: 'b', type: 2, group_count: 29, episode_count: 500, name: 'Italian Sagas' },
+    { id: 'c', type: 2, group_count: 29, episode_count: 500, name: 'Official Story Arcs' },
+    { id: 'd', type: 2, group_count: 32, episode_count: 504, name: 'Chronological, organized by arc.' },
+    { id: 'e', type: 5, group_count: 14, episode_count: 304, name: 'Story Arcs' }
+  ];
+  assert.equal(rankArcGroups(groups, 500)[0].id, 'c');
+  assert.ok(!rankArcGroups(groups, 500).some(g => g.id === 'e'), '304 episodes do not fit 500');
+});
+
+test('an English arc list beats one made for another country (Hunter x Hunter)', () => {
+  const groups = [
+    { id: 'fr', type: 5, group_count: 7, episode_count: 148, name: 'French Arcs' },
+    { id: 'en', type: 5, group_count: 6, episode_count: 148, name: 'Story Arcs' },
+    { id: 'cn', type: 5, group_count: 8, episode_count: 148, name: 'Chinese Arcs' },
+    { id: 'pr', type: 6, group_count: 3, episode_count: 148, name: 'Production' }
+  ];
+  assert.deepEqual(rankArcGroups(groups, 148).map(g => g.id), ['en', 'fr', 'cn']);
+});
+
+test('season splits filed as story arcs are not arcs', () => {
+  const groups = [{ id: 's', type: 5, group_count: 4, episode_count: 220, name: 'Seasons' }];
+  assert.deepEqual(rankArcGroups(groups, 220), []);
+});
+
+const ep = (season: number, n: number) => ({ order: n, season_number: season, episode_number: n });
+const span = (season: number, from: number, to: number) => Array.from({ length: to - from + 1 }, (_, i) => ep(season, from + i));
+
+test('One Piece: specials are skipped and arcs keep their real episode numbers across filler', () => {
+  const details = {
+    groups: [
+      { name: 'TV Specials', order: 0, episodes: [ep(0, 11), ep(0, 12), ep(0, 33)] },
+      { name: 'East Blue', order: 1, episodes: span(1, 1, 61) },
+      // 62-130; then 131-143 is filler that is in no official arc.
+      { name: 'Alabasta', order: 2, episodes: span(2, 62, 130) },
+      { name: 'Skypiea', order: 3, episodes: span(3, 144, 195) }
+    ]
+  };
+  assert.deepEqual(arcsFromGroup(details, 200), [
+    { name: 'East Blue', start: 1, end: 61 },
+    { name: 'Alabasta', start: 62, end: 143 },
+    { name: 'Skypiea', start: 144, end: 195 },
+    { name: 'Latest episodes', start: 196, end: 200 }
+  ]);
+});

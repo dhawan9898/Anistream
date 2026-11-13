@@ -18,6 +18,7 @@ import {
 } from '../services/historyService';
 import { getEpisodeInfo, getEpisodeSynopsis, type EpisodeInfo } from '../providers/episodeInfoService';
 import { getStoryArcs, type StoryArc } from '../providers/arcService';
+import { LONG_RUNNING_EPISODES } from '../providers/seasonService';
 import { getAnimeDetails, hasDub, resolveAnime, type AnimeDetails } from '../providers/catalogService';
 import { PosterCard } from '../components/PosterCard';
 import { DownloadButton } from '../components/DownloadButton';
@@ -33,6 +34,8 @@ interface AnimeDetailScreenProps {
   onPlayEpisode: (anime: AnimeItem, episode: EpisodeItem, mode: 'sub' | 'dub') => void;
   onResume: (anime: AnimeItem, history: WatchHistoryItem) => void;
   onSelectAnime: (anime: AnimeItem) => void;
+  // Replaces this page with another season of the same show.
+  onSwitchSeason: (anime: AnimeItem) => void;
 }
 
 type DetailTab = 'episodes' | 'collection' | 'similar';
@@ -42,7 +45,8 @@ export const AnimeDetailScreen: React.FC<AnimeDetailScreenProps> = ({
   onBack,
   onPlayEpisode,
   onResume,
-  onSelectAnime
+  onSelectAnime,
+  onSwitchSeason
 }) => {
   const [resolved, setResolved] = useState<AnimeItem | null>(/^(al|mal)-/.test(anime.id) ? null : anime);
   const [resolveError, setResolveError] = useState<string | null>(null);
@@ -242,17 +246,22 @@ export const AnimeDetailScreen: React.FC<AnimeDetailScreenProps> = ({
     return () => { cancelled = true; };
   }, [resolved, episodes.length]);
 
-  // The episode picker lists ranges: the show's story arcs when TMDB knows them (arcService),
-  // otherwise blocks of 50. (It used to list the franchise's other entries - sequels, related
-  // series - as "seasons"; those stay in the Collection tab.)
+  // One picker, never two: a show split into short TV seasons gets the season switcher (seasonService);
+  // a long-running one gets its story arcs (arcService) or, without arcs, blocks of 50 episodes.
+  // Movies have no episode list at all.
+  const isMovie = /^movie$/i.test(shown.type || '');
+  const seasons = details?.seasons ?? [];
+  const seasonMode = seasons.length > 1 && !isMovie && episodes.length < LONG_RUNNING_EPISODES;
   const chunkSize = 50;
   const rangeLabel = (i: number) => {
     const start = i * chunkSize + 1;
     const end = Math.min(episodes.length, (i + 1) * chunkSize);
     return start === end ? `Episode ${start}` : `Episodes ${start}\u2013${end}`;
   };
-  const arcMode = arcs.length > 1;
-  const ranges = arcMode
+  const arcMode = !seasonMode && arcs.length > 1;
+  const ranges = seasonMode
+    ? [{ name: 'All episodes', start: 0, end: episodes.length }]
+    : arcMode
     ? arcs.map(a => ({ name: `${a.name} \u00b7 ${a.start === a.end ? a.start : `${a.start}\u2013${a.end}`}`, start: a.start - 1, end: a.end }))
     : Array.from({ length: Math.max(1, Math.ceil(episodes.length / chunkSize)) }, (_, i) => ({
         name: rangeLabel(i), start: i * chunkSize, end: Math.min(episodes.length, (i + 1) * chunkSize)
@@ -280,7 +289,6 @@ export const AnimeDetailScreen: React.FC<AnimeDetailScreenProps> = ({
 
   const description = shown.description || details?.description;
   const genres = (details?.genres.length ? details.genres : shown.genres) || [];
-  const fullCollection = details?.collection || [];
 
   const pickerSections: CategorySection[] = [{ items: ranges.map((r, i) => ({ key: `r:${i}`, name: r.name })) }];
   const pickerSelected = `r:${activeRange}`;
@@ -288,16 +296,10 @@ export const AnimeDetailScreen: React.FC<AnimeDetailScreenProps> = ({
   const suggestions = details?.suggestions || [];
 
   // A movie has one "episode": no Episodes tab, just Play and the rest.
-  const isMovie = /^movie$/i.test(shown.type || '');
-  const seasons = details?.seasons ?? [];
   const currentSeason = seasons.find(x => x.id === shown.id);
-  // Seasons live in the Episodes tab's season switcher; the Collection tab holds the rest of the
-  // franchise (movies, OVAs, specials, spin-offs) so nothing is listed twice. A movie has no
-  // Episodes tab, so its Collection keeps the seasons too.
-  const seasonIds = new Set(seasons.length > 1 && !isMovie ? seasons.map(x => x.id) : []);
-  const collectionItems = fullCollection.filter(c => !seasonIds.has(c.id));
-  // Only the title itself left: nothing to show.
-  const collection = collectionItems.some(c => c.id !== shown.id) ? collectionItems : [];
+  // The rest of the franchise (movies, OVAs, specials, spin-offs); catalogService already leaves
+  // out this title and its seasons, which are in the season picker.
+  const collection = (details?.collection || []).filter(c => c.id !== shown.id);
   const seasonSections: CategorySection[] = [{ items: seasons.map(x => ({ key: x.id, name: x.seasonLabel || x.title })) }];
   const tabs: { id: DetailTab; label: string }[] = [
     ...(isMovie ? [] : [{ id: 'episodes' as DetailTab, label: 'Episodes' }]),
@@ -520,7 +522,7 @@ export const AnimeDetailScreen: React.FC<AnimeDetailScreenProps> = ({
 
         {settled && activeTab === 'episodes' && (
           <>
-            {seasons.length > 1 && (
+            {seasonMode && (
               <button
                 onClick={() => { hapticLight(); setSeasonPickerOpen(true); }}
                 className="interactive"
@@ -546,7 +548,8 @@ export const AnimeDetailScreen: React.FC<AnimeDetailScreenProps> = ({
                 hapticSelection();
                 setSeasonPickerOpen(false);
                 const next = seasons.find(x => x.id === key);
-                if (next && next.id !== shown.id) onSelectAnime(next);
+                // Switching season replaces this page (it is the same show), never stacks another.
+                if (next && next.id !== shown.id && next.id !== anime.id) onSwitchSeason(next);
               }}
               onClose={() => { hapticLight(); setSeasonPickerOpen(false); }}
             />
@@ -719,19 +722,9 @@ export const AnimeDetailScreen: React.FC<AnimeDetailScreenProps> = ({
 
         {settled && activeTab === 'collection' && (
           <div className="grid-collection">
-            {collection.map(item => {
-              const isCurrent = item.id === shown.id;
-              return (
-                <PosterCard
-                  key={item.id}
-                  anime={item}
-                  caption={item.seasonLabel || item.title}
-                  highlighted={isCurrent}
-                  badge={isCurrent ? 'Now Viewing' : undefined}
-                  onSelect={isCurrent ? undefined : onSelectAnime}
-                />
-              );
-            })}
+            {collection.map(item => (
+              <PosterCard key={item.id} anime={item} caption={item.title} onSelect={onSelectAnime} />
+            ))}
           </div>
         )}
 

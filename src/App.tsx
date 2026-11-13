@@ -131,6 +131,16 @@ export const App: React.FC = () => {
     setClosing(list => list.filter(c => c.key !== key));
     updateStack([...stack, anime]);
   }, []);
+  // Another season of the title on top: swap that page in place (same depth) instead of stacking
+  // a page per season pick, which grew the stack on every switch.
+  const replaceTopAnime = useCallback((anime: AnimeItem) => {
+    const stack = animeStackRef.current;
+    if (stack.length === 0) { updateStack([anime]); return; }
+    const top = stack[stack.length - 1];
+    if (top.id === anime.id) return;
+    sharedOpenKeys.current.delete(animeKey(stack.length - 1, anime));
+    updateStack([...stack.slice(0, -1), anime]);
+  }, []);
   const popAnime = () => {
     const stack = animeStackRef.current;
     if (stack.length === 0) return;
@@ -749,6 +759,7 @@ export const App: React.FC = () => {
             item.currentTime
           )}
           onSelectAnime={pushAnime}
+          onSwitchSeason={replaceTopAnime}
         />
       ));
     });
@@ -759,6 +770,7 @@ export const App: React.FC = () => {
         onPlayEpisode={() => undefined}
         onResume={() => undefined}
         onSelectAnime={() => undefined}
+        onSwitchSeason={() => undefined}
       />
     )));
     return nodes;

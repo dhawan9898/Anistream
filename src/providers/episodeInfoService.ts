@@ -38,7 +38,8 @@ interface KitsuEpisode {
   };
 }
 
-const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+// Lower case, accents folded ("Shippūden" = "Shippuden"), punctuation as spaces.
+const norm = (s: string) => s.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
 
 async function getJson<T>(path: string): Promise<T> {
   const res = await request(`${KITSU}${path}`, { headers: HEADERS }, { timeoutMs: 10000, retries: 1 });
