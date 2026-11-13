@@ -135,7 +135,7 @@ const PosterCardBase: React.FC<PosterCardProps> = ({ anime, onSelect, width, cap
               backdropFilter: 'blur(14px)',
               border: '1px solid rgba(255, 255, 255, 0.18)',
               color: '#ffffff',
-              fontSize: '10px',
+              fontSize: '11px',
               fontWeight: 700,
               letterSpacing: '0.2px',
               padding: '3px 7px',
@@ -162,7 +162,7 @@ const PosterCardBase: React.FC<PosterCardProps> = ({ anime, onSelect, width, cap
               backdropFilter: 'blur(12px)',
               border: '1px solid rgba(255, 255, 255, 0.14)',
               color: '#ffffff',
-              fontSize: '9px',
+              fontSize: '11px',
               fontWeight: 700,
               padding: '2px 6px',
               borderRadius: 'var(--radius-xs)'
