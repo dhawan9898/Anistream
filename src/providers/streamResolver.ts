@@ -59,7 +59,3 @@ export function resolveStream(
   }
   return promise.then(source => ({ ...source }));
 }
-
-export function forgetStream(anime: AnimeItem, episode: EpisodeItem, mode: 'sub' | 'dub'): void {
-  entries.delete(keyOf(anime, episode, mode));
-}

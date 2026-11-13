@@ -209,24 +209,6 @@ export function removeWatchHistoryItem(animeId: string): Promise<WatchHistoryIte
   });
 }
 
-// Removes one watched episode from the Library list. If it was the title's
-// "latest" (Continue Watching) entry, the next most recent episode of that
-// title takes its place, or the title leaves Continue Watching.
-export function removeEpisodeFromLibrary(animeId: string, episodeId: string): Promise<WatchHistoryItem[]> {
-  return serialized(async () => {
-    const all = await getEpisodeLog();
-    const remaining = all.filter(h => !(h.animeId === animeId && h.episodeId === episodeId));
-    await Preferences.set({ key: EPISODE_LOG_KEY, value: JSON.stringify(remaining.slice(0, EPISODE_LOG_MAX)) });
-    const latest = (await getWatchHistory()).filter(h => h.animeId !== animeId);
-    const replacement = remaining.find(h => h.animeId === animeId);
-    const history = replacement ? [replacement, ...latest] : latest;
-    history.sort((a, b) => b.updatedAt - a.updatedAt);
-    await Preferences.set({ key: HISTORY_KEY, value: JSON.stringify(history) });
-    notifyLibraryChanged();
-    return remaining;
-  });
-}
-
 // Bookmarks store the full AnimeItem, not just its id: the Saved tab needs to
 // render posters/titles for anime that may only exist as live search/home
 // results, not in the small curated FEATURED_ANIME list.

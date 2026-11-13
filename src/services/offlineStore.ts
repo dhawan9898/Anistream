@@ -75,10 +75,6 @@ export async function idbGetAll<T>(store: StoreName): Promise<T[]> {
   return (await run<T[]>(store, 'readonly', s => s.getAll() as IDBRequest<T[]>)) ?? [];
 }
 
-export async function idbClear(store: StoreName): Promise<void> {
-  await run(store, 'readwrite', s => s.clear());
-}
-
 // ---------------------------------------------------------------- cache store
 
 export interface CachedValue<T> {

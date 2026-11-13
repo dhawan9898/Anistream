@@ -280,7 +280,7 @@ export const AnimeDetailScreen: React.FC<AnimeDetailScreenProps> = ({
 
   const description = shown.description || details?.description;
   const genres = (details?.genres.length ? details.genres : shown.genres) || [];
-  const collection = details?.collection || [];
+  const fullCollection = details?.collection || [];
 
   const pickerSections: CategorySection[] = [{ items: ranges.map((r, i) => ({ key: `r:${i}`, name: r.name })) }];
   const pickerSelected = `r:${activeRange}`;
@@ -291,6 +291,13 @@ export const AnimeDetailScreen: React.FC<AnimeDetailScreenProps> = ({
   const isMovie = /^movie$/i.test(shown.type || '');
   const seasons = details?.seasons ?? [];
   const currentSeason = seasons.find(x => x.id === shown.id);
+  // Seasons live in the Episodes tab's season switcher; the Collection tab holds the rest of the
+  // franchise (movies, OVAs, specials, spin-offs) so nothing is listed twice. A movie has no
+  // Episodes tab, so its Collection keeps the seasons too.
+  const seasonIds = new Set(seasons.length > 1 && !isMovie ? seasons.map(x => x.id) : []);
+  const collectionItems = fullCollection.filter(c => !seasonIds.has(c.id));
+  // Only the title itself left: nothing to show.
+  const collection = collectionItems.some(c => c.id !== shown.id) ? collectionItems : [];
   const seasonSections: CategorySection[] = [{ items: seasons.map(x => ({ key: x.id, name: x.seasonLabel || x.title })) }];
   const tabs: { id: DetailTab; label: string }[] = [
     ...(isMovie ? [] : [{ id: 'episodes' as DetailTab, label: 'Episodes' }]),

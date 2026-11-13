@@ -63,7 +63,6 @@ public class ExoPlayerActivity extends AppCompatActivity {
     private static final long NEXT_EPISODE_THRESHOLD_MS = 20_000;
     private static final long NEXT_EPISODE_COUNTDOWN_MS = 10_000;
     private static final long UNLOCK_HINT_MS = 3_000;
-    private static final int NETFLIX_RED = Color.parseColor("#E50914");
     private static final float[] PLAYBACK_SPEEDS = {0.5f, 0.75f, 1f, 1.25f, 1.5f};
     private static final long PROGRESS_REPORT_INTERVAL_MS = 5_000;
 
@@ -211,16 +210,15 @@ public class ExoPlayerActivity extends AppCompatActivity {
     // showing (matched against Format.id, which parseSubtitles() sets to the
     // same label, once ExoPlayer reports its track groups).
     private final java.util.List<String> subtitleLabels = new java.util.ArrayList<>();
-    // Subtitle timing (see SubtitleSync): each side-loaded track's file, the offset the viewer set
-    // (positive = later), and the layer that draws the shifted lines while the offset is not zero.
+    // Subtitle timing (see SubtitleSync): each side-loaded track's file, the automatic dub offset
+    // (positive = later, see autoSyncDubSubtitles), and the layer that draws the shifted lines while
+    // the offset is not zero.
     private final java.util.Map<String, String> subtitleUrlByLabel = new java.util.HashMap<>();
     private long subtitleOffsetMs = 0;
     private SubtitleSync subtitleSync;
     private SubtitleView syncSubtitleView;
     private String subtitleReferer;
     private String shownSyncText = "";
-    private static final long SUBTITLE_STEP_MS = 250;
-    private static final long SUBTITLE_MAX_OFFSET_MS = 60_000;
     private final Runnable subtitleSyncTicker = new Runnable() {
         @Override
         public void run() {
@@ -308,7 +306,14 @@ public class ExoPlayerActivity extends AppCompatActivity {
     }
 
     // Episode thumbnails for the list, decoded once and shared (a few MB at most).
-    private final android.util.LruCache<String, android.graphics.Bitmap> thumbCache = new android.util.LruCache<>(80);
+    // Bounded by memory (12 MB), not by count: a full-size thumbnail is close to a megabyte.
+    private final android.util.LruCache<String, android.graphics.Bitmap> thumbCache =
+            new android.util.LruCache<String, android.graphics.Bitmap>(12 * 1024 * 1024) {
+                @Override
+                protected int sizeOf(String key, android.graphics.Bitmap value) {
+                    return value.getAllocationByteCount();
+                }
+            };
     private final java.util.concurrent.ExecutorService thumbLoader = java.util.concurrent.Executors.newFixedThreadPool(3);
 
     private static final class VideoQualityOption {
@@ -819,25 +824,19 @@ public class ExoPlayerActivity extends AppCompatActivity {
             btn.setBackground(bg);
         }
 
-        // Solid white button (readable over any scene); the countdown is a
-        // thin red bar along its bottom edge.
-        GradientDrawable nextBg = new GradientDrawable();
-        nextBg.setCornerRadius(4f * density);
-        nextBg.setColor(Color.WHITE);
-        btnNextEpisode.setBackground(nextBg);
+        // "Next Episode" is the same glass pill as Skip Intro / Skip Outro (set in applyLiquidGlass);
+        // its countdown is a soft white fill that sweeps across the pill, clipped to its shape.
         btnNextEpisode.setClipToOutline(true);
-        btnNextEpisode.setElevation(2f * density);
-        nextEpisodeFill.setBackgroundColor(NETFLIX_RED);
+        nextEpisodeFill.setBackgroundColor(Color.argb(70, 255, 255, 255));
         nextEpisodeFill.setPivotX(0f);
         nextEpisodeFill.setScaleX(0f);
 
-        // Small black play icon in front of "Next Episode" (Netflix style).
         TextView nextLabel = findViewById(R.id.next_episode_label);
         android.graphics.drawable.Drawable playIcon = getDrawable(R.drawable.ic_play);
         if (nextLabel != null && playIcon != null) {
             playIcon = playIcon.mutate();
-            playIcon.setTint(Color.BLACK);
-            int size = Math.round(16 * density);
+            playIcon.setTint(Color.WHITE);
+            int size = Math.round(14 * density);
             playIcon.setBounds(0, 0, size, size);
             nextLabel.setCompoundDrawablesRelative(playIcon, null, null, null);
         }
@@ -919,6 +918,7 @@ public class ExoPlayerActivity extends AppCompatActivity {
         for (TextView v : new TextView[]{btnSkipIntro, btnSkipOutro, btnWatchCredits}) {
             if (v != null) v.setBackground(glass(false, 22, true));
         }
+        if (btnNextEpisode != null) btnNextEpisode.setBackground(glass(false, 22, true));
         // Bottom action row: no glass until tapped (see highlightAction).
         for (View v : new View[]{btnSpeed, btnLock, btnEpisodes, btnAudioSubs, btnNextEp}) {
             if (v == null) continue;
@@ -992,10 +992,9 @@ public class ExoPlayerActivity extends AppCompatActivity {
             subtitleSync = sync;
             shownSyncText = "";
             sync.load(subtitleRequestHeaders(), handler, () -> {
-                if (subtitleSync != sync || !sync.isFailed()) return;
-                // Not a file this layer can read: back to the player's own subtitles, in sync.
+                if (isDestroyed() || subtitleSync != sync || !sync.isFailed()) return;
+                // Not a file this layer can read: back to the player's own subtitles.
                 subtitleOffsetMs = 0;
-                android.widget.Toast.makeText(this, "This subtitle's timing can't be changed", android.widget.Toast.LENGTH_SHORT).show();
                 updateSubtitleSync();
             });
         }
@@ -1051,6 +1050,7 @@ public class ExoPlayerActivity extends AppCompatActivity {
         v.setBackground(glass(false, 22, true));
         v.animate().scaleX(1.12f).scaleY(1.12f).setDuration(140).start();
         handler.postDelayed(() -> {
+            if (isFinishing() || isDestroyed()) return;
             action.run();
             // Actions that open no popup (Lock, Next Ep.) just flash the highlight.
             handler.postDelayed(() -> { if (activeAction == v && !panelOpen) clearActiveAction(); }, 350);
@@ -1065,6 +1065,8 @@ public class ExoPlayerActivity extends AppCompatActivity {
     }
 
     private boolean panelOpen = false;
+    // The panel or episode list on screen, dismissed in onDestroy so its window never leaks.
+    private Dialog openPanel;
 
     private void darkPanel(View view, float radiusDp, float alpha) {
         float density = getResources().getDisplayMetrics().density;
@@ -1411,30 +1413,44 @@ public class ExoPlayerActivity extends AppCompatActivity {
     // Full-screen, near-black Netflix panel with a close "X" in the top-right
     // corner. The caller fills `content`; the returned dialog is already
     // showing.
-    private Dialog showFullScreenPanel(View content) {
-        Dialog dialog = new Dialog(this, android.R.style.Theme_Black_NoTitleBar_Fullscreen);
+    // Floating card over the video (Speed, Audio & Subtitles, Quality): a dark translucent rounded
+    // card with a hairline rim, centred, with the video still visible around it. [compact] cards
+    // (Speed) are only as tall as their content; the others take most of the height for their lists.
+    private Dialog showPanel(View content, boolean compact) {
+        // A window can't be added while the player is closing (BadTokenException).
+        if (isFinishing() || isDestroyed()) return null;
+        Dialog dialog = new Dialog(this);
+        dialog.requestWindowFeature(Window.FEATURE_NO_TITLE);
         android.widget.FrameLayout root = new android.widget.FrameLayout(this);
-        root.setBackgroundColor(Color.argb(150, 0, 0, 0));
-        root.setPadding(dp(28), dp(20), dp(28), dp(16));
+        GradientDrawable bg = new GradientDrawable();
+        bg.setColor(Color.argb(230, 20, 20, 20));
+        bg.setCornerRadius(dp(16));
+        bg.setStroke(Math.max(1, dp(1)), Color.argb(60, 255, 255, 255));
+        root.setBackground(bg);
+        root.setPadding(dp(24), dp(16), dp(16), dp(compact ? 24 : 12));
 
         root.addView(content, new android.widget.FrameLayout.LayoutParams(
                 android.widget.FrameLayout.LayoutParams.MATCH_PARENT,
-                android.widget.FrameLayout.LayoutParams.MATCH_PARENT));
+                compact ? android.widget.FrameLayout.LayoutParams.WRAP_CONTENT : android.widget.FrameLayout.LayoutParams.MATCH_PARENT));
 
         ImageView close = new ImageView(this);
         close.setImageResource(R.drawable.ic_close);
         close.setPadding(dp(8), dp(8), dp(8), dp(8));
         close.setContentDescription("Close");
         close.setOnClickListener(v -> dialog.dismiss());
-        android.widget.FrameLayout.LayoutParams closeParams =
-                new android.widget.FrameLayout.LayoutParams(dp(44), dp(44), Gravity.TOP | Gravity.END);
-        root.addView(close, closeParams);
+        root.addView(close, new android.widget.FrameLayout.LayoutParams(dp(40), dp(40), Gravity.TOP | Gravity.END));
 
         dialog.setContentView(root);
+        dialog.setCanceledOnTouchOutside(true);
         Window window = dialog.getWindow();
         if (window != null) {
+            int screenW = getResources().getDisplayMetrics().widthPixels;
+            int screenH = getResources().getDisplayMetrics().heightPixels;
             window.setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));
-            window.setLayout(WindowManager.LayoutParams.MATCH_PARENT, WindowManager.LayoutParams.MATCH_PARENT);
+            window.setLayout(Math.min(dp(compact ? 640 : 760), Math.round(screenW * 0.86f)),
+                    compact ? WindowManager.LayoutParams.WRAP_CONTENT : Math.round(screenH * 0.8f));
+            window.setGravity(Gravity.CENTER);
+            window.setDimAmount(0.45f);
             // Show without taking focus first so the system bars don't pop
             // back in over the immersive player.
             window.setFlags(WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
@@ -1443,7 +1459,13 @@ public class ExoPlayerActivity extends AppCompatActivity {
         }
         handler.removeCallbacks(hideControlsRunnable);
         panelOpen = true;
-        dialog.setOnDismissListener(d -> { panelOpen = false; clearActiveAction(); scheduleAutoHide(); });
+        openPanel = dialog;
+        dialog.setOnDismissListener(d -> {
+            panelOpen = false;
+            if (openPanel == dialog) openPanel = null;
+            clearActiveAction();
+            scheduleAutoHide();
+        });
         dialog.show();
         if (window != null) window.clearFlags(WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE);
         return dialog;
@@ -1517,7 +1539,7 @@ public class ExoPlayerActivity extends AppCompatActivity {
     private void showAudioSubtitlesMenu(View anchor) {
         LinearLayout columns = new LinearLayout(this);
         columns.setOrientation(LinearLayout.HORIZONTAL);
-        columns.setPadding(0, dp(28), dp(40), 0);
+        columns.setPadding(0, dp(8), dp(40), 0);
         final Dialog[] dialogRef = new Dialog[1];
 
         java.util.List<MenuRow> audioRows = new java.util.ArrayList<>();
@@ -1549,7 +1571,7 @@ public class ExoPlayerActivity extends AppCompatActivity {
         }
         columns.addView(buildOptionColumn("Subtitles", subtitleRows), new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, 1f));
 
-        dialogRef[0] = showFullScreenPanel(columns);
+        dialogRef[0] = showPanel(columns, false);
     }
 
     private static final String[] ASPECT_RATIO_KEYS = new String[]{"fit", "crop", "fill"};
@@ -1583,7 +1605,7 @@ public class ExoPlayerActivity extends AppCompatActivity {
     private void showQualityMenu(View anchor) {
         LinearLayout columns = new LinearLayout(this);
         columns.setOrientation(LinearLayout.HORIZONTAL);
-        columns.setPadding(0, dp(28), dp(40), 0);
+        columns.setPadding(0, dp(8), dp(40), 0);
         columns.setGravity(Gravity.CENTER_HORIZONTAL);
         final Dialog[] dialogRef = new Dialog[1];
 
@@ -1623,7 +1645,7 @@ public class ExoPlayerActivity extends AppCompatActivity {
         }
 
         columns.addView(buildOptionColumn("Video Quality", qualityRows), new LinearLayout.LayoutParams(dp(220), LinearLayout.LayoutParams.MATCH_PARENT));
-        dialogRef[0] = showFullScreenPanel(columns);
+        dialogRef[0] = showPanel(columns, false);
     }
 
     // Netflix "Playback Speed": five stops on a line, the active one a big
@@ -1697,7 +1719,7 @@ public class ExoPlayerActivity extends AppCompatActivity {
             styleSpeedStop(dot, label, speed == playbackSpeed);
         }
 
-        showFullScreenPanel(content);
+        showPanel(content, true);
     }
 
     private void styleSpeedStop(View dot, TextView label, boolean active) {
@@ -1947,27 +1969,35 @@ public class ExoPlayerActivity extends AppCompatActivity {
             view.setImageBitmap(hit);
             return;
         }
-        thumbLoader.execute(() -> {
-            android.graphics.Bitmap bmp = null;
-            try {
-                java.net.HttpURLConnection c = (java.net.HttpURLConnection) new java.net.URL(url).openConnection();
-                c.setConnectTimeout(8000);
-                c.setReadTimeout(8000);
-                try (java.io.InputStream in = c.getInputStream()) {
-                    android.graphics.BitmapFactory.Options o = new android.graphics.BitmapFactory.Options();
-                    o.inSampleSize = 2;
-                    bmp = android.graphics.BitmapFactory.decodeStream(in, null, o);
-                } finally {
-                    c.disconnect();
-                }
-            } catch (Exception ignored) {
+        if (thumbLoader.isShutdown()) return;
+        try {
+            thumbLoader.execute(() -> loadThumbnailBlocking(url, view));
+        } catch (java.util.concurrent.RejectedExecutionException ignored) {
+            // The player is closing.
+        }
+    }
+
+    private void loadThumbnailBlocking(String url, ImageView view) {
+        android.graphics.Bitmap bmp = null;
+        try {
+            java.net.HttpURLConnection c = (java.net.HttpURLConnection) new java.net.URL(url).openConnection();
+            c.setConnectTimeout(8000);
+            c.setReadTimeout(8000);
+            try (java.io.InputStream in = c.getInputStream()) {
+                android.graphics.BitmapFactory.Options o = new android.graphics.BitmapFactory.Options();
+                // Half size: the list shows them at about 136x77 dp.
+                o.inSampleSize = 2;
+                bmp = android.graphics.BitmapFactory.decodeStream(in, null, o);
+            } finally {
+                c.disconnect();
             }
-            if (bmp == null) return;
-            thumbCache.put(url, bmp);
-            final android.graphics.Bitmap done = bmp;
-            handler.post(() -> {
-                if (url.equals(view.getTag())) view.setImageBitmap(done);
-            });
+        } catch (Exception | OutOfMemoryError ignored) {
+        }
+        if (bmp == null) return;
+        thumbCache.put(url, bmp);
+        final android.graphics.Bitmap done = bmp;
+        handler.post(() -> {
+            if (!isDestroyed() && url.equals(view.getTag())) view.setImageBitmap(done);
         });
     }
 
@@ -1975,6 +2005,7 @@ public class ExoPlayerActivity extends AppCompatActivity {
     // the number), title and description - the playing one marked and scrolled into view. Closed by
     // the close button, a tap outside, or back.
     private void showEpisodeMenu(View anchor) {
+        if (isFinishing() || isDestroyed()) return;
         final float density = getResources().getDisplayMetrics().density;
         int screenW = getResources().getDisplayMetrics().widthPixels;
         int screenH = getResources().getDisplayMetrics().heightPixels;
@@ -2133,7 +2164,12 @@ public class ExoPlayerActivity extends AppCompatActivity {
             window.getDecorView().setSystemUiVisibility(getWindow().getDecorView().getSystemUiVisibility());
         }
         panelOpen = true;
-        dialog.setOnDismissListener(d -> { panelOpen = false; clearActiveAction(); });
+        openPanel = dialog;
+        dialog.setOnDismissListener(d -> {
+            panelOpen = false;
+            if (openPanel == dialog) openPanel = null;
+            clearActiveAction();
+        });
         dialog.show();
         if (window != null) window.clearFlags(WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE);
     }
@@ -2756,9 +2792,12 @@ public class ExoPlayerActivity extends AppCompatActivity {
 
         boolean shouldShowOutro = outroInterval != null
                 && position >= outroInterval.startMs && position < outroInterval.endMs;
-        if (shouldShowOutro && btnSkipOutro.getVisibility() != View.VISIBLE) {
+        // While Next Episode is up (see updatePostPlay) it stands in for Skip Outro.
+        boolean nextEpisodeUp = nextEpisodeNumber() != null && !postPlayDismissed && !nextEpisodeTriggered;
+        boolean showSkipOutro = shouldShowOutro && !nextEpisodeUp;
+        if (showSkipOutro && btnSkipOutro.getVisibility() != View.VISIBLE) {
             btnSkipOutro.setVisibility(View.VISIBLE);
-        } else if (!shouldShowOutro && btnSkipOutro.getVisibility() == View.VISIBLE) {
+        } else if (!showSkipOutro && btnSkipOutro.getVisibility() == View.VISIBLE) {
             btnSkipOutro.setVisibility(View.GONE);
         }
 
@@ -3117,6 +3156,8 @@ public class ExoPlayerActivity extends AppCompatActivity {
     @Override
     protected void onDestroy() {
         super.onDestroy();
+        if (openPanel != null && openPanel.isShowing()) openPanel.dismiss();
+        openPanel = null;
         thumbLoader.shutdownNow();
         if (isFinishing()) ExoPlayerPlugin.notifyPlayerClosed();
         if (currentActivity != null && currentActivity.get() == this) currentActivity = null;

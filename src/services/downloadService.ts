@@ -246,9 +246,6 @@ export async function removeAllDownloads(): Promise<void> {
   for (const id of [...records.keys()]) await removeDownload(id);
 }
 
-export const totalDownloadedBytes = (): number =>
-  snapshot.reduce((sum, r) => sum + (r.state === 'completed' ? r.bytes : 0), 0);
-
 export function formatBytes(bytes: number): string {
   if (bytes < 1024 * 1024) return `${Math.max(1, Math.round(bytes / 1024))} KB`;
   if (bytes < 1024 ** 3) return `${Math.round(bytes / 1024 / 1024)} MB`;

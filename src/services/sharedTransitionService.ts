@@ -37,8 +37,6 @@ export const subscribeSharedTransition = (fn: (state: SharedTransitionState) => 
   };
 };
 
-export const getSharedTransitionState = (): SharedTransitionState => currentState;
-
 export const startSharedTransition = (
   rect: DOMRect | CardRect,
   anime: AnimeItem
@@ -70,12 +68,3 @@ export const finishSharedTransition = (): void => {
   notify();
 };
 
-export const resetSharedTransition = (): void => {
-  currentState = {
-    active: false,
-    anime: null,
-    originRect: null,
-    phase: 'idle'
-  };
-  notify();
-};

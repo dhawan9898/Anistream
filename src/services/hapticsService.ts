@@ -90,9 +90,6 @@ export const hapticLight = (): Promise<void> => pulse(8);
 /** Primary buttons (Play, Back, Sub/Dub). */
 export const hapticMedium = (): Promise<void> => pulse(12);
 
-/** Opening cards, modal actions. */
-export const hapticHeavy = (): Promise<void> => pulse(18);
-
 /** Switch flipped on (slightly longer) or off. */
 export const hapticToggle = (checked: boolean): Promise<void> => pulse(checked ? 12 : 8);
 
@@ -105,5 +102,3 @@ export const hapticSuccess = (): Promise<void> => pulse([8, 40, 10]);
 /** A confirmation prompt or caution. */
 export const hapticWarning = (): Promise<void> => pulse([12, 30, 16]);
 
-/** A failure. */
-export const hapticError = (): Promise<void> => pulse([18, 40, 18, 40, 24]);
