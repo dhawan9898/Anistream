@@ -194,9 +194,11 @@ export const App: React.FC = () => {
   // is just a parse), so the first tap on a tab or poster is instant.
   useEffect(() => {
     const warm = () => Object.values(loaders).forEach(load => { load().catch(() => undefined); });
-    const idle = (window as Window & { requestIdleCallback?: (cb: () => void) => number }).requestIdleCallback;
-    const handle = idle ? idle(warm) : window.setTimeout(warm, 1500);
-    return () => { if (!idle) window.clearTimeout(handle); };
+    // Older WebViews have no requestIdleCallback (the DOM typings say it always exists).
+    const w = window as unknown as { requestIdleCallback?: (cb: () => void) => number; cancelIdleCallback?: (id: number) => void };
+    const idle = typeof w.requestIdleCallback === 'function';
+    const handle = idle ? w.requestIdleCallback!(warm) : window.setTimeout(warm, 1500);
+    return () => { if (idle) w.cancelIdleCallback?.(handle); else window.clearTimeout(handle); };
   }, []);
 
   // Active player state
@@ -547,6 +549,15 @@ export const App: React.FC = () => {
         })
       : Promise.resolve(episodeListRef.current);
 
+    // Titles, descriptions and thumbnails for the native player's episode list.
+    // Warmed while the stream resolves (it only needs the list), not after
+    // it: waiting for it afterwards added up to 1.5 s before playback began.
+    const episodeInfoWarm: Promise<unknown> = isNative && !download
+      ? episodeListPromise
+          .then(list => (list && list.length > 0 ? warmEpisodeInfo(anime, list, episode.number) : undefined))
+          .catch(() => undefined)
+      : Promise.resolve();
+
     try {
       const [rawSource, resolvedEpisodeList, prefs] = await Promise.all([
         download ? Promise.resolve(sourceFromDownload(download)) : resolveStream(anime, episode, mode, { fresh: options.fresh }),
@@ -565,8 +576,8 @@ export const App: React.FC = () => {
         loadedEpisodeListAnimeId.current = resolvedEpisodeList ? anime.id : null;
       }
 
-      // Titles, descriptions and thumbnails for the player's episode list (short wait at most).
-      if (isNative && !download) await warmEpisodeInfo(anime, episodesForPlayer, episode.number);
+      // Already running since the list arrived; capped at its own short wait.
+      await episodeInfoWarm;
       if (requestId !== playRequestRef.current) return;
 
       const source = applyPreferredQuality(rawSource, prefs);

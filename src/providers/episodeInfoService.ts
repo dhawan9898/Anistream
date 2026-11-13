@@ -6,6 +6,7 @@
 import { request } from 'streamkit/core/http.ts';
 import { readPersistedJson, writePersistedJson } from '../services/persistentCache.ts';
 import type { AnimeItem } from './aniCliCore';
+import { trimOldest } from './boundedCache.ts';
 
 const KITSU = 'https://kitsu.app/api/edge';
 const HEADERS = { Accept: 'application/vnd.api+json' };
@@ -146,6 +147,8 @@ export async function getEpisodeSynopsis(anime: AnimeItem, number: string, total
   }
 }
 
+// One entry per episode looked at; a long-running title alone is over a thousand.
+const MEMORY_MAX = 4000;
 const memory = new Map<string, EpisodeInfo | null>();
 
 /** What is already known about an episode (memory only, never touches the network). */
@@ -198,6 +201,7 @@ export async function getEpisodeInfo(
     const saved = await readPersistedJson<EpisodeInfo | null>(`epinfo2:${anime.id}|${n}`);
     if (saved) {
       memory.set(`${anime.id}|${n}`, saved.value);
+      trimOldest(memory, MEMORY_MAX);
       if (saved.value) out[n] = saved.value;
     } else {
       stillMissing.push(n);
@@ -261,6 +265,7 @@ export async function getEpisodeInfo(
     if (!answered.has(n)) continue;
     const info = found.get(n) ?? null;
     memory.set(`${anime.id}|${n}`, info);
+    trimOldest(memory, MEMORY_MAX);
     writePersistedJson(`epinfo2:${anime.id}|${n}`, info);
     if (info) out[n] = info;
   }

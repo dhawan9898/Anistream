@@ -140,6 +140,10 @@ export const AnimeDetailScreen: React.FC<AnimeDetailScreenProps> = ({
           setDubAvailable(resolved.dubCount > 0);
         }
       }
+    }).catch(err => {
+      // Nothing to show: end the "More Like This" skeleton instead of leaving it up for good.
+      console.warn('[AnimeDetailScreen] details unavailable:', err);
+      if (!cancelled) setDetails({ genres: [], collection: [], seasons: [], suggestions: [] });
     });
     return () => {
       cancelled = true;

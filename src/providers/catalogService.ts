@@ -22,6 +22,7 @@ import {
 import { request } from 'streamkit/core/http.ts';
 import { seasonLabels, walkSeasons, type SeasonMedia } from './seasonService.ts';
 import { readPersistedJson, writePersistedJson } from '../services/persistentCache.ts';
+import { trimOldest } from './boundedCache.ts';
 
 export interface Genre {
   slug: string;
@@ -255,6 +256,7 @@ export function getAnimeByGenre(genre: Genre, page = 1, nextPath?: string): Prom
   if (cached) return cached;
   const pending = loadGenrePage(genre, page, nextPath);
   genrePageCache.set(key, pending);
+  trimOldest(genrePageCache, 60);
   pending.then(result => {
     if (result.items.length === 0) genrePageCache.delete(key);
   });
@@ -620,9 +622,13 @@ export function getAnimeDetails(anime: AnimeItem): Promise<AnimeDetails> {
   if (cached) return cached;
   const pending = loadDetailsOrSaved(anime);
   detailsCache.set(anime.id, pending);
+  trimOldest(detailsCache, 150);
   // Don't pin a failed/empty lookup forever - let a later visit retry.
   pending.then(d => {
     if (d.collection.length === 0 && d.suggestions.length === 0) detailsCache.delete(anime.id);
+  }).catch(() => {
+    // A failed lookup stayed cached for the whole session: every later visit got the same rejection.
+    if (detailsCache.get(anime.id) === pending) detailsCache.delete(anime.id);
   });
   return pending;
 }
@@ -687,6 +693,7 @@ function fetchSeasonMedia(id: number): Promise<AniListMedia | null> {
     return media;
   });
   seasonMediaCache.set(id, pending);
+  trimOldest(seasonMediaCache, 400);
   pending.catch(() => seasonMediaCache.delete(id));
   return pending;
 }

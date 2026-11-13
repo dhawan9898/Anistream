@@ -122,6 +122,8 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   const lastPositionRef = useRef<number>(0);
   const lastDurationRef = useRef<number>(0);
   const loadedUrlRef = useRef<string>('');
+  // The URL the <video> is actually loading (after a quality switch too).
+  const playingUrlRef = useRef<string>('');
   const lastProgressSaveRef = useRef<number>(0);
   const onProgressUpdateRef = useRef(onProgressUpdate);
   // Layout effect so the ref is current before the stream effect below
@@ -258,7 +260,11 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     let disposed = false;
     let retryTimer: number | null = null;
 
-    loadedUrlRef.current = streamUrl;
+    // Progress is reported under the source's own URL (what the caller knows the
+    // session by), not the dev-proxy form of it that the <video> loads.
+    const sourceUrl = streamSource.streamUrl;
+    loadedUrlRef.current = sourceUrl;
+    playingUrlRef.current = streamUrl;
     lastPositionRef.current = startAt;
     lastDurationRef.current = 0;
     lastProgressSaveRef.current = Date.now();
@@ -382,7 +388,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
       video.removeEventListener('loadedmetadata', startPlayback);
       // Final position of this stream, before anything is torn down.
       if (lastDurationRef.current > 0) {
-        reportFinal?.(lastPositionRef.current, lastDurationRef.current, streamUrl);
+        reportFinal?.(lastPositionRef.current, lastDurationRef.current, sourceUrl);
       }
       if (hlsRef.current) {
         hlsRef.current.destroy();
@@ -542,9 +548,13 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
       }
     }
 
+    const newUrl = resolvePlayableUrl(item.url, streamSource.referer, DEV_FALLBACK_REFERER);
+    // Same manifest under another label: the level switch above is the whole
+    // change. Reloading it restarted playback and threw the chosen level away.
+    if (newUrl === playingUrlRef.current) return;
+    playingUrlRef.current = newUrl;
     const prevTime = video.currentTime;
     const wasPlaying = !video.paused;
-    const newUrl = resolvePlayableUrl(item.url, streamSource.referer, DEV_FALLBACK_REFERER);
     const isNewMp4 = newUrl.includes('.mp4') || !newUrl.includes('.m3u8');
 
     const resume = () => {

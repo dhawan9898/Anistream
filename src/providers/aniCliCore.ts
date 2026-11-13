@@ -81,24 +81,6 @@ export function parseSkipRange(raw: unknown): SkipRange | undefined {
   return { start, end };
 }
 
-// 1. Deobfuscator using exact ani-cli XOR algorithm: "otaku-embed-v1"
-export function deobfuscateBlob(base64Blob: string): string {
-  try {
-    const raw = atob(base64Blob);
-    const key = "otaku-embed-v1";
-    let output = "";
-    for (let i = 0; i < raw.length; i++) {
-      const byte = raw.charCodeAt(i);
-      const keyByte = key.charCodeAt(i % key.length);
-      output += String.fromCharCode(byte ^ keyByte);
-    }
-    return output;
-  } catch (err) {
-    console.error("deobfuscateBlob error:", err);
-    return "";
-  }
-}
-
 // Helper to resolve API URLs: the dev server proxies "/api-hianime" to
 // https://hianimes.se (see vite.config.ts), which only exists while running
 // `npm run dev`. The built APK has no such proxy, so on a native device we

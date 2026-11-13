@@ -10,9 +10,7 @@ import java.net.URL;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
-import java.util.Map;
 import java.util.Set;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -34,7 +32,16 @@ final class ThumbnailSprites {
     private final String referer;
     private final List<long[]> cues = new ArrayList<>();      // {startMs, endMs, x, y, w, h, sheetIndex}
     private final List<String> sheetUrls = new ArrayList<>();
-    private final Map<String, Bitmap> sheets = new ConcurrentHashMap<>();
+    // Decoded sheets, capped by size: a long film has dozens of them and keeping
+    // every one decoded could take hundreds of MB. Evicted ones are re-fetched.
+    private static final int SHEET_CACHE_BYTES = 16 * 1024 * 1024;
+    private final android.util.LruCache<String, Bitmap> sheets =
+            new android.util.LruCache<String, Bitmap>(SHEET_CACHE_BYTES) {
+                @Override
+                protected int sizeOf(String key, Bitmap value) {
+                    return value.getByteCount();
+                }
+            };
     private final Set<String> loading = new HashSet<>();
     private volatile boolean parsed = false;
     private volatile boolean released = false;
@@ -57,8 +64,13 @@ final class ThumbnailSprites {
 
     void release() {
         released = true;
-        sheets.clear();
-        lastFrame = null;
+        sheets.evictAll();
+        synchronized (this) { lastFrame = null; }
+    }
+
+    // Memory pressure: drop the decoded sheets (they are fetched again when scrubbed to).
+    void trim() {
+        sheets.evictAll();
     }
 
     // Aspect ratio (w/h) of the thumbnails, or 0 until known.
@@ -132,7 +144,7 @@ final class ThumbnailSprites {
             int h = (int) Math.min(cue[5], sheet.getHeight() - y);
             lastFrame = Bitmap.createBitmap(sheet, x, y, w, h);
             lastCue = found;
-        } catch (Exception e) {
+        } catch (Exception | OutOfMemoryError e) {
             Log.w(TAG, "crop failed: " + e);
         }
         return lastFrame;
@@ -150,12 +162,16 @@ final class ThumbnailSprites {
                 c.setRequestProperty("User-Agent", UA);
                 c.setRequestProperty("Referer", referer);
                 try (InputStream in = c.getInputStream()) {
-                    Bitmap bitmap = BitmapFactory.decodeStream(in);
+                    // Half the memory of ARGB_8888; previews don't need alpha.
+                    BitmapFactory.Options o = new BitmapFactory.Options();
+                    o.inPreferredConfig = Bitmap.Config.RGB_565;
+                    Bitmap bitmap = BitmapFactory.decodeStream(in, null, o);
                     if (bitmap != null && !released) sheets.put(url, bitmap);
                 } finally {
                     c.disconnect();
                 }
-            } catch (Exception e) {
+            } catch (Exception | OutOfMemoryError e) {
+                // An OutOfMemoryError here used to escape the executor and crash the app.
                 Log.w(TAG, "sheet failed: " + e);
             } finally {
                 synchronized (loading) { loading.remove(url); }

@@ -47,7 +47,10 @@ final class NativeStreamResolver {
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
     private static final int TIMEOUT_MS = 6_000;
     private static final long HEDGE_MS = 1_500;
-    private static final ExecutorService HEDGE_POOL = Executors.newFixedThreadPool(4);
+    // Not a fixed pool: a server that lost the race keeps its thread until its
+    // request times out (blocking I/O ignores the cancel), and with four fixed
+    // threads those leftovers made the next lookup wait behind them.
+    private static final ExecutorService HEDGE_POOL = Executors.newCachedThreadPool();
     private static final int MAX_SERVERS = 4;
     // Same constants as aniCliCore.decryptToken (key is 16 chars zero-padded to 32 bytes).
     private static final String KEY = "i?LMTAx0Q6,:}50U";
@@ -79,7 +82,9 @@ final class NativeStreamResolver {
         }
     }
 
-    private static final ExecutorService EXECUTOR = Executors.newFixedThreadPool(2);
+    // Whole lookups (play, prefetch, dub subtitle sync). Cached rather than a
+    // pool of two, so a Next press never queues behind two slow background lookups.
+    private static final ExecutorService EXECUTOR = Executors.newCachedThreadPool();
     private static final Map<String, FutureTask<Result>> inFlight = new ConcurrentHashMap<>();
 
     private NativeStreamResolver() {}
@@ -133,7 +138,7 @@ final class NativeStreamResolver {
         int launched = 0, finished = 0;
         try {
             while (finished < hashes.size()) {
-                if (launched < hashes.size() && true) {
+                if (launched < hashes.size()) {
                     final String hash = hashes.get(launched++);
                     futures.add(ecs.submit(() -> resolveEmbed(hash)));
                 }
@@ -145,8 +150,7 @@ final class NativeStreamResolver {
                 try {
                     Result result = done.get();
                     if (result != null) {
-                        cache.put(key, result);
-                        if (cache.size() > 12) cache.clear();
+                        remember(key, result);
                         return result;
                     }
                 } catch (ExecutionException e) {
@@ -161,6 +165,16 @@ final class NativeStreamResolver {
         throw last != null ? last : new IOException("no server produced a stream");
     }
 
+    // Expired links go first; the cache is only emptied when it is still too big.
+    private static void remember(String key, Result result) {
+        long now = System.currentTimeMillis();
+        for (Map.Entry<String, Result> e : cache.entrySet()) {
+            if (now - e.getValue().resolvedAt >= REUSE_MS) cache.remove(e.getKey(), e.getValue());
+        }
+        if (cache.size() >= 12) cache.clear();
+        cache.put(key, result);
+    }
+
     static void forget(String episodeId, String mode) {
         cache.remove(episodeId + "|" + mode);
     }
@@ -169,8 +183,8 @@ final class NativeStreamResolver {
     private static final Pattern HASH = Pattern.compile("\\bdata-hash\\s*=\\s*[\"']([^\"']*)[\"']");
     private static final Pattern TYPE = Pattern.compile("\\bdata-type\\s*=\\s*[\"']([^\"']*)[\"']");
 
-    // The requested audio only; a sub request may fall back to whatever the
-    // episode has, a dub request never turns into the subbed stream.
+    // Servers of the requested audio; only when the episode has none of that
+    // type, whatever servers exist (the same rule as aniCliCore.pickServerHashes).
     private static List<String> pickServerHashes(String html, String mode) {
         Set<String> preferred = new LinkedHashSet<>();
         Set<String> any = new LinkedHashSet<>();
@@ -215,7 +229,7 @@ final class NativeStreamResolver {
                     inline.optString("sprite_vtt", ""), intro[0], intro[1], outro[0], outro[1]);
         }
 
-        Matcher id = Pattern.compile("data-id=\"(\\d+)\"", Pattern.CASE_INSENSITIVE).matcher(embedHtml);
+        Matcher id = DATA_ID.matcher(embedHtml);
         if (!id.find()) return null;
         String sourcesBody = get(origin + "/stream/getSourcesNew?id=" + id.group(1), UA, embedUrl, true);
         JSONObject sources = new JSONObject(sourcesBody);
@@ -244,6 +258,7 @@ final class NativeStreamResolver {
                 intro[0], intro[1], outro[0], outro[1]);
     }
 
+    private static final Pattern DATA_ID = Pattern.compile("data-id=\"(\\d+)\"", Pattern.CASE_INSENSITIVE);
     private static final Pattern INLINE_PAYLOAD = Pattern.compile("window\\.__P\\s*=\\s*\"([^\"]+)\"");
     private static final byte[] PAYLOAD_KEY = "otaku-embed-v1".getBytes(StandardCharsets.ISO_8859_1);
 
@@ -330,6 +345,8 @@ final class NativeStreamResolver {
     private static String get(String url, String userAgent, String referer, boolean xhr) throws IOException {
         IOException last = null;
         for (int attempt = 0; attempt < 2; attempt++) {
+            // Another server already won: don't start (or retry) this request.
+            if (Thread.currentThread().isInterrupted()) throw new IOException("cancelled: " + url);
             HttpURLConnection c = null;
             try {
                 c = (HttpURLConnection) new URL(url).openConnection();

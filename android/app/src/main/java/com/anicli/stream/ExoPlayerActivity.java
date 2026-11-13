@@ -72,8 +72,24 @@ public class ExoPlayerActivity extends AppCompatActivity {
     // this app streams from.
     private static final int MIN_BUFFER_MS = 30_000;
     private static final int MAX_BUFFER_MS = 60_000;
-    private static final int BUFFER_FOR_PLAYBACK_MS = 2_500;
+    // A short start threshold keeps the first frame (and every seek) quick; the
+    // longer one after a stall avoids rebuffering again straight away.
+    private static final int BUFFER_FOR_PLAYBACK_MS = 1_500;
     private static final int BUFFER_FOR_PLAYBACK_AFTER_REBUFFER_MS = 5_000;
+    // Already-played media kept in memory so short seeks back don't refetch.
+    private static final int BACK_BUFFER_MS = 30_000;
+
+    private static androidx.media3.exoplayer.upstream.DefaultBandwidthMeter bandwidthMeter;
+
+    // One bandwidth meter for every player instance: the next episode, a retry or
+    // an audio switch starts at the throughput already measured instead of going
+    // back to the initial guess and climbing up to full quality again.
+    private static synchronized androidx.media3.exoplayer.upstream.DefaultBandwidthMeter getBandwidthMeter(android.content.Context appCtx) {
+        if (bandwidthMeter == null) {
+            bandwidthMeter = new androidx.media3.exoplayer.upstream.DefaultBandwidthMeter.Builder(appCtx).build();
+        }
+        return bandwidthMeter;
+    }
     // A stalled CDN connection is abandoned after this long and the load
     // retried (was 45 s - the player sat "buffering" that whole time).
     private static final int CONNECT_TIMEOUT_MS = 8_000;
@@ -2439,6 +2455,8 @@ public class ExoPlayerActivity extends AppCompatActivity {
         // cost of a little extra memory and a slightly slower initial join.
         DefaultLoadControl loadControl = new DefaultLoadControl.Builder()
                 .setBufferDurationsMs(MIN_BUFFER_MS, MAX_BUFFER_MS, BUFFER_FOR_PLAYBACK_MS, BUFFER_FOR_PLAYBACK_AFTER_REBUFFER_MS)
+                .setBackBuffer(BACK_BUFFER_MS, true)
+                .setPrioritizeTimeOverSizeThresholds(true)
                 .build();
 
         // Media audio focus (pause for calls, duck for notifications) and
@@ -2460,6 +2478,7 @@ public class ExoPlayerActivity extends AppCompatActivity {
                 .setMediaSourceFactory(mediaSourceFactory)
                 .setTrackSelector(new DefaultTrackSelector(this, abr))
                 .setLoadControl(loadControl)
+                .setBandwidthMeter(getBandwidthMeter(getApplicationContext()))
                 .setAudioAttributes(audioAttributes, true)
                 .setHandleAudioBecomingNoisy(true)
                 .build();
@@ -3110,6 +3129,8 @@ public class ExoPlayerActivity extends AppCompatActivity {
             chromeVisible = false;
             postPlayContainer.setVisibility(View.GONE);
             unlockContainer.setVisibility(View.GONE);
+            // Entering PiP can be reported twice: never register a second receiver.
+            if (pipReceiver != null) return;
             pipReceiver = new android.content.BroadcastReceiver() {
                 @Override
                 public void onReceive(Context context, Intent intent) {
@@ -3130,6 +3151,16 @@ public class ExoPlayerActivity extends AppCompatActivity {
                 pipReceiver = null;
             }
             if (!activityStopped) setControlsVisible(true);
+        }
+    }
+
+    // Memory pressure: give back the image caches (both refill on demand).
+    @Override
+    public void onTrimMemory(int level) {
+        super.onTrimMemory(level);
+        if (level >= android.content.ComponentCallbacks2.TRIM_MEMORY_RUNNING_LOW) {
+            thumbCache.evictAll();
+            if (sprites != null) sprites.trim();
         }
     }
 

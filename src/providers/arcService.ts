@@ -8,6 +8,7 @@
 import { request } from 'streamkit/core/http.ts';
 import { readPersistedJson, writePersistedJson } from '../services/persistentCache.ts';
 import type { AnimeItem } from './aniCliCore';
+import { trimOldest } from './boundedCache.ts';
 
 const TMDB = 'https://api.themoviedb.org/3';
 const STORY_ARC = 5;
@@ -163,6 +164,7 @@ export function getStoryArcs(anime: AnimeItem, siteEpisodes: number): Promise<St
     }
   })();
   memory.set(cacheKey, pending);
+  trimOldest(memory, 100);
   pending.then(a => { if (a.length === 0) memory.delete(cacheKey); }).catch(() => memory.delete(cacheKey));
   return pending;
 }
