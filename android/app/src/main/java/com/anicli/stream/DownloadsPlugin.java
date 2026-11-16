@@ -1,7 +1,9 @@
 package com.anicli.stream;
 
+import android.content.Intent;
 import android.net.Uri;
 import androidx.annotation.NonNull;
+import androidx.core.content.FileProvider;
 import androidx.media3.common.MediaItem;
 import androidx.media3.common.MimeTypes;
 import androidx.media3.common.util.UnstableApi;
@@ -210,5 +212,86 @@ public class DownloadsPlugin extends Plugin {
         File[] files = dir.listFiles((d, name) -> name.startsWith(prefix));
         if (files != null) for (File f : files) //noinspection ResultOfMethodCallIgnored
             f.delete();
+    }
+
+    /**
+     * Download an APK from url and trigger Android package installation sheet.
+     */
+    @PluginMethod
+    public void downloadAndInstallApk(PluginCall call) {
+        final String apkUrl = call.getString("url");
+        if (apkUrl == null || apkUrl.isEmpty()) {
+            call.reject("url is required");
+            return;
+        }
+
+        io.execute(() -> {
+            try {
+                File cacheDir = getContext().getCacheDir();
+                File apkFile = new File(cacheDir, "update.apk");
+                if (apkFile.exists()) {
+                    //noinspection ResultOfMethodCallIgnored
+                    apkFile.delete();
+                }
+
+                HttpURLConnection conn = (HttpURLConnection) new URL(apkUrl).openConnection();
+                conn.setInstanceFollowRedirects(true);
+                conn.setConnectTimeout(15_000);
+                conn.setReadTimeout(30_000);
+                conn.setRequestProperty("User-Agent", "Mozilla/5.0 (Linux; Android 14) AniStream");
+                conn.connect();
+
+                int responseCode = conn.getResponseCode();
+                if (responseCode == HttpURLConnection.HTTP_MOVED_PERM || responseCode == HttpURLConnection.HTTP_MOVED_TEMP || responseCode == 307 || responseCode == 308) {
+                    String newUrl = conn.getHeaderField("Location");
+                    conn.disconnect();
+                    conn = (HttpURLConnection) new URL(newUrl).openConnection();
+                    conn.setConnectTimeout(15_000);
+                    conn.setReadTimeout(30_000);
+                    conn.setRequestProperty("User-Agent", "Mozilla/5.0 (Linux; Android 14) AniStream");
+                    conn.connect();
+                }
+
+                long fileLength = conn.getContentLengthLong();
+                try (InputStream is = conn.getInputStream(); FileOutputStream fos = new FileOutputStream(apkFile)) {
+                    byte[] buffer = new byte[16384];
+                    int len;
+                    long downloaded = 0;
+                    long lastNotify = 0;
+
+                    while ((len = is.read(buffer)) > 0) {
+                        fos.write(buffer, 0, len);
+                        downloaded += len;
+                        long now = System.currentTimeMillis();
+                        if (now - lastNotify > 200 || downloaded == fileLength) {
+                            lastNotify = now;
+                            JSObject progress = new JSObject();
+                            progress.put("bytes", downloaded);
+                            progress.put("total", fileLength);
+                            float pct = fileLength > 0 ? (downloaded * 100f / fileLength) : 0f;
+                            progress.put("percent", Math.round(pct * 10f) / 10f);
+                            notifyListeners("apkUpdateProgress", progress);
+                        }
+                    }
+                } finally {
+                    conn.disconnect();
+                }
+
+                getActivity().runOnUiThread(() -> {
+                    try {
+                        Uri contentUri = FileProvider.getUriForFile(getContext(), getContext().getPackageName() + ".fileprovider", apkFile);
+                        Intent intent = new Intent(Intent.ACTION_VIEW);
+                        intent.setDataAndType(contentUri, "application/vnd.android.package-archive");
+                        intent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                        getContext().startActivity(intent);
+                        call.resolve();
+                    } catch (Exception e) {
+                        call.reject("Failed to launch package installer: " + e.getMessage(), e);
+                    }
+                });
+            } catch (Exception e) {
+                call.reject("APK download failed: " + e.getMessage(), e);
+            }
+        });
     }
 }

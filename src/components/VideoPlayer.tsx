@@ -917,8 +917,14 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
       {/* Playback failure */}
       {streamError && (
         <div onClick={(e) => e.stopPropagation()} className="nf-dialog">
-          <span style={{ fontSize: '15px', fontWeight: 700 }}>{streamError}</span>
-          <span style={{ fontSize: '12px', color: '#b3b3b3' }}>The server may be blocking it or the format isn't supported. Try again, or pick another episode.</span>
+          <span style={{ fontSize: '15px', fontWeight: 700 }}>
+            {typeof navigator !== 'undefined' && !navigator.onLine ? 'Slow or Offline Network' : streamError}
+          </span>
+          <span style={{ fontSize: '12px', color: '#b3b3b3' }}>
+            {typeof navigator !== 'undefined' && !navigator.onLine
+              ? 'Your network connection seems slow or offline. You can retry, or go back to your library to play downloaded episodes.'
+              : "The server may be blocking it or the format isn't supported. Try again, or pick another episode."}
+          </span>
           <div style={{ display: 'flex', gap: '10px', marginTop: '6px' }}>
             <button onClick={retryStream} className="interactive nf-btn-white" style={{ whiteSpace: 'nowrap' }}>
               Retry

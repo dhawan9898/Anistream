@@ -605,7 +605,10 @@ export const App: React.FC = () => {
     } catch (err) {
       console.error("Failed to load stream:", err);
       if (requestId !== playRequestRef.current) return;
-      const message = err instanceof SourceUnavailableError
+      const isSlow = (typeof navigator !== 'undefined' && !navigator.onLine) || /connection|network|timeout|offline|fetch/i.test(String(err));
+      const message = isSlow
+        ? "Slow or offline network detected. Would you like to switch to Offline Mode to watch your downloaded content?"
+        : err instanceof SourceUnavailableError
         ? "This episode isn't available from any server right now. Try again in a bit, or switch Sub/Dub."
         : "Couldn't load this episode - check your connection and try again.";
       if (isNative) {
@@ -847,10 +850,17 @@ export const App: React.FC = () => {
 
       <ConfirmModal
         open={streamErrorMessage !== null}
-        title="Playback Failed"
+        title={streamErrorMessage?.includes("Offline Mode") ? "Slow or Offline Network" : "Playback Failed"}
         message={streamErrorMessage || ''}
-        confirmLabel="OK"
-        onConfirm={() => setStreamErrorMessage(null)}
+        confirmLabel={streamErrorMessage?.includes("Offline Mode") ? "Open Downloads" : "OK"}
+        cancelLabel={streamErrorMessage?.includes("Offline Mode") ? "Dismiss" : undefined}
+        onConfirm={() => {
+          const isOffline = streamErrorMessage?.includes("Offline Mode");
+          setStreamErrorMessage(null);
+          if (isOffline) {
+            switchTab('library');
+          }
+        }}
         onCancel={() => setStreamErrorMessage(null)}
       />
 

@@ -10,6 +10,12 @@ export interface DownloadChangedEvent {
   bytes: number;
 }
 
+export interface ApkUpdateProgressEvent {
+  bytes: number;
+  total: number;
+  percent: number;
+}
+
 export interface DownloadsPluginInterface {
   // Queues a download of the stream; resolves with the caption files saved
   // beside it (file:// URIs that work offline).
@@ -24,9 +30,14 @@ export interface DownloadsPluginInterface {
   remove(options: { id: string }): Promise<void>;
   list(): Promise<{ downloads: DownloadChangedEvent[] }>;
   setPaused(options: { paused: boolean }): Promise<void>;
+  downloadAndInstallApk(options: { url: string }): Promise<void>;
   addListener(
     eventName: 'downloadChanged',
     listenerFunc: (event: DownloadChangedEvent) => void
+  ): Promise<PluginListenerHandle>;
+  addListener(
+    eventName: 'apkUpdateProgress',
+    listenerFunc: (event: ApkUpdateProgressEvent) => void
   ): Promise<PluginListenerHandle>;
 }
 
