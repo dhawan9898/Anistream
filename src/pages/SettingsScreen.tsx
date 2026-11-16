@@ -1,16 +1,17 @@
 // SettingsScreen.tsx - Appearance, playback preferences, data management, and app info
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import {
   PlayCircle, SkipForward, Rewind, Trash2,
   Info, Terminal, Bookmark, Clock, Loader2, Vibrate, Droplets,
-  RefreshCw, DownloadCloud
+  RefreshCw, DownloadCloud, Bug, Upload, Download, ChevronRight
 } from 'lucide-react';
 import { checkForUpdate, installUpdate, type UpdateInfo } from '../services/updateService';
 import {
   getUserPreferences, saveUserPreferences, clearWatchHistory,
-  getWatchHistory, getBookmarks,
+  getWatchHistory, getBookmarks, exportBackup, importBackup,
   type UserPreferences
 } from '../services/historyService';
+import { DownloadsPlugin } from '../plugins/downloadsPlugin';
 import { THEME_OPTIONS, type ThemeMode } from '../services/themeService';
 import { getGlassStyle, setGlassStyle } from '../services/glassService';
 import { Preferences } from '@capacitor/preferences';
@@ -145,12 +146,74 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({ active, theme, o
     }
   };
 
+  // Crash reporting & backup
+  const [crashReport, setCrashReport] = useState<string | null>(null);
+  const [crashCopied, setCrashCopied] = useState(false);
+  const [backupStatus, setBackupStatus] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  useEffect(() => {
+    DownloadsPlugin.getCrashReport().then(res => {
+      if (res.report) setCrashReport(res.report);
+    }).catch(() => {});
+  }, []);
+
+  const handleCopyClearCrash = async () => {
+    if (!crashReport) return;
+    try {
+      await navigator.clipboard.writeText(crashReport);
+      await DownloadsPlugin.clearCrashReport();
+      setCrashReport(null);
+      setCrashCopied(true);
+      setTimeout(() => setCrashCopied(false), 3000);
+    } catch {}
+  };
+
+  const handleExportBackup = async () => {
+    try {
+      const json = await exportBackup();
+      const blob = new Blob([json], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `anistream-backup-${new Date().toISOString().slice(0, 10)}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+      setBackupStatus('Backup exported successfully');
+      setTimeout(() => setBackupStatus(null), 3000);
+    } catch (err: any) {
+      setBackupStatus(`Export failed: ${err?.message || 'Error'}`);
+    }
+  };
+
+  const handleImportFile = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = async (event) => {
+      try {
+        const text = event.target?.result as string;
+        await importBackup(text);
+        const [h, b, p] = await Promise.all([getWatchHistory(), getBookmarks(), getUserPreferences()]);
+        setHistoryCount(h.length);
+        setBookmarkCount(b.length);
+        setPrefs(p);
+        setBackupStatus('Backup imported successfully');
+        setTimeout(() => setBackupStatus(null), 3000);
+      } catch (err: any) {
+        setBackupStatus(`Import failed: ${err?.message || 'Invalid format'}`);
+      }
+    };
+    reader.readAsText(file);
+    e.target.value = '';
+  };
+
   const handleInstallUpdate = async () => {
     if (!updateInfo) return;
     setUpdateDownloading(true);
     setUpdateProgress(0);
     try {
-      await installUpdate(updateInfo.apkUrl, pct => setUpdateProgress(pct));
+      await installUpdate(updateInfo.apkUrl, pct => setUpdateProgress(pct), updateInfo.size);
       setUpdateStatus('Update downloaded. Launching package installer...');
     } catch (err: any) {
       setUpdateStatus(`Update failed: ${err?.message || 'Unknown error'}`);
@@ -414,7 +477,110 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({ active, theme, o
             </div>
             <Trash2 size={16} color="var(--accent-danger)" />
           </button>
+          <div style={{ height: '1px', background: 'var(--border-subtle)', margin: '0 16px' }} />
+          <button
+            onClick={handleExportBackup}
+            className="interactive"
+            style={{
+              width: '100%',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '14px',
+              padding: '14px 16px',
+              background: 'none',
+              border: 'none'
+            }}
+          >
+            <div style={{
+              width: '38px', height: '38px', borderRadius: 'var(--radius-sm)',
+              background: 'var(--accent-soft)', display: 'flex', alignItems: 'center',
+              justifyContent: 'center', color: 'var(--accent-primary)', flexShrink: 0
+            }}>
+              <Download size={18} />
+            </div>
+            <div style={{ flex: 1, textAlign: 'left' }}>
+              <h4 style={{ fontSize: '14px', fontWeight: 700, color: 'var(--text-primary)' }}>Export Backup</h4>
+              <p style={{ fontSize: '12px', color: 'var(--text-secondary)', marginTop: '2px' }}>Save your watch history, bookmarks, and settings</p>
+            </div>
+            <ChevronRight size={16} color="var(--text-muted)" />
+          </button>
+          <div style={{ height: '1px', background: 'var(--border-subtle)', margin: '0 16px' }} />
+          <button
+            onClick={() => fileInputRef.current?.click()}
+            className="interactive"
+            style={{
+              width: '100%',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '14px',
+              padding: '14px 16px',
+              background: 'none',
+              border: 'none'
+            }}
+          >
+            <div style={{
+              width: '38px', height: '38px', borderRadius: 'var(--radius-sm)',
+              background: 'var(--accent-soft)', display: 'flex', alignItems: 'center',
+              justifyContent: 'center', color: 'var(--accent-primary)', flexShrink: 0
+            }}>
+              <Upload size={18} />
+            </div>
+            <div style={{ flex: 1, textAlign: 'left' }}>
+              <h4 style={{ fontSize: '14px', fontWeight: 700, color: 'var(--text-primary)' }}>Import Backup</h4>
+              <p style={{ fontSize: '12px', color: 'var(--text-secondary)', marginTop: '2px' }}>Restore data from an exported JSON file</p>
+            </div>
+            <ChevronRight size={16} color="var(--text-muted)" />
+          </button>
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept=".json"
+            style={{ display: 'none' }}
+            onChange={handleImportFile}
+          />
+          {backupStatus && (
+            <div style={{ padding: '10px 16px', background: 'var(--accent-soft)', borderTop: '1px solid var(--border-subtle)', fontSize: '13px', color: 'var(--accent-primary)', fontWeight: 600 }}>
+              {backupStatus}
+            </div>
+          )}
         </div>
+
+        {crashReport && (
+          <div style={{ marginBottom: '24px' }}>
+            <SectionLabel>Crash Report</SectionLabel>
+            <div className="glass-panel" style={{ borderRadius: 'var(--radius-lg)', padding: '16px', border: '1px solid var(--accent-danger)' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '8px' }}>
+                <Bug size={18} color="var(--accent-danger)" />
+                <h4 style={{ fontSize: '15px', fontWeight: 700, color: 'var(--text-primary)' }}>App Crash Detected</h4>
+              </div>
+              <p style={{ fontSize: '12px', color: 'var(--text-secondary)', marginBottom: '12px', lineHeight: 1.4 }}>
+                The app closed unexpectedly earlier. Copies the diagnostic log to share with the developer.
+              </p>
+              <pre style={{
+                maxHeight: '120px',
+                overflowY: 'auto',
+                fontSize: '11px',
+                color: 'var(--text-muted)',
+                background: 'rgba(0,0,0,0.3)',
+                padding: '8px',
+                borderRadius: '6px',
+                marginBottom: '12px',
+                whiteSpace: 'pre-wrap',
+                wordBreak: 'break-all'
+              }}>
+                {crashReport}
+              </pre>
+              <button
+                className="interactive btn-primary"
+                onClick={handleCopyClearCrash}
+                style={{ width: '100%', padding: '10px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', background: 'var(--accent-danger)' }}
+              >
+                <Bug size={16} />
+                {crashCopied ? 'Copied & Cleared!' : 'Copy & Clear Crash Report'}
+              </button>
+            </div>
+          </div>
+        )}
 
         <ConfirmModal
           open={confirmingClearHistory}

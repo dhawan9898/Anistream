@@ -253,28 +253,46 @@ public class DownloadsPlugin extends Plugin {
                 }
 
                 long fileLength = conn.getContentLengthLong();
+                long expectedSize = call.hasOption("expectedSize") ? call.getLong("expectedSize") : -1;
+                long targetSize = expectedSize > 0 ? expectedSize : fileLength;
+                long downloaded = 0;
+
                 try (InputStream is = conn.getInputStream(); FileOutputStream fos = new FileOutputStream(apkFile)) {
                     byte[] buffer = new byte[16384];
                     int len;
-                    long downloaded = 0;
                     long lastNotify = 0;
 
                     while ((len = is.read(buffer)) > 0) {
                         fos.write(buffer, 0, len);
                         downloaded += len;
                         long now = System.currentTimeMillis();
-                        if (now - lastNotify > 200 || downloaded == fileLength) {
+                        long totalForProg = targetSize > 0 ? targetSize : fileLength;
+                        if (now - lastNotify > 200 || (totalForProg > 0 && downloaded >= totalForProg)) {
                             lastNotify = now;
                             JSObject progress = new JSObject();
                             progress.put("bytes", downloaded);
-                            progress.put("total", fileLength);
-                            float pct = fileLength > 0 ? (downloaded * 100f / fileLength) : 0f;
+                            progress.put("total", totalForProg);
+                            float pct = totalForProg > 0 ? (downloaded * 100f / totalForProg) : 0f;
                             progress.put("percent", Math.round(pct * 10f) / 10f);
                             notifyListeners("apkUpdateProgress", progress);
                         }
                     }
                 } finally {
                     conn.disconnect();
+                }
+
+                // Verify file size before installing to prevent corrupted or truncated packages
+                if (targetSize > 0 && downloaded < targetSize) {
+                    if (apkFile.exists()) //noinspection ResultOfMethodCallIgnored
+                        apkFile.delete();
+                    call.reject("APK download was truncated (" + downloaded + " of " + targetSize + " bytes). Will not launch installer.");
+                    return;
+                }
+                if (apkFile.length() < 1_000_000L) {
+                    if (apkFile.exists()) //noinspection ResultOfMethodCallIgnored
+                        apkFile.delete();
+                    call.reject("Downloaded file is too small to be a valid APK (" + apkFile.length() + " bytes).");
+                    return;
                 }
 
                 getActivity().runOnUiThread(() -> {
@@ -293,5 +311,19 @@ public class DownloadsPlugin extends Plugin {
                 call.reject("APK download failed: " + e.getMessage(), e);
             }
         });
+    }
+
+    @PluginMethod
+    public void getCrashReport(PluginCall call) {
+        String report = CrashLog.read(getContext());
+        JSObject ret = new JSObject();
+        ret.put("report", report);
+        call.resolve(ret);
+    }
+
+    @PluginMethod
+    public void clearCrashReport(PluginCall call) {
+        CrashLog.clear(getContext());
+        call.resolve();
     }
 }

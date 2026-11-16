@@ -5,8 +5,9 @@ import { ExoPlayerPlugin } from './plugins/exoPlayerPlugin';
 import { HomeScreen } from './pages/HomeScreen';
 import type { Genre } from './providers/catalogService';
 import { ConfirmModal } from 'streamkit/ui/ConfirmModal.tsx';
-import { Home as HomeIcon, Search as SearchIcon, Library, Settings as SettingsIcon } from 'lucide-react';
+import { Home as HomeIcon, Search as SearchIcon, Library, Settings as SettingsIcon, DownloadCloud, Sparkles, X } from 'lucide-react';
 import { Dock, type DockTab } from 'streamkit/ui/Dock.tsx';
+import { checkForUpdate, type UpdateInfo } from './services/updateService';
 import { SharedElementTransitionOverlay } from './components/SharedElementTransitionOverlay';
 import { QuickPreview } from './components/QuickPreview';
 import { startSharedTransition } from './services/sharedTransitionService';
@@ -29,6 +30,7 @@ import {
   setPlaybackActive,
   isEpisodeFinished,
   DEFAULT_PREFERENCES,
+  saveTitlePreferredMode,
   type UserPreferences,
   type WatchHistoryItem
 } from './services/historyService';
@@ -230,6 +232,30 @@ export const App: React.FC = () => {
   useEffect(() => {
     setPlaybackActive(nativeOpen || isPlaying);
   }, [nativeOpen, isPlaying]);
+
+  // Launch update check & What's new modal
+  const [availableUpdate, setAvailableUpdate] = useState<UpdateInfo | null>(null);
+  const [showUpdateBanner, setShowUpdateBanner] = useState(true);
+  const [showWhatsNew, setShowWhatsNew] = useState(false);
+  const currentVersion = typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : '10.15.0';
+
+  useEffect(() => {
+    checkForUpdate('dhawan9898/Anistream').then(info => {
+      if (info) setAvailableUpdate(info);
+    }).catch(() => {});
+
+    const lastVersion = localStorage.getItem('anistream_last_seen_version');
+    if (!lastVersion) {
+      localStorage.setItem('anistream_last_seen_version', currentVersion);
+    } else if (lastVersion !== currentVersion) {
+      setShowWhatsNew(true);
+    }
+  }, [currentVersion]);
+
+  const dismissWhatsNew = () => {
+    localStorage.setItem('anistream_last_seen_version', currentVersion);
+    setShowWhatsNew(false);
+  };
 
   const prefsRef = useRef<UserPreferences>(DEFAULT_PREFERENCES);
   const updatePrefs = useCallback((partial: Partial<UserPreferences>) => {
@@ -523,6 +549,7 @@ export const App: React.FC = () => {
     setPlayingAnime(anime);
     setPlayingEpisode(episode);
     setPlayingMode(mode);
+    void saveTitlePreferredMode(anime.id, mode);
     playingAnimeRef.current = anime;
     playingEpisodeRef.current = episode;
     playingModeRef.current = mode;
@@ -808,6 +835,66 @@ export const App: React.FC = () => {
       overflow: 'hidden',
       position: 'relative'
     }}>
+      {/* Launch update available floating banner */}
+      {availableUpdate && showUpdateBanner && !isPlaying && !nativeOpen && (
+        <div style={{
+          position: 'absolute',
+          top: 'calc(var(--safe-top) + 10px)',
+          left: '16px',
+          right: '16px',
+          zIndex: 100,
+          background: 'rgba(20, 20, 24, 0.94)',
+          backdropFilter: 'blur(16px)',
+          WebkitBackdropFilter: 'blur(16px)',
+          border: '1px solid var(--accent-primary)',
+          borderRadius: '12px',
+          padding: '10px 14px',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          gap: '12px',
+          boxShadow: '0 8px 24px rgba(0,0,0,0.6)'
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flex: 1, minWidth: 0 }}>
+            <DownloadCloud size={20} color="var(--accent-primary)" style={{ flexShrink: 0 }} />
+            <div style={{ minWidth: 0 }}>
+              <div style={{ fontSize: '13px', fontWeight: 700, color: 'var(--text-primary)' }}>
+                Update available: v{availableUpdate.version}
+              </div>
+              <div style={{ fontSize: '11px', color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                Tap to view release details in Settings
+              </div>
+            </div>
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0 }}>
+            <button
+              onClick={() => { setShowUpdateBanner(false); switchTab('settings'); }}
+              className="interactive"
+              style={{
+                padding: '6px 12px',
+                borderRadius: '8px',
+                background: 'var(--accent-primary)',
+                color: '#fff',
+                border: 'none',
+                fontSize: '12px',
+                fontWeight: 700,
+                cursor: 'pointer'
+              }}
+            >
+              Update
+            </button>
+            <button
+              onClick={() => setShowUpdateBanner(false)}
+              className="interactive"
+              style={{ background: 'none', border: 'none', color: 'var(--text-muted)', padding: '4px', cursor: 'pointer' }}
+              aria-label="Dismiss banner"
+            >
+              <X size={16} />
+            </button>
+          </div>
+        </div>
+      )}
+
       <div style={{ flex: 1, position: 'relative', minHeight: 0 }}>
         {tabPane('home', (
           <HomeScreen
@@ -895,6 +982,49 @@ export const App: React.FC = () => {
         hasOverlay={animeStack.length > 0 || !!selectedGenre}
         onSelect={switchTab}
       />
+
+      {/* What's new dialog once after update */}
+      {showWhatsNew && (
+        <div style={{
+          position: 'fixed',
+          inset: 0,
+          zIndex: 200,
+          background: 'rgba(0,0,0,0.8)',
+          backdropFilter: 'blur(8px)',
+          WebkitBackdropFilter: 'blur(8px)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          padding: '24px'
+        }}>
+          <div className="glass-panel animate-pop-in" style={{
+            maxWidth: '380px',
+            width: '100%',
+            borderRadius: '16px',
+            padding: '22px',
+            background: 'var(--bg-card)',
+            border: '1px solid var(--border-subtle)',
+            boxShadow: '0 12px 36px rgba(0,0,0,0.7)'
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '12px' }}>
+              <Sparkles size={22} color="var(--accent-primary)" />
+              <h3 style={{ fontSize: '18px', fontWeight: 800, color: 'var(--text-primary)', margin: 0 }}>
+                What's New in v{currentVersion}
+              </h3>
+            </div>
+            <p style={{ fontSize: '13px', color: 'var(--text-secondary)', lineHeight: 1.5, marginBottom: '18px' }}>
+              AniStream has been updated with verified APK downloads, crash reporting in Settings, backup and restore for library & history, and remembered per-title sub/dub preferences.
+            </p>
+            <button
+              onClick={dismissWhatsNew}
+              className="interactive btn-primary"
+              style={{ width: '100%', padding: '12px', borderRadius: '10px', fontSize: '14px', fontWeight: 700 }}
+            >
+              Got It
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

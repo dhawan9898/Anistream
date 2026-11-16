@@ -278,3 +278,109 @@ export function episodeWatchState(p: EpisodeProgress | undefined): 'finished' | 
 export function isEpisodeFinished(item: Pick<WatchHistoryItem, 'currentTime' | 'duration'>): boolean {
   return item.duration > 0 && (item.duration - item.currentTime <= 30 || item.currentTime / item.duration >= 0.95);
 }
+
+const TITLE_MODES_KEY = 'anistream_title_modes';
+
+export async function getTitlePreferredMode(animeId: string): Promise<'sub' | 'dub' | null> {
+  try {
+    const { value } = await Preferences.get({ key: TITLE_MODES_KEY });
+    if (!value) return null;
+    const map = JSON.parse(value);
+    return map[animeId] || null;
+  } catch {
+    return null;
+  }
+}
+
+export function saveTitlePreferredMode(animeId: string, mode: 'sub' | 'dub'): Promise<void> {
+  return serialized(async () => {
+    try {
+      const { value } = await Preferences.get({ key: TITLE_MODES_KEY });
+      const map = value ? JSON.parse(value) : {};
+      map[animeId] = mode;
+      await Preferences.set({ key: TITLE_MODES_KEY, value: JSON.stringify(map) });
+    } catch {}
+  });
+}
+
+export interface AniStreamBackupData {
+  version: number;
+  app: 'AniStream';
+  exportedAt: number;
+  history: WatchHistoryItem[];
+  bookmarks: AnimeItem[];
+  preferences?: UserPreferences;
+  titleModes?: Record<string, 'sub' | 'dub'>;
+  episodeLog?: Record<string, EpisodeProgress>;
+}
+
+export async function exportBackup(): Promise<string> {
+  const [history, bookmarks, preferences] = await Promise.all([
+    getWatchHistory(),
+    getBookmarks(),
+    getUserPreferences()
+  ]);
+
+  let titleModes: Record<string, 'sub' | 'dub'> = {};
+  try {
+    const { value } = await Preferences.get({ key: TITLE_MODES_KEY });
+    if (value) titleModes = JSON.parse(value);
+  } catch {}
+
+  let episodeLog: Record<string, EpisodeProgress> = {};
+  try {
+    const { value } = await Preferences.get({ key: EPISODE_LOG_KEY });
+    if (value) episodeLog = JSON.parse(value);
+  } catch {}
+
+  const data: AniStreamBackupData = {
+    version: 1,
+    app: 'AniStream',
+    exportedAt: Date.now(),
+    history,
+    bookmarks,
+    preferences,
+    titleModes,
+    episodeLog
+  };
+  return JSON.stringify(data, null, 2);
+}
+
+export async function importBackup(jsonStr: string): Promise<boolean> {
+  try {
+    const data = JSON.parse(jsonStr) as Partial<AniStreamBackupData>;
+    if (!data || typeof data !== 'object') return false;
+    if (data.app && data.app !== 'AniStream') {
+      throw new Error(`Invalid backup file: created by ${data.app}`);
+    }
+
+    if (Array.isArray(data.history)) {
+      const valid = data.history.filter(isHistoryItem);
+      await Preferences.set({ key: HISTORY_KEY, value: JSON.stringify(valid) });
+    }
+
+    if (Array.isArray(data.bookmarks)) {
+      const valid = data.bookmarks.filter(isAnimeItem);
+      await Preferences.set({ key: BOOKMARKS_KEY, value: JSON.stringify(valid) });
+    }
+
+    if (data.preferences && typeof data.preferences === 'object') {
+      await Preferences.set({ key: PREFERENCES_KEY, value: JSON.stringify(data.preferences) });
+    }
+
+    if (data.titleModes && typeof data.titleModes === 'object') {
+      await Preferences.set({ key: TITLE_MODES_KEY, value: JSON.stringify(data.titleModes) });
+    }
+
+    if (data.episodeLog && typeof data.episodeLog === 'object') {
+      await Preferences.set({ key: EPISODE_LOG_KEY, value: JSON.stringify(data.episodeLog) });
+    }
+
+    notifyLibraryChanged();
+    return true;
+  } catch (err) {
+    console.error('Failed to import AniStream backup:', err);
+    throw err;
+  }
+}
+

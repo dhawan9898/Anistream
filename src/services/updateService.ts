@@ -10,6 +10,7 @@ export interface UpdateInfo {
   releaseName: string;
   releaseNotes: string;
   apkUrl: string;
+  size?: number;
   publishedAt: string;
   htmlUrl: string;
 }
@@ -69,7 +70,7 @@ export async function checkForUpdate(
   }
 
   // Find APK asset
-  const assets: Array<{ name: string; browser_download_url: string }> = data.assets || [];
+  const assets: Array<{ name: string; browser_download_url: string; size?: number }> = data.assets || [];
   const apkAsset = assets.find(a => a.name.toLowerCase().endsWith('.apk'));
 
   if (!apkAsset) {
@@ -82,6 +83,7 @@ export async function checkForUpdate(
     releaseName: data.name || tagName,
     releaseNotes: data.body || '',
     apkUrl: apkAsset.browser_download_url,
+    size: apkAsset.size,
     publishedAt: data.published_at || '',
     htmlUrl: data.html_url || `https://github.com/${repo}/releases`
   };
@@ -93,7 +95,8 @@ export async function checkForUpdate(
  */
 export async function installUpdate(
   apkUrl: string,
-  onProgress?: (percent: number) => void
+  onProgress?: (percent: number) => void,
+  expectedSize?: number
 ): Promise<void> {
   if (Capacitor.isNativePlatform()) {
     let handle: { remove: () => void } | null = null;
@@ -104,7 +107,7 @@ export async function installUpdate(
     }
 
     try {
-      await DownloadsPlugin.downloadAndInstallApk({ url: apkUrl });
+      await DownloadsPlugin.downloadAndInstallApk({ url: apkUrl, expectedSize });
     } finally {
       handle?.remove();
     }

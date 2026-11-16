@@ -30,7 +30,9 @@ export interface DownloadsPluginInterface {
   remove(options: { id: string }): Promise<void>;
   list(): Promise<{ downloads: DownloadChangedEvent[] }>;
   setPaused(options: { paused: boolean }): Promise<void>;
-  downloadAndInstallApk(options: { url: string }): Promise<void>;
+  downloadAndInstallApk(options: { url: string; expectedSize?: number }): Promise<void>;
+  getCrashReport(): Promise<{ report?: string | null }>;
+  clearCrashReport(): Promise<void>;
   addListener(
     eventName: 'downloadChanged',
     listenerFunc: (event: DownloadChangedEvent) => void
