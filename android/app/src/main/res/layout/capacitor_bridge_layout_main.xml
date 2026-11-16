@@ -1,6 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Replaces Capacitor's own layout of the same name so the app uses
-     KeepAliveWebView (see that class for why). -->
+<!-- Replaces Capacitor's own layout so the app uses KeepAliveWebView (see that
+     class for why). The file name must be the one BridgeActivity loads:
+     capacitor_bridge_layout_main since Capacitor 8 (bridge_layout_main before,
+     under which this override was silently ignored). -->
 <androidx.coordinatorlayout.widget.CoordinatorLayout xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools"
     android:layout_width="match_parent"
