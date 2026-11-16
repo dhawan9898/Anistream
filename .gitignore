@@ -32,3 +32,8 @@ android/local.properties
 *.njsproj
 *.sln
 *.sw?
+
+# Release signing key: kept in repository secrets, never committed
+android/app/release.keystore
+*.jks
+*.p12

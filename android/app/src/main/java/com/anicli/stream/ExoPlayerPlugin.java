@@ -134,6 +134,13 @@ public class ExoPlayerPlugin extends Plugin {
     }
 
     // Stream resolution failed - show it inside the open player.
+    // The streaming site has a new address: the player's own lookups follow it.
+    @PluginMethod
+    public void setSiteHost(PluginCall call) {
+        if (NativeStreamResolver.setHost(call.getString("host"))) call.resolve();
+        else call.reject("Not a valid https address");
+    }
+
     @PluginMethod
     public void fail(PluginCall call) {
         String message = call.getString("message", "Couldn't load this episode.");

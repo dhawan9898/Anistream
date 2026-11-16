@@ -1,15 +1,24 @@
 apply plugin: 'com.android.application'
 
+// The release key is not in the repository. CI restores it from repository secrets and passes it
+// through these variables; for a signed local build, set the same ones. Without them the APK is
+// built with the debug key (debug) or left unsigned (release).
+def releaseKeystore = System.getenv('KEYSTORE_FILE') ?: 'release.keystore'
+def releaseKeyPassword = System.getenv('KEYSTORE_PASSWORD')
+def hasReleaseKey = releaseKeyPassword && file(releaseKeystore).exists()
+
 android {
     namespace = "com.anicli.stream"
     compileSdk = rootProject.ext.compileSdkVersion
 
     signingConfigs {
-        release {
-            storeFile file('release.keystore')
-            storePassword 'anistream-app-key'
-            keyAlias 'anistream'
-            keyPassword 'anistream-app-key'
+        if (hasReleaseKey) {
+            release {
+                storeFile file(releaseKeystore)
+                storePassword releaseKeyPassword
+                keyAlias System.getenv('KEY_ALIAS') ?: 'anistream'
+                keyPassword System.getenv('KEY_PASSWORD') ?: releaseKeyPassword
+            }
         }
     }
 
@@ -28,10 +37,10 @@ android {
     }
     buildTypes {
         debug {
-            signingConfig signingConfigs.release
+            if (hasReleaseKey) signingConfig signingConfigs.release
         }
         release {
-            signingConfig signingConfigs.release
+            if (hasReleaseKey) signingConfig signingConfigs.release
             // R8 code shrinking/obfuscation + unused-resource removal. Keep
             // rules for Capacitor's reflection-based plugin bridge live in
             // proguard-rules.pro (plus Capacitor's own consumer rules).

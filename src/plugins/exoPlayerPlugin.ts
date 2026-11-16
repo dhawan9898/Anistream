@@ -114,6 +114,8 @@ export interface ExoPlayerPluginInterface {
 
   // Shows a playback error inside the open player (stream resolution failed).
   fail(options: { message: string }): Promise<void>;
+  /** Moves the player's own stream lookups to the site's new address (see siteConfig.ts). */
+  setSiteHost(options: { host: string }): Promise<void>;
 
   addListener(
     eventName: 'playerClosed',

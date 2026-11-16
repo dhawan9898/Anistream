@@ -87,9 +87,16 @@ export function parseSkipRange(raw: unknown): SkipRange | undefined {
 // must hit the real host directly - CapacitorHttp (enabled in
 // capacitor.config.ts) routes fetch() through native networking, which
 // isn't subject to the browser's CORS / forbidden-header restrictions.
-// The single place the JS side names the streaming site. (The native Java
-// resolver and the dev proxy in vite.config.ts carry their own copy.)
-export const REMOTE_HOST = "https://hianime.at";
+// The single place the JS side names the streaming site. It can be moved
+// without an app release (see siteConfig.ts, which also tells the native Java
+// resolver); the dev proxy in vite.config.ts carries its own copy.
+export const DEFAULT_REMOTE_HOST = "https://hianime.at";
+export let REMOTE_HOST = DEFAULT_REMOTE_HOST;
+
+/** Points the app at the site's new address (an https origin). */
+export function setRemoteHost(host: string): void {
+  REMOTE_HOST = host;
+}
 
 export function getApiBase(): string {
   return Capacitor.isNativePlatform() ? REMOTE_HOST : "/api-hianime";
@@ -150,7 +157,8 @@ const EPISODE_LIST_TTL_MS = 10 * 60 * 1000;
 // Headers the dev proxy injects automatically; native requests need them set explicitly.
 const UPSTREAM_HEADERS: Record<string, string> = {
   'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-  'Referer': `${REMOTE_HOST}/`
+  // Read on every request: the host can change while the app runs.
+  get Referer() { return `${REMOTE_HOST}/`; }
 };
 
 // Fetches a page of the streaming site as HTML. `path` may be a site path

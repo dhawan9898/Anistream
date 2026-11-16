@@ -42,7 +42,27 @@ import javax.crypto.spec.SecretKeySpec;
  */
 final class NativeStreamResolver {
     private static final String TAG = "NativeStreamResolver";
-    private static final String HOST = "https://hianime.at";
+    // The site's address. The app replaces it when the site has moved (see setHost).
+    private static volatile String HOST = "https://hianime.at";
+
+    // A plain https origin only: the value comes from a downloaded file.
+    static boolean setHost(String host) {
+        if (host == null || host.length() > 200 || !host.startsWith("https://")) return false;
+        try {
+            URL url = new URL(host);
+            if (url.getUserInfo() != null || url.getHost() == null || url.getHost().isEmpty()) return false;
+            if (!url.getPath().isEmpty() && !"/".equals(url.getPath())) return false;
+            if (url.getQuery() != null || url.getRef() != null) return false;
+            String origin = "https://" + url.getHost() + (url.getPort() > 0 ? ":" + url.getPort() : "");
+            if (!origin.equals(HOST)) {
+                HOST = origin;
+                cache.clear();
+            }
+            return true;
+        } catch (Exception e) {
+            return false;
+        }
+    }
     private static final String UA =
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
     private static final int TIMEOUT_MS = 6_000;
