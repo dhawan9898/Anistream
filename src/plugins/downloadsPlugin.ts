@@ -31,6 +31,8 @@ export interface DownloadsPluginInterface {
   list(): Promise<{ downloads: DownloadChangedEvent[] }>;
   setPaused(options: { paused: boolean }): Promise<void>;
   downloadAndInstallApk(options: { url: string; expectedSize?: number }): Promise<void>;
+  /** Saves a text file where the user can find it (Downloads); resolves with where it went. */
+  saveTextFile(options: { name: string; text: string; mimeType?: string }): Promise<{ location: string }>;
   getCrashReport(): Promise<{ report?: string | null }>;
   clearCrashReport(): Promise<void>;
   addListener(

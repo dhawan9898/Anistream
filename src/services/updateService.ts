@@ -116,3 +116,20 @@ export async function installUpdate(
     window.open(apkUrl, '_blank');
   }
 }
+
+/**
+ * The notes of the release that is installed (for "What's new" after an update), or null when they
+ * cannot be fetched or the release has none.
+ */
+export async function fetchReleaseNotes(version: string, repo = 'dhawan9898/Anistream'): Promise<string | null> {
+  try {
+    const res = await fetch(`https://api.github.com/repos/${repo}/releases/tags/v${version.replace(/^v/i, '')}`, {
+      headers: { Accept: 'application/vnd.github.v3+json' }
+    });
+    if (!res.ok) return null;
+    const body = ((await res.json()) as { body?: unknown }).body;
+    return typeof body === 'string' && body.trim() ? body.trim().slice(0, 4000) : null;
+  } catch {
+    return null;
+  }
+}

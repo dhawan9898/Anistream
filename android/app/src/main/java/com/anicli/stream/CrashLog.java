@@ -13,7 +13,14 @@ public class CrashLog {
     private static final String FILE = "last-crash.txt";
     private static final int MAX_CHARS = 20_000;
 
-    public static void install(Context context, String appName, String version) {
+    public static void install(Context context, String appName) {
+        // The installed version, read from the package: a number written here goes stale with every release.
+        String installed = "?";
+        try {
+            installed = context.getPackageManager().getPackageInfo(context.getPackageName(), 0).versionName;
+        } catch (Exception ignored) {
+        }
+        final String version = installed;
         Thread.UncaughtExceptionHandler prev = Thread.getDefaultUncaughtExceptionHandler();
         Thread.setDefaultUncaughtExceptionHandler((thread, error) -> {
             try {

@@ -7,7 +7,7 @@ import type { Genre } from './providers/catalogService';
 import { ConfirmModal } from 'streamkit/ui/ConfirmModal.tsx';
 import { Home as HomeIcon, Search as SearchIcon, Library, Settings as SettingsIcon, DownloadCloud, Sparkles, X } from 'lucide-react';
 import { Dock, type DockTab } from 'streamkit/ui/Dock.tsx';
-import { checkForUpdate, type UpdateInfo } from './services/updateService';
+import { checkForUpdate, fetchReleaseNotes, type UpdateInfo } from './services/updateService';
 import { SharedElementTransitionOverlay } from './components/SharedElementTransitionOverlay';
 import { QuickPreview } from './components/QuickPreview';
 import { startSharedTransition } from './services/sharedTransitionService';
@@ -237,6 +237,7 @@ export const App: React.FC = () => {
   const [availableUpdate, setAvailableUpdate] = useState<UpdateInfo | null>(null);
   const [showUpdateBanner, setShowUpdateBanner] = useState(true);
   const [showWhatsNew, setShowWhatsNew] = useState(false);
+  const [whatsNewNotes, setWhatsNewNotes] = useState<string | null>(null);
   const currentVersion = typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : '10.15.0';
 
   useEffect(() => {
@@ -249,6 +250,7 @@ export const App: React.FC = () => {
       localStorage.setItem('anistream_last_seen_version', currentVersion);
     } else if (lastVersion !== currentVersion) {
       setShowWhatsNew(true);
+      fetchReleaseNotes(currentVersion).then(setWhatsNewNotes);
     }
   }, [currentVersion]);
 
@@ -1012,8 +1014,8 @@ export const App: React.FC = () => {
                 What's New in v{currentVersion}
               </h3>
             </div>
-            <p style={{ fontSize: '13px', color: 'var(--text-secondary)', lineHeight: 1.5, marginBottom: '18px' }}>
-              AniStream has been updated with verified APK downloads, crash reporting in Settings, backup and restore for library & history, and remembered per-title sub/dub preferences.
+            <p style={{ fontSize: '13px', color: 'var(--text-secondary)', lineHeight: 1.5, marginBottom: '18px', whiteSpace: 'pre-wrap', maxHeight: '45vh', overflowY: 'auto' }}>
+                {whatsNewNotes ?? 'This version includes fixes and improvements.'}
             </p>
             <button
               onClick={dismissWhatsNew}

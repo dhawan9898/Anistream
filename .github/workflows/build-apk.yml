@@ -131,6 +131,10 @@ jobs:
         run: npm run build
         env:
           VITE_TMDB_API_KEY: ${{ secrets.TMDB_API_KEY || 'd56cb07bf9500bb94de196e6b7ae1967' }}
+          # Sign-in and sync (see supabase/schema.sql). Both values are public by design; without
+          # them the account section stays hidden.
+          VITE_SUPABASE_URL: ${{ vars.SUPABASE_URL }}
+          VITE_SUPABASE_ANON_KEY: ${{ vars.SUPABASE_ANON_KEY }}
 
       - name: Sync Capacitor Android Project
         run: npx cap sync android

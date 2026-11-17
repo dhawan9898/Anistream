@@ -8,6 +8,7 @@ import {
   toggleBookmark,
   getBookmarks,
   getUserPreferences,
+  getTitlePreferredMode,
   getWatchHistory,
   getEpisodeProgress,
   episodeWatchState,
@@ -88,13 +89,14 @@ export const AnimeDetailScreen: React.FC<AnimeDetailScreenProps> = ({
     return () => window.clearTimeout(timer);
   }, []);
 
-  // Respect the user's "Default Audio" preference instead of always
-  // starting on SUB.
+  // The audio this title was last played in, else the user's "Default Audio"
+  // preference, instead of always starting on SUB.
   useEffect(() => {
     let cancelled = false;
-    getUserPreferences().then(p => { if (!cancelled) setMode(p.defaultMode); });
+    Promise.all([getUserPreferences(), getTitlePreferredMode(anime.id)])
+      .then(([p, titleMode]) => { if (!cancelled) setMode(titleMode ?? p.defaultMode); });
     return () => { cancelled = true; };
-  }, []);
+  }, [anime.id]);
 
   // AniList-backed entries (opened from a suggestion) first need their
   // real streaming-site entry. (App keys this screen by anime id, so this

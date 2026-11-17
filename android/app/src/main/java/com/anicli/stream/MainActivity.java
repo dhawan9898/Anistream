@@ -9,7 +9,7 @@ import com.getcapacitor.BridgeActivity;
 public class MainActivity extends BridgeActivity {
     @Override
     public void onCreate(Bundle savedInstanceState) {
-        CrashLog.install(getApplicationContext(), "AniStream", "10.18");
+        CrashLog.install(getApplicationContext(), "AniStream");
         registerPlugin(ExoPlayerPlugin.class);
         registerPlugin(DownloadsPlugin.class);
         super.onCreate(savedInstanceState);

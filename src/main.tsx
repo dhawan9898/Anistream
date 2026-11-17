@@ -10,12 +10,15 @@ import App from './App.tsx'
 import { applyGlassStyle, getGlassStyle } from './services/glassService.ts'
 import { ErrorBoundary } from 'streamkit/ui/ErrorBoundary.tsx'
 import { loadSiteConfig } from './providers/siteConfig.ts'
+import { startCloudSync } from './services/cloudAccount.ts'
 
 // Transparent-glass setting (index.html applies it pre-paint too).
 applyGlassStyle(getGlassStyle())
 
 // The site's address: the saved copy applies at once, a fresh one downloads in the background.
 void loadSiteConfig()
+// Signed in: bring history, My List and settings in line with the other devices.
+startCloudSync()
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>

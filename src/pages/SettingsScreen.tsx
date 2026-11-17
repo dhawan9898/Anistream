@@ -11,6 +11,8 @@ import {
   getWatchHistory, getBookmarks, exportBackup, importBackup,
   type UserPreferences
 } from '../services/historyService';
+import { Capacitor } from '@capacitor/core';
+import { CloudAccountCard } from '../components/CloudAccountCard.tsx';
 import { DownloadsPlugin } from '../plugins/downloadsPlugin';
 import { THEME_OPTIONS, type ThemeMode } from '../services/themeService';
 import { getGlassStyle, setGlassStyle } from '../services/glassService';
@@ -172,17 +174,23 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({ active, theme, o
   const handleExportBackup = async () => {
     try {
       const json = await exportBackup();
-      const blob = new Blob([json], { type: 'application/json' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `anistream-backup-${new Date().toISOString().slice(0, 10)}.json`;
-      a.click();
-      URL.revokeObjectURL(url);
-      setBackupStatus('Backup exported successfully');
-      setTimeout(() => setBackupStatus(null), 3000);
-    } catch (err: any) {
-      setBackupStatus(`Export failed: ${err?.message || 'Error'}`);
+      const name = `anistream-backup-${new Date().toISOString().slice(0, 10)}.json`;
+      if (Capacitor.isNativePlatform()) {
+        // A file link clicked inside the app's WebView saves nothing: the file is written natively.
+        const { location } = await DownloadsPlugin.saveTextFile({ name, text: json });
+        setBackupStatus(`Backup saved to ${location}`);
+      } else {
+        const url = URL.createObjectURL(new Blob([json], { type: 'application/json' }));
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = name;
+        a.click();
+        URL.revokeObjectURL(url);
+        setBackupStatus('Backup exported');
+      }
+      setTimeout(() => setBackupStatus(null), 6000);
+    } catch (err) {
+      setBackupStatus(`Export failed: ${err instanceof Error ? err.message : 'Error'}`);
     }
   };
 
@@ -544,6 +552,8 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({ active, theme, o
             </div>
           )}
         </div>
+
+        <CloudAccountCard spacing={24} />
 
         {crashReport && (
           <div style={{ marginBottom: '24px' }}>

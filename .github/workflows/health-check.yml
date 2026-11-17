@@ -23,5 +23,7 @@ jobs:
       - name: Install Dependencies
         run: npm ci
 
-      - name: Run Test Suite
-        run: npm test
+      # Live requests to the real sites (the unit tests are offline and cannot notice a site
+      # moving). A failure here mails the repository owner; the job summary says what broke.
+      - name: Check the streaming site end to end
+        run: node scripts/health-check.mjs

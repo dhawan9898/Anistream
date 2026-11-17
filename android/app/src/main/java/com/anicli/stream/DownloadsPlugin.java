@@ -253,7 +253,9 @@ public class DownloadsPlugin extends Plugin {
                 }
 
                 long fileLength = conn.getContentLengthLong();
-                long expectedSize = call.hasOption("expectedSize") ? call.getLong("expectedSize") : -1;
+                // optLong, not call.getLong: a size below 2^31 arrives as an Integer, for which getLong
+                // answers null - unboxing that failed every update with "APK download failed: null".
+                long expectedSize = call.getData().optLong("expectedSize", -1);
                 long targetSize = expectedSize > 0 ? expectedSize : fileLength;
                 long downloaded = 0;
 
@@ -309,6 +311,57 @@ public class DownloadsPlugin extends Plugin {
                 });
             } catch (Exception e) {
                 call.reject("APK download failed: " + e.getMessage(), e);
+            }
+        });
+    }
+
+    /**
+     * Saves a text file (a backup) where the user can find it: the Downloads folder on Android 10+,
+     * the app's own documents folder before that. A file link clicked in the WebView saves nothing.
+     * saveTextFile({ name, text, mimeType? }) -> { location }
+     */
+    @PluginMethod
+    public void saveTextFile(PluginCall call) {
+        final String name = call.getString("name");
+        final String text = call.getString("text");
+        final String mime = call.getString("mimeType", "application/json");
+        if (name == null || name.isEmpty() || name.contains("/") || text == null) {
+            call.reject("name and text are required");
+            return;
+        }
+        io.execute(() -> {
+            try {
+                byte[] bytes = text.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+                String location;
+                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+                    android.content.ContentValues values = new android.content.ContentValues();
+                    values.put(android.provider.MediaStore.MediaColumns.DISPLAY_NAME, name);
+                    values.put(android.provider.MediaStore.MediaColumns.MIME_TYPE, mime);
+                    values.put(android.provider.MediaStore.MediaColumns.RELATIVE_PATH, android.os.Environment.DIRECTORY_DOWNLOADS);
+                    android.content.ContentResolver resolver = getContext().getContentResolver();
+                    Uri uri = resolver.insert(android.provider.MediaStore.Downloads.EXTERNAL_CONTENT_URI, values);
+                    if (uri == null) throw new IOException("Could not create the file in Downloads");
+                    try (java.io.OutputStream out = resolver.openOutputStream(uri)) {
+                        if (out == null) throw new IOException("Could not open the file in Downloads");
+                        out.write(bytes);
+                    }
+                    location = "Downloads/" + name;
+                } else {
+                    File dir = getContext().getExternalFilesDir(android.os.Environment.DIRECTORY_DOCUMENTS);
+                    if (dir == null) dir = getContext().getFilesDir();
+                    //noinspection ResultOfMethodCallIgnored
+                    dir.mkdirs();
+                    File file = new File(dir, name);
+                    try (FileOutputStream out = new FileOutputStream(file)) {
+                        out.write(bytes);
+                    }
+                    location = file.getAbsolutePath();
+                }
+                JSObject ret = new JSObject();
+                ret.put("location", location);
+                call.resolve(ret);
+            } catch (Exception e) {
+                call.reject("Could not save the file: " + e.getMessage(), e);
             }
         });
     }
