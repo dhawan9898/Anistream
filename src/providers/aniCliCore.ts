@@ -1,4 +1,5 @@
 // aniCliCore.ts - Port of ani-cli scraping & deobfuscation logic
+import { reportError } from '../services/errorReporter.ts';
 import { Capacitor } from '@capacitor/core';
 import { fetchTimed } from 'streamkit/core/http.ts';
 import { resolveHedged } from 'streamkit/providers/hedged.ts';
@@ -538,7 +539,10 @@ export function resolveFirstServer(
 ): Promise<StreamSource | null> {
   return resolveHedged(hashes, hash => resolve(hash, episodeId, mode), {
     hedgeDelayMs,
-    onError: err => console.warn(`[aniCliCore] episodeId=${episodeId} server failed:`, err)
+    onError: err => {
+      console.warn(`[aniCliCore] episodeId=${episodeId} server failed:`, err);
+      reportError('provider', err, { episodeId, mode });
+    }
   });
 }
 

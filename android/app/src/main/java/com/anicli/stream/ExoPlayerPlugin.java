@@ -153,6 +153,23 @@ public class ExoPlayerPlugin extends Plugin {
         call.resolve();
     }
 
+    // Every playback error, for the app's error reports (the player recovers on its own; this only
+    // tells). `host`: the stream's host - never the full URL, which can carry tokens.
+    static void notifyPlaybackError(String title, String episode, String mode, String serverId, String streamUrl, String code, String message) {
+        if (activeInstance == null) return;
+        JSObject data = new JSObject();
+        if (title != null) data.put("title", title);
+        if (episode != null) data.put("episode", episode);
+        if (mode != null) data.put("mode", mode);
+        if (serverId != null) data.put("serverId", serverId);
+        if (streamUrl != null) {
+            try { data.put("host", android.net.Uri.parse(streamUrl).getHost()); } catch (Exception ignored) { }
+        }
+        if (code != null) data.put("code", code);
+        data.put("message", message != null ? message : "Playback error");
+        activeInstance.notifyListeners("playbackError", data);
+    }
+
     static void notifyPlayerClosed() {
         if (activeInstance == null) return;
         activeInstance.notifyListeners("playerClosed", new JSObject());

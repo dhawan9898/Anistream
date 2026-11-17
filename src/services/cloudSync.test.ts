@@ -53,6 +53,12 @@ function fakeSupabase() {
       if (body.password && body.password !== 'right') return json({ error_description: 'Invalid login credentials' }, 400);
       return json({ access_token: 'tok', refresh_token: 'ref', expires_in: 3600, user: { id: 'u1', email: 'a@b.c' } });
     }
+    if (url.includes('/auth/v1/signup')) {
+      const body = JSON.parse(String(init?.body));
+      // Supabase: an already confirmed email gets an obfuscated user without identities and no email.
+      if (body.email === 'taken@b.c') return json({ id: 'fake', email: body.email, identities: [] });
+      return json({ id: 'new', email: body.email, identities: [{ provider: 'email' }], confirmation_sent_at: 'now' });
+    }
     if (url.includes('/rest/v1/user_data') && (init?.method ?? 'GET') === 'GET') {
       return json([...rows.entries()].map(([kind, data]) => ({ kind, data })));
     }
@@ -107,4 +113,12 @@ test('a wrong password is reported and nothing is synced; an unconfigured build 
   const off = createCloudSync({ app: 'cinestream', collections: {}, read: async () => ({}), write: async () => {} });
   assert.equal(off.getStatus().configured, false);
   await off.syncNow();
+});
+
+test('create account for an email that already has an account says so instead of waiting for a code', async () => {
+  const server = fakeSupabase();
+  const phone = device(server, { history: [], bookmarks: [] });
+  await assert.rejects(phone.sync.signUp('taken@b.c', 'secret1'), /already has an account/);
+  assert.deepEqual(await phone.sync.signUp('new@b.c', 'secret1'), { needsConfirmation: true });
+  assert.equal(phone.sync.getStatus().user, null);
 });

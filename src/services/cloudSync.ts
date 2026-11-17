@@ -268,7 +268,16 @@ export function createCloudSync(options: CloudSyncOptions) {
 
   /** Creates the account. `needsConfirmation`: Supabase sent a confirmation email; sign in after opening it. */
   async function signUp(email: string, password: string): Promise<{ needsConfirmation: boolean }> {
-    const signedIn = adopt(await request('/auth/v1/signup', { method: 'POST', body: { email: email.trim(), password } }));
+    const response = await request('/auth/v1/signup', { method: 'POST', body: { email: email.trim(), password } });
+    // For an email that already has a confirmed account Supabase answers like a new sign-up but
+    // sends no email (so nobody can probe which addresses are registered); the only sign is a user
+    // without identities. Waiting for a code then never ends: say what to do instead.
+    const identities = ((response ?? {}) as { user?: { identities?: unknown }; identities?: unknown });
+    const ids = identities.user?.identities ?? identities.identities;
+    if (Array.isArray(ids) && ids.length === 0) {
+      throw Object.assign(new Error('This email already has an account. Sign in with its password instead.'), { code: 'account_exists' });
+    }
+    const signedIn = adopt(response);
     if (!signedIn) return { needsConfirmation: true };
     await syncNow();
     return { needsConfirmation: false };
@@ -311,6 +320,8 @@ export function createCloudSync(options: CloudSyncOptions) {
 
   return {
     getStatus: () => status,
+    /** The signed-in user's token while it is valid (error reports carry the account); else null. */
+    accessToken: (): string | null => (session && session.expiresAt - Date.now() > 30_000 ? session.accessToken : null),
     subscribe(listener: (s: CloudStatus) => void): () => void {
       listeners.add(listener);
       return () => { listeners.delete(listener); };

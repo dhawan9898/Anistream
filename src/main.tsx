@@ -11,6 +11,11 @@ import { applyGlassStyle, getGlassStyle } from './services/glassService.ts'
 import { ErrorBoundary } from 'streamkit/ui/ErrorBoundary.tsx'
 import { loadSiteConfig } from './providers/siteConfig.ts'
 import { startCloudSync } from './services/cloudAccount.ts'
+import { startErrorCapture } from './services/errorCapture.ts'
+
+// Failures are sent to the app_errors table (see services/errorCapture.ts). First, so it sees
+// everything that goes wrong while the rest starts.
+startErrorCapture()
 
 // Transparent-glass setting (index.html applies it pre-paint too).
 applyGlassStyle(getGlassStyle())

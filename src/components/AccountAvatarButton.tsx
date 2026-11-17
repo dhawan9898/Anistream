@@ -1,5 +1,7 @@
 // AccountAvatarButton.tsx - Small YouTube-style profile / login button that opens the Account & Cloud Sync modal.
 import React, { useEffect, useState } from 'react';
+import { createPortal } from 'react-dom';
+import { useBackHandler } from 'streamkit/core/backStack.ts';
 import { User, X } from 'lucide-react';
 import { cloud } from '../services/cloudAccount.ts';
 import type { CloudStatus } from '../services/cloudSync.ts';
@@ -11,6 +13,8 @@ export const AccountAvatarButton: React.FC<{ size?: number; className?: string }
   const [open, setOpen] = useState(false);
 
   useEffect(() => cloud.subscribe(setStatus), []);
+  // Android back closes the panel first, as it does for every other panel in the app.
+  useBackHandler(open, () => setOpen(false));
 
   if (!status.configured) return null;
 
@@ -45,21 +49,24 @@ export const AccountAvatarButton: React.FC<{ size?: number; className?: string }
         )}
       </button>
 
-      {open && (
+      {/* Rendered into <body>, not here: the home header is glass (backdrop-filter), and inside it a
+          position:fixed layer is placed and clipped by the header instead of the screen - the panel
+          stuck to the top with its title and close button pushed off screen. */}
+      {open && createPortal(
         <div
           role="dialog"
           aria-modal="true"
           style={{
             position: 'fixed',
             inset: 0,
-            zIndex: 100,
+            zIndex: 1000,
             background: 'rgba(0,0,0,0.7)',
             backdropFilter: 'blur(10px)',
             WebkitBackdropFilter: 'blur(10px)',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
-            padding: '20px',
+            padding: 'calc(var(--safe-top, 0px) + 20px) 20px calc(env(safe-area-inset-bottom, 0px) + 20px)',
             animation: 'fadeIn 0.2s ease-out'
           }}
           onClick={e => {
@@ -71,6 +78,8 @@ export const AccountAvatarButton: React.FC<{ size?: number; className?: string }
             style={{
               width: '100%',
               maxWidth: '400px',
+              maxHeight: '100%',
+              overflowY: 'auto',
               borderRadius: 'var(--radius-xl, 20px)',
               padding: '22px',
               border: '1px solid var(--border-subtle)',
@@ -105,7 +114,8 @@ export const AccountAvatarButton: React.FC<{ size?: number; className?: string }
 
             <CloudAccountCard embedded />
           </div>
-        </div>
+        </div>,
+        document.body
       )}
     </>
   );

@@ -2528,6 +2528,10 @@ public class ExoPlayerActivity extends AppCompatActivity {
             @Override
             public void onPlayerError(androidx.media3.common.PlaybackException error) {
                 Log.e(TAG, "Playback error", error);
+                if (error != null) {
+                    ExoPlayerPlugin.notifyPlaybackError(animeTitle, episodeNumber, currentMode, null,
+                            pendingVideoUrl, error.getErrorCodeName(), describePlaybackError(error));
+                }
                 if (player != null) {
                     long position = player.getCurrentPosition();
                     if (position > 0) lastKnownPositionMs = position;

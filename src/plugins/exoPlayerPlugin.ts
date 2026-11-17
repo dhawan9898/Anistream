@@ -55,6 +55,19 @@ export interface AspectRatioChangedEvent {
 
 // The stream failed with an HTTP error; JS resolves the same episode again
 // and play()s it at positionMs (once per episode - see ExoPlayerActivity).
+/** The native player hit a playback error (it fails over by itself; this is for error reporting). */
+export interface PlaybackErrorEvent {
+  title?: string;
+  episode?: string;
+  mode?: string;
+  serverId?: string;
+  /** Host of the stream that failed. */
+  host?: string;
+  /** Media3 error code name, e.g. ERROR_CODE_IO_BAD_HTTP_STATUS. */
+  code?: string;
+  message: string;
+}
+
 export interface ReloadRequestedEvent {
   title: string;
   episode: string;
@@ -120,6 +133,11 @@ export interface ExoPlayerPluginInterface {
   addListener(
     eventName: 'playerClosed',
     listenerFunc: () => void
+  ): Promise<PluginListenerHandle>;
+
+  addListener(
+    eventName: 'playbackError',
+    listenerFunc: (event: PlaybackErrorEvent) => void
   ): Promise<PluginListenerHandle>;
 
   addListener(

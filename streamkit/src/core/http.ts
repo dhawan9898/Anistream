@@ -93,6 +93,30 @@ export function fetchTimed(url: string, init?: RequestInit, ms = DEFAULT_TIMEOUT
     .finally(() => clearTimeout(timer));
 }
 
+/** What the app is told about a request that failed for good (after its retries). */
+export interface RequestFailure { url: string; status?: number; message: string; attempts: number }
+
+let failureListener: ((failure: RequestFailure) => void) | null = null;
+
+/** Lets the app record requests that failed for good (error reporting). One listener; null removes it. */
+export function setRequestFailureListener(listener: ((failure: RequestFailure) => void) | null): void {
+  failureListener = listener;
+}
+
+function notifyFailure(url: string, failure: unknown, attempts: number): void {
+  if (!failureListener) return;
+  // A request the caller cancelled did not fail.
+  if (failure instanceof Error && failure.name === 'AbortError') return;
+  try {
+    failureListener({
+      url,
+      status: failure instanceof HttpError ? failure.status : undefined,
+      message: failure instanceof Error ? failure.message : String(failure),
+      attempts
+    });
+  } catch { /* a listener must not change the result */ }
+}
+
 // Resolves with an ok Response or throws (HttpError for a non-ok status).
 export async function request(url: string, init?: RequestInit, policy: RequestPolicy = {}): Promise<Response> {
   const timeoutMs = policy.timeoutMs ?? DEFAULT_TIMEOUT_MS;
@@ -108,10 +132,16 @@ export async function request(url: string, init?: RequestInit, policy: RequestPo
       if (!isRetryableStatus(res.status)) throw failure;
       retryAfter = res.headers.get('Retry-After');
     } catch (err) {
-      if (err instanceof HttpError && !isRetryableStatus(err.status)) throw err;
+      if (err instanceof HttpError && !isRetryableStatus(err.status)) {
+        notifyFailure(url, err, attempt + 1);
+        throw err;
+      }
       failure = err;
     }
-    if (attempt >= retries) throw failure;
+    if (attempt >= retries) {
+      notifyFailure(url, failure, attempt + 1);
+      throw failure;
+    }
     await sleep(backoffDelay(attempt, retryAfter));
   }
 }

@@ -10,6 +10,13 @@ interface Props {
 
 interface State { failed: boolean }
 
+let renderErrorListener: ((error: unknown, componentStack?: string) => void) | null = null;
+
+/** Lets the app record render errors (error reporting). One listener; null removes it. */
+export function setRenderErrorListener(listener: ((error: unknown, componentStack?: string) => void) | null): void {
+  renderErrorListener = listener;
+}
+
 export class ErrorBoundary extends React.Component<Props, State> {
   state: State = { failed: false };
 
@@ -17,8 +24,9 @@ export class ErrorBoundary extends React.Component<Props, State> {
     return { failed: true };
   }
 
-  componentDidCatch(error: unknown) {
+  componentDidCatch(error: unknown, info?: { componentStack?: string | null }) {
     console.error('[ErrorBoundary] render failed:', error);
+    try { renderErrorListener?.(error, info?.componentStack ?? undefined); } catch { /* reporting must not break recovery */ }
   }
 
   render() {

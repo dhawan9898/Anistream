@@ -1,4 +1,5 @@
 // App.tsx - Main Android Application Controller for AniStream
+import { reportError } from './services/errorReporter.ts';
 import React, { useState, useEffect, useRef, useMemo, useCallback, Suspense, lazy } from 'react';
 import { Capacitor } from '@capacitor/core';
 import { ExoPlayerPlugin } from './plugins/exoPlayerPlugin';
@@ -313,6 +314,7 @@ export const App: React.FC = () => {
     // loading screen until it was closed.
     const failInPlayer = (message: string) => {
       console.warn('[App] native request could not be served:', message);
+      reportError('error', message, { where: 'native player request', title: playingAnimeRef.current?.title, episode: playingEpisodeRef.current?.number });
       ExoPlayerPlugin.fail({ message }).catch(() => undefined);
     };
     const modeHandle = ExoPlayerPlugin.addListener('modeSwitchRequested', ({ mode, positionMs }) => {
@@ -634,6 +636,7 @@ export const App: React.FC = () => {
     } catch (err) {
       console.error("Failed to load stream:", err);
       if (requestId !== playRequestRef.current) return;
+      reportError('provider', err, { title: anime.title, animeId: anime.id, episode: episode.number, episodeId: episode.id, mode, online: typeof navigator !== 'undefined' ? navigator.onLine : undefined });
       const isSlow = (typeof navigator !== 'undefined' && !navigator.onLine) || /connection|network|timeout|offline|fetch/i.test(String(err));
       const message = isSlow
         ? "Slow or offline network detected. Would you like to switch to Offline Mode to watch your downloaded content?"
