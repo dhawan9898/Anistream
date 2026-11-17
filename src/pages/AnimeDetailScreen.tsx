@@ -450,6 +450,9 @@ export const AnimeDetailScreen: React.FC<AnimeDetailScreenProps> = ({
                 fontWeight: 800,
                 marginBottom: '12px',
                 boxShadow: '0 8px 24px rgba(255, 255, 255, 0.18)',
+                // Drawn above the poster, whose drop shadow left a dark patch on this white button.
+                position: 'relative',
+                zIndex: 2,
                 opacity: !resolved || (episodes.length === 0 && !history) ? 0.6 : 1
               }}
             >

@@ -506,7 +506,10 @@
             style="@style/NetflixSkipButton"
             android:text="Watch Credits" />
 
-        <FrameLayout
+        <!-- RelativeLayout, not FrameLayout: the countdown fill takes the label's size. In a
+             wrap_content FrameLayout a match_parent child takes all the width it is offered, which
+             stretched this pill across the whole screen. -->
+        <RelativeLayout
             android:id="@+id/btn_next_episode"
             android:layout_width="wrap_content"
             android:layout_height="36dp"
@@ -517,8 +520,12 @@
                  next episode starts (clipped to the pill's shape). -->
             <View
                 android:id="@+id/next_episode_fill"
-                android:layout_width="match_parent"
-                android:layout_height="match_parent" />
+                android:layout_width="0dp"
+                android:layout_height="0dp"
+                android:layout_alignStart="@+id/next_episode_label"
+                android:layout_alignEnd="@+id/next_episode_label"
+                android:layout_alignTop="@+id/next_episode_label"
+                android:layout_alignBottom="@+id/next_episode_label" />
 
             <!-- Same metrics as the Skip Intro / Skip Outro pills beside it
                  (NetflixSkipButton): text only, no icon. -->
@@ -533,7 +540,7 @@
                 android:textColor="#FFFFFF"
                 android:textSize="13sp"
                 android:textStyle="bold" />
-        </FrameLayout>
+        </RelativeLayout>
     </LinearLayout>
 
     <!-- Screen lock: shown briefly when the locked screen is tapped -->

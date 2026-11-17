@@ -466,7 +466,8 @@ body {
   display: flex;
   flex-direction: column;
   justify-content: flex-end;
-  padding: 24px 20px 28px 20px;
+  /* Room below the buttons for the page dots (they sat on the bottom edge of Play / Watch Now). */
+  padding: 24px 20px 46px 20px;
   background: linear-gradient(180deg, rgba(11, 11, 14, 0.05) 0%, rgba(11, 11, 14, 0.35) 45%, rgba(11, 11, 14, 0.95) 92%);
   border-radius: var(--radius-lg);
   pointer-events: none;

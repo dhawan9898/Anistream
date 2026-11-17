@@ -481,7 +481,9 @@ export const App: React.FC = () => {
         number: e.number,
         title: siteTitle || info?.title,
         synopsis: info?.synopsis,
-        thumbnail: info?.thumbnail
+        // The same picture the title page shows: the episode still, else the show's banner or poster
+        // (the player's episode list showed empty grey boxes while the stills were still loading).
+        thumbnail: info?.thumbnail || anime.banner || anime.poster || undefined
       };
     }),
     isFallback: source.isFallback,
