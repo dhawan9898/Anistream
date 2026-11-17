@@ -1,7 +1,8 @@
 // HeroCarousel.tsx - Netflix-style featured banner: swipe between the top
 // titles (native scroll-snap, so it tracks the finger 1:1), with page dots and
 // an auto-advance that steps aside while the user is touching it or a screen
-// covers it. Data-agnostic: each app maps its own items to HeroSlide.
+// covers it. Each slide is its own card, so a swipe moves the whole tile.
+// Data-agnostic: each app maps its own items to HeroSlide.
 import React, { useEffect, useRef, useState } from 'react';
 import { Play, Plus, Check, Info } from 'lucide-react';
 import { FadeImage } from './FadeImage.tsx';
@@ -37,6 +38,13 @@ export interface HeroCarouselProps {
   paused?: boolean;
 }
 
+/** Distance from one slide to the next (a slide is a card with a gap after it, not the track's width). */
+function slideStep(track: HTMLDivElement): number {
+  const first = track.children[0] as HTMLElement | undefined;
+  const second = track.children[1] as HTMLElement | undefined;
+  return (second && first ? second.offsetLeft - first.offsetLeft : track.clientWidth) || 1;
+}
+
 export const HeroCarousel: React.FC<HeroCarouselProps> = ({
   slides, rankLabel, primaryLabel, onPrimary, onSecondary, onToggleSaved, showListLabel = false, paused = false
 }) => {
@@ -53,8 +61,7 @@ export const HeroCarousel: React.FC<HeroCarouselProps> = ({
       if (frame) return;
       frame = requestAnimationFrame(() => {
         frame = 0;
-        const width = track.clientWidth || 1;
-        setIndex(Math.max(0, Math.min(slides.length - 1, Math.round(track.scrollLeft / width))));
+        setIndex(Math.max(0, Math.min(slides.length - 1, Math.round(track.scrollLeft / slideStep(track)))));
       });
     };
     track.addEventListener('scroll', onScroll, { passive: true });
@@ -67,7 +74,7 @@ export const HeroCarousel: React.FC<HeroCarouselProps> = ({
   const goTo = (i: number) => {
     const track = trackRef.current;
     if (!track) return;
-    track.scrollTo({ left: i * track.clientWidth, behavior: 'smooth' });
+    track.scrollTo({ left: i * slideStep(track), behavior: 'smooth' });
   };
 
   // Auto-advance; skipped while hidden, covered, or recently touched.
@@ -77,7 +84,7 @@ export const HeroCarousel: React.FC<HeroCarouselProps> = ({
       if (document.hidden || Date.now() - lastTouchRef.current < USER_IDLE_MS) return;
       const track = trackRef.current;
       if (!track) return;
-      const current = Math.round(track.scrollLeft / (track.clientWidth || 1));
+      const current = Math.round(track.scrollLeft / slideStep(track));
       goTo((current + 1) % slides.length);
     }, AUTO_ADVANCE_MS);
     return () => window.clearInterval(timer);

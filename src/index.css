@@ -404,32 +404,32 @@ body {
 }
 
 /* Floating Hero Carousel Tile (Apple TV style) */
+/* Each slide is its own floating card, so a swipe moves the whole tile (frame, shadow and text),
+   not just the picture inside a fixed frame. */
 .hero-carousel-container {
   position: relative;
-  margin: 10px 16px 20px 16px;
-  border-radius: var(--radius-lg);
-  overflow: hidden;
-  box-shadow: 0 16px 44px -8px rgba(0, 0, 0, 0.75), 0 0 0 1px rgba(255, 255, 255, 0.12), inset 0 1px 1px rgba(255, 255, 255, 0.2);
-  border: 1px solid rgba(255, 255, 255, 0.14);
-  transform: translateZ(0);
-  background: #0f0f14;
+  margin: 10px 0 20px 0;
 }
 
 @media (min-width: 768px) {
   .hero-carousel-container {
-    max-width: 880px;
+    max-width: 912px;
     margin: 16px auto 26px auto;
   }
 }
 
 .hero-track {
   display: flex;
+  gap: 12px;
   overflow-x: auto;
   scroll-snap-type: x mandatory;
   overscroll-behavior-x: contain;
   scrollbar-width: none;
   -webkit-overflow-scrolling: touch;
-  border-radius: var(--radius-lg);
+  /* Room for the cards' shadow, which the scroller would otherwise clip. */
+  padding: 0 16px 22px 16px;
+  margin-bottom: -22px;
+  scroll-padding: 0 16px;
 }
 
 .hero-track::-webkit-scrollbar {
@@ -440,10 +440,14 @@ body {
   position: relative;
   flex: 0 0 100%;
   width: 100%;
-  scroll-snap-align: start;
+  scroll-snap-align: center;
   scroll-snap-stop: always;
   overflow: hidden;
   border-radius: var(--radius-lg);
+  box-shadow: 0 16px 34px -10px rgba(0, 0, 0, 0.7), 0 0 0 1px rgba(255, 255, 255, 0.12), inset 0 1px 1px rgba(255, 255, 255, 0.2);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: #0f0f14;
+  transform: translateZ(0);
 }
 
 .hero-img {
