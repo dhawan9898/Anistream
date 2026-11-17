@@ -12,7 +12,7 @@ import {
   type UserPreferences
 } from '../services/historyService';
 import { Capacitor } from '@capacitor/core';
-import { CloudAccountCard } from '../components/CloudAccountCard.tsx';
+import { AccountAvatarButton } from '../components/AccountAvatarButton.tsx';
 import { DownloadsPlugin } from '../plugins/downloadsPlugin';
 import { THEME_OPTIONS, type ThemeMode } from '../services/themeService';
 import { getGlassStyle, setGlassStyle } from '../services/glassService';
@@ -268,11 +268,15 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({ active, theme, o
         zIndex: 30,
         backgroundColor: 'var(--bg-main)',
         padding: 'calc(var(--safe-top) + 16px) 20px 14px 20px',
-        borderBottom: '1px solid var(--border-subtle)'
+        borderBottom: '1px solid var(--border-subtle)',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'space-between'
       }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
           <h1 style={{ fontSize: '22px', fontWeight: 800, color: 'var(--text-primary)' }}>Settings</h1>
         </div>
+        <AccountAvatarButton />
       </div>
 
       <div style={{ padding: '20px' }}>
@@ -553,8 +557,6 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({ active, theme, o
           )}
         </div>
 
-        <CloudAccountCard spacing={24} />
-
         {crashReport && (
           <div style={{ marginBottom: '24px' }}>
             <SectionLabel>Crash Report</SectionLabel>
@@ -621,7 +623,7 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({ active, theme, o
               <div>
                 <h4 style={{ fontSize: '15px', fontWeight: 700, color: 'var(--text-primary)' }}>AniStream</h4>
                 <p style={{ fontSize: '12px', color: 'var(--text-secondary)', marginTop: '2px' }}>
-                  Installed: v{typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : '10.15.0'}
+                  Installed: v{typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : '10.1.0'}
                 </p>
               </div>
               <button

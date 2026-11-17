@@ -280,13 +280,42 @@ export function createCloudSync(options: CloudSyncOptions) {
     if (bearer) await request('/auth/v1/logout', { method: 'POST', token: bearer }).catch(() => undefined);
   }
 
+  /** Verifies a 6-digit confirmation / OTP code from an email without needing to open the link. */
+  async function verifyOtp(email: string, token: string): Promise<void> {
+    const cleanToken = token.trim();
+    let res: unknown = null;
+    try {
+      res = await request('/auth/v1/verify', {
+        method: 'POST',
+        body: { type: 'signup', email: email.trim(), token: cleanToken }
+      });
+    } catch {
+      res = await request('/auth/v1/verify', {
+        method: 'POST',
+        body: { type: 'email', email: email.trim(), token: cleanToken }
+      });
+    }
+    if (!adopt(res)) {
+      throw new Error('Verification failed. Invalid or expired confirmation code.');
+    }
+    await syncNow();
+  }
+
+  /** Resends the signup confirmation email / code. */
+  async function resendOtp(email: string): Promise<void> {
+    await request('/auth/v1/resend', {
+      method: 'POST',
+      body: { type: 'signup', email: email.trim() }
+    });
+  }
+
   return {
     getStatus: () => status,
     subscribe(listener: (s: CloudStatus) => void): () => void {
       listeners.add(listener);
       return () => { listeners.delete(listener); };
     },
-    signIn, signUp, signOut, syncNow, schedule
+    signIn, signUp, signOut, verifyOtp, resendOtp, syncNow, schedule
   };
 }
 

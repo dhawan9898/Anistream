@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Play, ChevronRight, ChevronDown, Search as SearchIcon } from 'lucide-react';
+import { Play, ChevronRight, ChevronDown } from 'lucide-react';
 import { getTrendingAnime, type AnimeItem } from '../providers/aniCliCore';
 import { getWatchHistory, isEpisodeFinished, subscribeLibraryChanges, type WatchHistoryItem } from '../services/historyService';
 import { FadeImage } from 'streamkit/ui/FadeImage.tsx';
@@ -7,6 +7,7 @@ import { getAnimeByGenre, getGenres, type Genre } from '../providers/catalogServ
 import { PosterCard } from '../components/PosterCard';
 import { GenrePicker } from '../components/GenrePicker';
 import { HeroCarousel } from '../components/HeroCarousel';
+import { AccountAvatarButton } from '../components/AccountAvatarButton.tsx';
 import { ErrorState } from 'streamkit/ui/ErrorState.tsx';
 import { hapticLight, hapticMedium } from '../services/hapticsService';
 
@@ -189,23 +190,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
             <span>Categories</span>
             <ChevronDown size={15} />
           </button>
-          <button
-            onClick={() => { hapticLight(); onOpenSearch(); }}
-            className="interactive glass-pill-dark"
-            aria-label="Search"
-            style={{
-              width: '40px',
-              height: '40px',
-              borderRadius: 'var(--radius-pill)',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              color: '#fff',
-              boxShadow: '0 4px 14px rgba(0,0,0,0.35)'
-            }}
-          >
-            <SearchIcon size={19} />
-          </button>
+          <AccountAvatarButton size={40} />
         </div>
       </div>
 
