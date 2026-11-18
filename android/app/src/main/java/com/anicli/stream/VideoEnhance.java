@@ -41,11 +41,24 @@ public final class VideoEnhance {
     private VideoEnhance() {}
 
     // Sharpening choices (stored).
-    public static final int SHARP_AUTO = 0;   // picked per stream from its resolution
+    public static final int SHARP_AUTO = 0;   // "On": the processing is chosen per stream from its resolution
     public static final int SHARP_OFF = 1;
-    public static final int SHARP_SHARP = 2;  // natural-looking, any content
-    public static final int SHARP_ANIME = 3;  // line-art restoration
-    public static final int SHARP_ANIME_PLUS = 4;  // + edge-preserving denoise first, stronger lines
+
+    // What "On" resolves to for a given stream (internal).
+    private static final int LVL_SHARP = 2;         // natural-looking sharpening
+    private static final int LVL_ANIME = 3;         // line-art restoration
+    private static final int LVL_ANIME_PLUS = 4;    // + edge-preserving denoise first, refined lines after
+
+    /** The processing level for a stream of this height; SHARP_OFF means leave it alone. */
+    private static int autoLevel(boolean animeApp, boolean saver, int height) {
+        if (animeApp) {
+            if (height <= 576) return saver ? LVL_ANIME : LVL_ANIME_PLUS;   // old / SD anime: everything
+            if (height <= 900) return LVL_ANIME;
+            if (height <= 1080) return LVL_SHARP;
+            return SHARP_OFF;                                               // already crisp
+        }
+        return height <= 720 ? LVL_SHARP : SHARP_OFF;
+    }
 
     // Fit modes the fill shader understands (same order as the player's Fit / Crop / Fill button).
     public static final int FIT = 0;
@@ -92,6 +105,8 @@ public final class VideoEnhance {
         public volatile int viewW = 1920;
         public volatile int viewH = 1080;
         public volatile int fitMode = FIT;
+        /** Set by the sharpen stage for the current stream: should the Anime+ refine pass run? */
+        public volatile boolean refine = false;
     }
 
     // ---------------------------------------------------------------- settings
@@ -114,7 +129,8 @@ public final class VideoEnhance {
         SharedPreferences p = prefs(c);
         int v = hasShow(title) ? p.getInt(showKey(title, KEY_SHARPEN), p.getInt(KEY_SHARPEN, SHARP_AUTO))
                 : p.getInt(KEY_SHARPEN, SHARP_AUTO);
-        return v < SHARP_AUTO || v > SHARP_ANIME_PLUS ? SHARP_AUTO : v;
+        // Older builds stored Sharp / Anime / Anime+: they all mean "on" now.
+        return v == SHARP_OFF ? SHARP_OFF : SHARP_AUTO;
     }
 
     public static void setSharpen(Context c, String title, int mode) {
@@ -178,14 +194,16 @@ public final class VideoEnhance {
         if (disabledForSession || bypassed) return effects;
         int sharpen = getSharpen(c, title);
         boolean vivid = getVivid(c, title);
-        // Battery saver: the heaviest mode drops to plain Anime.
-        if (sharpen == SHARP_ANIME_PLUS && powerSaver(c)) sharpen = SHARP_ANIME;
-        // Anime+ cleans compression noise at source resolution before anything is upscaled.
-        if (sharpen == SHARP_ANIME_PLUS) effects.add(new DenoiseEffect());
+        // Battery saver: the heaviest processing (Anime+) drops to plain Anime.
+        boolean saver = powerSaver(c);
+        boolean on = sharpen != SHARP_OFF;
+        // Anime streams: clean compression noise at source resolution before anything is upscaled ...
+        if (on && animeApp) effects.add(new DenoiseEffect(saver));
         // The sharpen stage also hosts the colour grade, so it stays in the chain for "Vivid".
-        if (sharpen != SHARP_OFF || vivid) effects.add(new SharpenEffect(sharpen, animeApp, vivid, live));
-        // ... and Anime+ refines the lines again at display resolution, where thinning is cleanest.
-        if (sharpen == SHARP_ANIME_PLUS) effects.add(new RefineEffect());
+        if (on || vivid) effects.add(new SharpenEffect(sharpen, animeApp, vivid, saver, live));
+        // ... and refine the lines again at display resolution, where thinning is cleanest.
+        // Each stage decides per stream whether it has anything to do and otherwise just copies.
+        if (on && animeApp) effects.add(new RefineEffect(live));
         if (getAmbient(c, title)) effects.add(new AmbientFillEffect(live));
         return effects;
     }
@@ -360,19 +378,21 @@ public final class VideoEnhance {
         private final int mode;
         private final boolean animeApp;
         private final boolean vivid;
+        private final boolean saver;
         private final Live live;
 
-        SharpenEffect(int mode, boolean animeApp, boolean vivid, Live live) {
+        SharpenEffect(int mode, boolean animeApp, boolean vivid, boolean saver, Live live) {
             this.mode = mode;
             this.animeApp = animeApp;
             this.vivid = vivid;
+            this.saver = saver;
             this.live = live;
         }
 
         @Override
         public GlShaderProgram toGlShaderProgram(Context context, boolean useHdr)
                 throws VideoFrameProcessingException {
-            return new SharpenProgram(mode, animeApp, vivid, live, useHdr);
+            return new SharpenProgram(mode, animeApp, vivid, saver, live, useHdr);
         }
     }
 
@@ -381,6 +401,7 @@ public final class VideoEnhance {
         private final int mode;
         private final boolean animeApp;
         private final boolean vivid;
+        private final boolean saver;
         private final Live live;
         private int inW = 1;
         private int inH = 1;
@@ -391,21 +412,19 @@ public final class VideoEnhance {
         private float thin;
         private float core;
 
-        SharpenProgram(int mode, boolean animeApp, boolean vivid, Live live, boolean useHdr)
+        SharpenProgram(int mode, boolean animeApp, boolean vivid, boolean saver, Live live, boolean useHdr)
                 throws VideoFrameProcessingException {
             super(useHdr, 1);
             this.mode = mode;
             this.animeApp = animeApp;
             this.vivid = vivid;
+            this.saver = saver;
             this.live = live;
             this.program = newProgram(SHARPEN_FRAGMENT);
         }
 
-        /** What "Auto" means for a stream of this height. */
         private int resolve(int height) {
-            if (mode != SHARP_AUTO) return mode;
-            if (animeApp) return height <= 900 ? SHARP_ANIME : SHARP_SHARP;
-            return height <= 720 ? SHARP_SHARP : SHARP_OFF;
+            return mode == SHARP_OFF ? SHARP_OFF : autoLevel(animeApp, saver, height);
         }
 
         @Override
@@ -413,23 +432,24 @@ public final class VideoEnhance {
             inW = Math.max(1, inputWidth);
             inH = Math.max(1, inputHeight);
             int level = resolve(inH);
+            live.refine = level == LVL_ANIME_PLUS;
             // Strong enough to see on soft sources, gentle on already-crisp ones.
             float softness = inH <= 576 ? 1f : inH <= 720 ? 0.85f : inH <= 1080 ? 0.55f : 0.3f;
             plain = false;
             switch (level) {
-                case SHARP_ANIME_PLUS:
+                case LVL_ANIME_PLUS:
                     amount = 1.0f * softness + 0.15f;
                     dark = 0.6f;
                     thin = inH <= 1080 ? 0.20f * softness + 0.04f : 0f;
                     core = 0.010f;
                     break;
-                case SHARP_ANIME:
+                case LVL_ANIME:
                     amount = 0.85f * softness + 0.1f;
                     dark = 0.45f;
                     thin = inH <= 1080 ? 0.30f * softness + 0.05f : 0f;
                     core = 0.012f;
                     break;
-                case SHARP_SHARP:
+                case LVL_SHARP:
                     amount = 0.55f * softness + 0.05f;
                     dark = 0f;
                     thin = 0f;
@@ -491,10 +511,12 @@ public final class VideoEnhance {
             "precision highp float;\n"
             + "uniform sampler2D uTexSampler;\n"
             + "uniform vec2 uTexel;\n"
+            + "uniform float uActive;\n"
             + "varying vec2 vTexSamplingCoord;\n"
             + "void main() {\n"
             + "  vec2 uv = vTexSamplingCoord;\n"
             + "  vec3 c = texture2D(uTexSampler, uv).rgb;\n"
+            + "  if (uActive < 0.5) { gl_FragColor = vec4(c, 1.0); return; }\n"
             + "  vec3 sum = vec3(0.0);\n"
             + "  float wsum = 0.0;\n"
             + "  for (int i = -2; i <= 2; i++) {\n"
@@ -511,20 +533,29 @@ public final class VideoEnhance {
             + "}\n";
 
     private static final class DenoiseEffect implements GlEffect {
+        private final boolean saver;
+
+        DenoiseEffect(boolean saver) {
+            this.saver = saver;
+        }
+
         @Override
         public GlShaderProgram toGlShaderProgram(Context context, boolean useHdr)
                 throws VideoFrameProcessingException {
-            return new DenoiseProgram(useHdr);
+            return new DenoiseProgram(saver, useHdr);
         }
     }
 
     private static final class DenoiseProgram extends BaseGlShaderProgram {
         private final GlProgram program;
+        private final boolean saver;
+        private boolean active = false;
         private int inW = 1;
         private int inH = 1;
 
-        DenoiseProgram(boolean useHdr) throws VideoFrameProcessingException {
+        DenoiseProgram(boolean saver, boolean useHdr) throws VideoFrameProcessingException {
             super(useHdr, 1);
+            this.saver = saver;
             this.program = newProgram(DENOISE_FRAGMENT);
         }
 
@@ -532,6 +563,7 @@ public final class VideoEnhance {
         public Size configure(int inputWidth, int inputHeight) {
             inW = Math.max(1, inputWidth);
             inH = Math.max(1, inputHeight);
+            active = autoLevel(true, saver, inH) == LVL_ANIME_PLUS;
             return new Size(inW, inH);
         }
 
@@ -542,6 +574,7 @@ public final class VideoEnhance {
                 program.use();
                 program.setSamplerTexIdUniform("uTexSampler", inputTexId, 0);
                 program.setFloatsUniform("uTexel", new float[] {1f / inW, 1f / inH});
+                program.setFloatUniform("uActive", active ? 1f : 0f);
                 program.bindAttributesAndUniforms();
                 GLES20.glDrawArrays(GLES20.GL_TRIANGLE_STRIP, 0, 4);
                 GlUtil.checkGlError();
@@ -572,11 +605,13 @@ public final class VideoEnhance {
             + "uniform vec2 uTexel;\n"
             + "uniform float uStep;\n"
             + "uniform float uPull;\n"
+            + "uniform float uActive;\n"
             + "varying vec2 vTexSamplingCoord;\n"
             + "vec3 tap(vec2 uv) { return texture2D(uTexSampler, uv).rgb; }\n"
             + "float lum(vec3 c) { return dot(c, vec3(0.299, 0.587, 0.114)); }\n"
             + "void main() {\n"
             + "  vec2 uv = vTexSamplingCoord;\n"
+            + "  if (uActive < 0.5) { gl_FragColor = vec4(tap(uv), 1.0); return; }\n"
             + "  vec2 s = uTexel * uStep;\n"
             + "  vec3 c00 = tap(uv + vec2(-s.x, -s.y));\n"
             + "  vec3 c10 = tap(uv + vec2(0.0, -s.y));\n"
@@ -599,21 +634,30 @@ public final class VideoEnhance {
             + "}\n";
 
     private static final class RefineEffect implements GlEffect {
+        private final Live live;
+
+        RefineEffect(Live live) {
+            this.live = live;
+        }
+
         @Override
         public GlShaderProgram toGlShaderProgram(Context context, boolean useHdr)
                 throws VideoFrameProcessingException {
-            return new RefineProgram(useHdr);
+            return new RefineProgram(live, useHdr);
         }
     }
 
     private static final class RefineProgram extends BaseGlShaderProgram {
         private final GlProgram program;
+        private final Live live;
+        private boolean active = false;
         private int inW = 1;
         private int inH = 1;
         private float step = 1f;
 
-        RefineProgram(boolean useHdr) throws VideoFrameProcessingException {
+        RefineProgram(Live live, boolean useHdr) throws VideoFrameProcessingException {
             super(useHdr, 1);
+            this.live = live;
             this.program = newProgram(REFINE_FRAGMENT);
         }
 
@@ -624,6 +668,7 @@ public final class VideoEnhance {
             // Anime sources are mostly 480-720 lines: the bigger the upscale, the wider a source line
             // is in pixels, so the edge probe (and the pull) scale with the frame height.
             step = Math.max(1f, Math.min(3f, inH / 540f));
+            active = live.refine;   // set by the sharpen stage just upstream, for this very stream
             return new Size(inW, inH);
         }
 
@@ -636,6 +681,7 @@ public final class VideoEnhance {
                 program.setFloatsUniform("uTexel", new float[] {1f / inW, 1f / inH});
                 program.setFloatUniform("uStep", step);
                 program.setFloatUniform("uPull", 0.55f);
+                program.setFloatUniform("uActive", active ? 1f : 0f);
                 program.bindAttributesAndUniforms();
                 GLES20.glDrawArrays(GLES20.GL_TRIANGLE_STRIP, 0, 4);
                 GlUtil.checkGlError();

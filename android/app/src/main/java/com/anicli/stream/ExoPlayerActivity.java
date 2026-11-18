@@ -1750,25 +1750,14 @@ public class ExoPlayerActivity extends AppCompatActivity {
         columns.setPadding(0, dp(8), dp(40), 0);
 
         int sharpen = VideoEnhance.getSharpen(this, animeTitle);
+        // One switch: when on, the processing is picked automatically from the stream itself.
         java.util.List<MenuRow> sharpRows = new java.util.ArrayList<>();
-        sharpRows.add(new MenuRow("Auto", sharpen == VideoEnhance.SHARP_AUTO, () -> {
+        sharpRows.add(new MenuRow("On (automatic)", sharpen != VideoEnhance.SHARP_OFF, () -> {
             VideoEnhance.setSharpen(this, animeTitle, VideoEnhance.SHARP_AUTO);
             scheduleEnhanceRebuild();
         }));
         sharpRows.add(new MenuRow("Off", sharpen == VideoEnhance.SHARP_OFF, () -> {
             VideoEnhance.setSharpen(this, animeTitle, VideoEnhance.SHARP_OFF);
-            scheduleEnhanceRebuild();
-        }));
-        sharpRows.add(new MenuRow("Sharp", sharpen == VideoEnhance.SHARP_SHARP, () -> {
-            VideoEnhance.setSharpen(this, animeTitle, VideoEnhance.SHARP_SHARP);
-            scheduleEnhanceRebuild();
-        }));
-        sharpRows.add(new MenuRow("Anime", sharpen == VideoEnhance.SHARP_ANIME, () -> {
-            VideoEnhance.setSharpen(this, animeTitle, VideoEnhance.SHARP_ANIME);
-            scheduleEnhanceRebuild();
-        }));
-        sharpRows.add(new MenuRow("Anime+", sharpen == VideoEnhance.SHARP_ANIME_PLUS, () -> {
-            VideoEnhance.setSharpen(this, animeTitle, VideoEnhance.SHARP_ANIME_PLUS);
             scheduleEnhanceRebuild();
         }));
         columns.addView(buildOptionColumn("Sharpening", sharpRows),
