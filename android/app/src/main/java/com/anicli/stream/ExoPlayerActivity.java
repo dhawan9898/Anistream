@@ -127,6 +127,13 @@ public class ExoPlayerActivity extends AppCompatActivity {
     private TextView btnAspectRatio;
     private TextView btnPip;
     private TextView btnQuality;
+    private TextView btnEnhance;
+    // GPU video enhancement (VideoEnhance): sharpening / line restoration and the blurred ambient fill.
+    private static final boolean ENHANCE_ANIME_APP = true;
+    private final VideoEnhance.Live enhanceLive = new VideoEnhance.Live();
+    private boolean enhanceEffectsOn = false;     // some effect is attached to the current player
+    private boolean enhanceAmbientOn = false;     // the fill shader owns the aspect-ratio handling
+    private final Runnable enhanceRebuildRunnable = this::rebuildPlayerForEnhance;
     private int aspectRatioMode = 0; // 0 = Fit, 1 = Crop, 2 = Fill
     private static final String[] ASPECT_RATIO_LABELS = new String[]{"Fit", "Crop", "Fill"};
     private static final int[] ASPECT_RATIO_MODES = new int[]{
@@ -477,7 +484,7 @@ public class ExoPlayerActivity extends AppCompatActivity {
             if ("crop".equals(ar)) aspectRatioMode = 1;
             else if ("fill".equals(ar)) aspectRatioMode = 2;
             else aspectRatioMode = 0;
-            if (playerView != null) playerView.setResizeMode(ASPECT_RATIO_MODES[aspectRatioMode]);
+            applyAspectMode(false);
             if (btnAspectRatio != null) btnAspectRatio.setText(ASPECT_RATIO_LABELS[aspectRatioMode]);
         }
         if (intent.hasExtra("subtitlesEnabled")) {
@@ -799,6 +806,12 @@ public class ExoPlayerActivity extends AppCompatActivity {
         btnAspectRatio = findViewById(R.id.btn_aspect_ratio);
         btnPip = findViewById(R.id.btn_pip);
         btnQuality = findViewById(R.id.btn_quality);
+        btnEnhance = findViewById(R.id.btn_enhance);
+        if (playerView != null) {
+            playerView.addOnLayoutChangeListener((v, l, t, r, b, ol, ot, or, ob) -> {
+                if (r - l != or - ol || b - t != ob - ot) updateEnhanceViewMetrics();
+            });
+        }
         btnSkipIntro = findViewById(R.id.btn_skip_intro);
         btnSkipOutro = findViewById(R.id.btn_skip_outro);
         btnWatchCredits = findViewById(R.id.btn_watch_credits);
@@ -831,7 +844,7 @@ public class ExoPlayerActivity extends AppCompatActivity {
     private void styleGlassChrome() {
         float density = getResources().getDisplayMetrics().density;
 
-        for (TextView btn : new TextView[]{btnSkipIntro, btnSkipOutro, btnWatchCredits, btnPip, btnAspectRatio, btnQuality}) {
+        for (TextView btn : new TextView[]{btnSkipIntro, btnSkipOutro, btnWatchCredits, btnPip, btnAspectRatio, btnQuality, btnEnhance}) {
             if (btn == null) continue;
             GradientDrawable bg = new GradientDrawable();
             bg.setCornerRadius(4f * density);
@@ -920,7 +933,7 @@ public class ExoPlayerActivity extends AppCompatActivity {
         if (btnPlayPause != null) btnPlayPause.setPadding(dp(18), dp(18), dp(18), dp(18));
         if (btnBack != null) btnBack.setPadding(dp(8), dp(8), dp(8), dp(8));
         // Pills for the labelled buttons: top bar, bottom action row, skip / credits.
-        for (View v : new View[]{btnPip, btnAspectRatio, btnQuality}) {
+        for (View v : new View[]{btnPip, btnAspectRatio, btnQuality, btnEnhance}) {
             if (v == null) continue;
             v.setBackground(glass(false, 22, false));
             v.setPadding(Math.max(v.getPaddingLeft(), dp(14)), Math.max(v.getPaddingTop(), dp(8)), Math.max(v.getPaddingRight(), dp(14)), Math.max(v.getPaddingBottom(), dp(8)));
@@ -1131,6 +1144,7 @@ public class ExoPlayerActivity extends AppCompatActivity {
         btnNextEp.setOnClickListener(v -> highlightAction(v, () -> triggerNextEpisode()));
         btnRetry.setOnClickListener(v -> retryPlayback());
         if (btnAspectRatio != null) btnAspectRatio.setOnClickListener(v -> toggleAspectRatio());
+        if (btnEnhance != null) btnEnhance.setOnClickListener(this::showEnhanceMenu);
         if (btnPip != null) {
             btnPip.setVisibility(pipSupported() ? View.VISIBLE : View.GONE);
             btnPip.setOnClickListener(v -> enterPip());
@@ -1587,11 +1601,123 @@ public class ExoPlayerActivity extends AppCompatActivity {
 
     private static final String[] ASPECT_RATIO_KEYS = new String[]{"fit", "crop", "fill"};
 
+    // ---- Video enhancement (GPU shaders, see VideoEnhance) ----------------------------------------
+
+    private void updateEnhanceViewMetrics() {
+        int w = playerView != null ? playerView.getWidth() : 0;
+        int h = playerView != null ? playerView.getHeight() : 0;
+        if (w <= 0 || h <= 0) {
+            android.util.DisplayMetrics m = getResources().getDisplayMetrics();
+            w = Math.max(m.widthPixels, m.heightPixels);
+            h = Math.min(m.widthPixels, m.heightPixels);
+        }
+        enhanceLive.viewW = w;
+        enhanceLive.viewH = h;
+        enhanceLive.viewAspect = w / (float) h;
+        if (!inPip()) enhanceLive.fullAspect = enhanceLive.viewAspect;
+    }
+
+    // Attaches the shader chain to the player that was just built (before prepare()). Any failure
+    // here just means no effects: playback itself must never depend on them.
+    private void applyVideoEffects() {
+        enhanceEffectsOn = false;
+        enhanceAmbientOn = false;
+        if (player != null) {
+            try {
+                updateEnhanceViewMetrics();
+                java.util.List<androidx.media3.common.Effect> effects =
+                        VideoEnhance.buildEffects(this, ENHANCE_ANIME_APP, enhanceLive);
+                if (!effects.isEmpty()) {
+                    player.setVideoEffects(effects);
+                    enhanceEffectsOn = true;
+                    enhanceAmbientOn = VideoEnhance.ambientActive(this);
+                }
+            } catch (Throwable t) {
+                Log.w(TAG, "Video effects unavailable", t);
+                enhanceEffectsOn = false;
+                enhanceAmbientOn = false;
+            }
+        }
+        applyAspectMode(false);
+    }
+
+    // Fit / Crop / Fill. With the ambient fill the shader lays the picture out inside a frame shaped
+    // like the screen, so the PlayerView just stretches that frame to its size.
+    private void applyAspectMode(boolean userChanged) {
+        enhanceLive.fitMode = aspectRatioMode;
+        if (playerView != null) {
+            playerView.setResizeMode(enhanceAmbientOn
+                    ? androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_FILL
+                    : ASPECT_RATIO_MODES[aspectRatioMode]);
+        }
+        // A paused frame is only redrawn by the shader when a frame is rendered again.
+        if (userChanged && enhanceAmbientOn && player != null && !player.isPlaying()
+                && player.getPlaybackState() == Player.STATE_READY) {
+            player.seekTo(player.getCurrentPosition());
+        }
+    }
+
+    private void rebuildPlayerForEnhance() {
+        if (player == null || pendingVideoUrl == null || isFinishing() || isDestroyed()) return;
+        long resumeAt = Math.max(player.getCurrentPosition(), 0);
+        boolean wasPlaying = player.getPlayWhenReady();
+        player.release();
+        player = null;
+        initializePlayer(pendingVideoUrl, pendingReferer, pendingSubtitlesJson, resumeAt, wasPlaying);
+    }
+
+    // Changing a setting rebuilds the player in place (same position, same play state), debounced so
+    // tapping through the options costs one rebuild.
+    private void scheduleEnhanceRebuild() {
+        handler.removeCallbacks(enhanceRebuildRunnable);
+        handler.postDelayed(enhanceRebuildRunnable, 450);
+    }
+
+    private void showEnhanceMenu(View anchor) {
+        LinearLayout columns = new LinearLayout(this);
+        columns.setOrientation(LinearLayout.HORIZONTAL);
+        columns.setPadding(0, dp(8), dp(40), 0);
+
+        int sharpen = VideoEnhance.getSharpen(this);
+        java.util.List<MenuRow> sharpRows = new java.util.ArrayList<>();
+        sharpRows.add(new MenuRow("Auto (best for this video)", sharpen == VideoEnhance.SHARP_AUTO, () -> {
+            VideoEnhance.setSharpen(this, VideoEnhance.SHARP_AUTO);
+            scheduleEnhanceRebuild();
+        }));
+        sharpRows.add(new MenuRow("Off", sharpen == VideoEnhance.SHARP_OFF, () -> {
+            VideoEnhance.setSharpen(this, VideoEnhance.SHARP_OFF);
+            scheduleEnhanceRebuild();
+        }));
+        sharpRows.add(new MenuRow("Sharp", sharpen == VideoEnhance.SHARP_SHARP, () -> {
+            VideoEnhance.setSharpen(this, VideoEnhance.SHARP_SHARP);
+            scheduleEnhanceRebuild();
+        }));
+        sharpRows.add(new MenuRow("Anime line-art", sharpen == VideoEnhance.SHARP_ANIME, () -> {
+            VideoEnhance.setSharpen(this, VideoEnhance.SHARP_ANIME);
+            scheduleEnhanceRebuild();
+        }));
+        columns.addView(buildOptionColumn("Sharpening", sharpRows),
+                new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, 1f));
+
+        boolean ambient = VideoEnhance.getAmbient(this);
+        java.util.List<MenuRow> fillRows = new java.util.ArrayList<>();
+        fillRows.add(new MenuRow("Ambient glow", ambient, () -> {
+            VideoEnhance.setAmbient(this, true);
+            scheduleEnhanceRebuild();
+        }));
+        fillRows.add(new MenuRow("Black bars", !ambient, () -> {
+            VideoEnhance.setAmbient(this, false);
+            scheduleEnhanceRebuild();
+        }));
+        columns.addView(buildOptionColumn("Side bars", fillRows),
+                new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, 1f));
+
+        showPanel(columns, false);
+    }
+
     private void toggleAspectRatio() {
         aspectRatioMode = (aspectRatioMode + 1) % 3;
-        if (playerView != null) {
-            playerView.setResizeMode(ASPECT_RATIO_MODES[aspectRatioMode]);
-        }
+        applyAspectMode(true);
         if (btnAspectRatio != null) {
             btnAspectRatio.setText(ASPECT_RATIO_LABELS[aspectRatioMode]);
         }
@@ -2509,6 +2635,7 @@ public class ExoPlayerActivity extends AppCompatActivity {
                 .setHandleAudioBecomingNoisy(true)
                 .build();
         playerView.setPlayer(player);
+        applyVideoEffects();
         player.setPlaybackSpeed(playbackSpeed);
         // Start position goes in with the item: prepare() then seekTo()
         // downloaded the opening segments first and threw them away.
@@ -2563,6 +2690,16 @@ public class ExoPlayerActivity extends AppCompatActivity {
             @Override
             public void onPlayerError(androidx.media3.common.PlaybackException error) {
                 Log.e(TAG, "Playback error", error);
+                if (enhanceEffectsOn && error != null
+                        && (error.errorCode == androidx.media3.common.PlaybackException.ERROR_CODE_VIDEO_FRAME_PROCESSING_FAILED
+                        || error.errorCode == androidx.media3.common.PlaybackException.ERROR_CODE_VIDEO_FRAME_PROCESSOR_INIT_FAILED)) {
+                    VideoEnhance.disableForSession();
+                    android.widget.Toast.makeText(ExoPlayerActivity.this,
+                            "Video enhancement isn't supported on this device, so it was turned off",
+                            android.widget.Toast.LENGTH_LONG).show();
+                    retryPlayback();
+                    return;
+                }
                 if (error != null) {
                     ExoPlayerPlugin.notifyPlaybackError(animeTitle, episodeNumber, currentMode, null,
                             pendingVideoUrl, error.getErrorCodeName(), describePlaybackError(error));
@@ -3120,6 +3257,7 @@ public class ExoPlayerActivity extends AppCompatActivity {
             androidx.media3.common.VideoSize vs = player.getVideoSize();
             if (vs.width > 0 && vs.height > 0) { w = vs.width; h = vs.height; }
         }
+        if (enhanceAmbientOn && enhanceLive.fullAspect > 0f) { w = Math.round(enhanceLive.fullAspect * 1000f); h = 1000; }
         // The system rejects ratios outside 1:2.39 .. 2.39:1.
         double ratio = (double) w / h;
         if (ratio > 2.39) { w = 239; h = 100; } else if (ratio < 1 / 2.39) { w = 100; h = 239; }
