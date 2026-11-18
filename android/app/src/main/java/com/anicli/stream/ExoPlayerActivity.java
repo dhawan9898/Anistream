@@ -134,6 +134,7 @@ public class ExoPlayerActivity extends AppCompatActivity {
     private boolean enhanceEffectsOn = false;     // some effect is attached to the current player
     private boolean enhanceAmbientOn = false;     // the fill shader owns the aspect-ratio handling
     private final Runnable enhanceRebuildRunnable = this::rebuildPlayerForEnhance;
+    private VideoEnhance.AudioFx enhanceAudio;
     private int aspectRatioMode = 0; // 0 = Fit, 1 = Crop, 2 = Fill
     private static final String[] ASPECT_RATIO_LABELS = new String[]{"Fit", "Crop", "Fill"};
     private static final int[] ASPECT_RATIO_MODES = new int[]{
@@ -1622,7 +1623,24 @@ public class ExoPlayerActivity extends AppCompatActivity {
     private void applyVideoEffects() {
         enhanceEffectsOn = false;
         enhanceAmbientOn = false;
+        if (enhanceAudio != null) enhanceAudio.release();
+        enhanceAudio = null;
         if (player != null) {
+            try {
+                final VideoEnhance.AudioFx audioFx = new VideoEnhance.AudioFx(VideoEnhance.getAudio(this));
+                if (audioFx.wanted()) {
+                    enhanceAudio = audioFx;
+                    player.addListener(new Player.Listener() {
+                        @Override
+                        public void onAudioSessionIdChanged(int audioSessionId) {
+                            audioFx.attach(audioSessionId);
+                        }
+                    });
+                    audioFx.attach(player.getAudioSessionId());
+                }
+            } catch (Throwable t) {
+                Log.w(TAG, "Audio enhancement unavailable", t);
+            }
             try {
                 updateEnhanceViewMetrics();
                 java.util.List<androidx.media3.common.Effect> effects =
@@ -1680,7 +1698,7 @@ public class ExoPlayerActivity extends AppCompatActivity {
 
         int sharpen = VideoEnhance.getSharpen(this);
         java.util.List<MenuRow> sharpRows = new java.util.ArrayList<>();
-        sharpRows.add(new MenuRow("Auto (best for this video)", sharpen == VideoEnhance.SHARP_AUTO, () -> {
+        sharpRows.add(new MenuRow("Auto", sharpen == VideoEnhance.SHARP_AUTO, () -> {
             VideoEnhance.setSharpen(this, VideoEnhance.SHARP_AUTO);
             scheduleEnhanceRebuild();
         }));
@@ -1692,7 +1710,7 @@ public class ExoPlayerActivity extends AppCompatActivity {
             VideoEnhance.setSharpen(this, VideoEnhance.SHARP_SHARP);
             scheduleEnhanceRebuild();
         }));
-        sharpRows.add(new MenuRow("Anime line-art", sharpen == VideoEnhance.SHARP_ANIME, () -> {
+        sharpRows.add(new MenuRow("Anime", sharpen == VideoEnhance.SHARP_ANIME, () -> {
             VideoEnhance.setSharpen(this, VideoEnhance.SHARP_ANIME);
             scheduleEnhanceRebuild();
         }));
@@ -1701,15 +1719,45 @@ public class ExoPlayerActivity extends AppCompatActivity {
 
         boolean ambient = VideoEnhance.getAmbient(this);
         java.util.List<MenuRow> fillRows = new java.util.ArrayList<>();
-        fillRows.add(new MenuRow("Ambient glow", ambient, () -> {
+        fillRows.add(new MenuRow("Glow", ambient, () -> {
             VideoEnhance.setAmbient(this, true);
             scheduleEnhanceRebuild();
         }));
-        fillRows.add(new MenuRow("Black bars", !ambient, () -> {
+        fillRows.add(new MenuRow("Black", !ambient, () -> {
             VideoEnhance.setAmbient(this, false);
             scheduleEnhanceRebuild();
         }));
         columns.addView(buildOptionColumn("Side bars", fillRows),
+                new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, 1f));
+
+        boolean vivid = VideoEnhance.getVivid(this);
+        java.util.List<MenuRow> colourRows = new java.util.ArrayList<>();
+        colourRows.add(new MenuRow("Natural", !vivid, () -> {
+            VideoEnhance.setVivid(this, false);
+            scheduleEnhanceRebuild();
+        }));
+        colourRows.add(new MenuRow("Vivid", vivid, () -> {
+            VideoEnhance.setVivid(this, true);
+            scheduleEnhanceRebuild();
+        }));
+        columns.addView(buildOptionColumn("Colour", colourRows),
+                new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, 1f));
+
+        int audio = VideoEnhance.getAudio(this);
+        java.util.List<MenuRow> audioRows = new java.util.ArrayList<>();
+        audioRows.add(new MenuRow("Normal", audio == VideoEnhance.AUDIO_NORMAL, () -> {
+            VideoEnhance.setAudio(this, VideoEnhance.AUDIO_NORMAL);
+            scheduleEnhanceRebuild();
+        }));
+        audioRows.add(new MenuRow("Boost", audio == VideoEnhance.AUDIO_BOOST, () -> {
+            VideoEnhance.setAudio(this, VideoEnhance.AUDIO_BOOST);
+            scheduleEnhanceRebuild();
+        }));
+        audioRows.add(new MenuRow("Night", audio == VideoEnhance.AUDIO_NIGHT, () -> {
+            VideoEnhance.setAudio(this, VideoEnhance.AUDIO_NIGHT);
+            scheduleEnhanceRebuild();
+        }));
+        columns.addView(buildOptionColumn("Audio", audioRows),
                 new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, 1f));
 
         showPanel(columns, false);
@@ -3396,6 +3444,8 @@ public class ExoPlayerActivity extends AppCompatActivity {
 
     @Override
     protected void onDestroy() {
+        if (enhanceAudio != null) enhanceAudio.release();
+        enhanceAudio = null;
         super.onDestroy();
         if (openPanel != null && openPanel.isShowing()) openPanel.dismiss();
         openPanel = null;

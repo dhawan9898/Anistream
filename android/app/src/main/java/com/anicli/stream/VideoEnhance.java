@@ -54,6 +54,13 @@ public final class VideoEnhance {
     private static final String PREFS = "video_enhance";
     private static final String KEY_SHARPEN = "sharpen";
     private static final String KEY_AMBIENT = "ambient";
+    private static final String KEY_VIVID = "vivid";
+    private static final String KEY_AUDIO = "audio";
+
+    // Audio choices (stored).
+    public static final int AUDIO_NORMAL = 0;
+    public static final int AUDIO_BOOST = 1;   // louder than the system volume allows, with headroom
+    public static final int AUDIO_NIGHT = 2;   // quiet loud parts, lift dialogue (compressor)
 
     /** Set when the GPU pipeline fails once; effects stay off until the app restarts. */
     private static volatile boolean disabledForSession = false;
@@ -90,6 +97,23 @@ public final class VideoEnhance {
         prefs(c).edit().putBoolean(KEY_AMBIENT, on).apply();
     }
 
+    public static boolean getVivid(Context c) {
+        return prefs(c).getBoolean(KEY_VIVID, false);
+    }
+
+    public static void setVivid(Context c, boolean on) {
+        prefs(c).edit().putBoolean(KEY_VIVID, on).apply();
+    }
+
+    public static int getAudio(Context c) {
+        int v = prefs(c).getInt(KEY_AUDIO, AUDIO_NORMAL);
+        return v < AUDIO_NORMAL || v > AUDIO_NIGHT ? AUDIO_NORMAL : v;
+    }
+
+    public static void setAudio(Context c, int mode) {
+        prefs(c).edit().putInt(KEY_AUDIO, mode).apply();
+    }
+
     public static boolean isDisabledForSession() {
         return disabledForSession;
     }
@@ -103,7 +127,7 @@ public final class VideoEnhance {
     }
 
     public static boolean anyActive(Context c) {
-        return !disabledForSession && (getAmbient(c) || getSharpen(c) != SHARP_OFF);
+        return !disabledForSession && (getAmbient(c) || getVivid(c) || getSharpen(c) != SHARP_OFF);
     }
 
     /** Builds the effect chain for the current settings; empty when everything is off. */
@@ -111,9 +135,66 @@ public final class VideoEnhance {
         List<Effect> effects = new ArrayList<>();
         if (disabledForSession) return effects;
         int sharpen = getSharpen(c);
-        if (sharpen != SHARP_OFF) effects.add(new SharpenEffect(sharpen, animeApp, live));
+        boolean vivid = getVivid(c);
+        // The sharpen stage also hosts the colour grade, so it stays in the chain for "Vivid".
+        if (sharpen != SHARP_OFF || vivid) effects.add(new SharpenEffect(sharpen, animeApp, vivid, live));
         if (getAmbient(c)) effects.add(new AmbientFillEffect(live));
         return effects;
+    }
+
+    // ---------------------------------------------------------------- audio
+
+    /**
+     * Boost / Night audio on the player's audio session (system audio effects, no decoding work).
+     * Any failure just leaves the audio untouched.
+     */
+    public static final class AudioFx {
+        private android.media.audiofx.LoudnessEnhancer loudness;
+        private android.media.audiofx.DynamicsProcessing dynamics;
+        private final int mode;
+
+        public AudioFx(int mode) {
+            this.mode = mode;
+        }
+
+        public boolean wanted() {
+            return mode != AUDIO_NORMAL;
+        }
+
+        public void attach(int sessionId) {
+            if (!wanted() || sessionId == 0 || sessionId == -1) return;   // C.AUDIO_SESSION_ID_UNSET is 0
+            release();
+            try {
+                if (mode == AUDIO_BOOST) {
+                    loudness = new android.media.audiofx.LoudnessEnhancer(sessionId);
+                    loudness.setTargetGain(500);   // +5 dB, in millibels
+                    loudness.setEnabled(true);
+                } else if (android.os.Build.VERSION.SDK_INT >= 28) {
+                    // Night: a limiter used as a compressor (squash loud scenes) with make-up gain.
+                    android.media.audiofx.DynamicsProcessing.Config cfg =
+                            new android.media.audiofx.DynamicsProcessing.Config.Builder(
+                                    android.media.audiofx.DynamicsProcessing.VARIANT_FAVOR_FREQUENCY_RESOLUTION,
+                                    2, false, 0, false, 0, false, 0, true).build();
+                    dynamics = new android.media.audiofx.DynamicsProcessing(0, sessionId, cfg);
+                    for (int ch = 0; ch < 2; ch++) {
+                        android.media.audiofx.DynamicsProcessing.Limiter lim =
+                                new android.media.audiofx.DynamicsProcessing.Limiter(
+                                        true, true, 0, 5f, 120f, 4f, -26f, 9f);
+                        dynamics.setLimiterByChannelIndex(ch, lim);
+                    }
+                    dynamics.setEnabled(true);
+                }
+            } catch (Throwable t) {
+                release();
+            }
+        }
+
+        public void release() {
+            try { if (loudness != null) loudness.release(); } catch (Throwable ignored) { }
+            try { if (dynamics != null) dynamics.release(); } catch (Throwable ignored) { }
+            loudness = null;
+            dynamics = null;
+        }
     }
 
     // ---------------------------------------------------------------- shared GL bits
@@ -154,11 +235,23 @@ public final class VideoEnhance {
             + "uniform float uDark;\n"
             + "uniform float uThin;\n"
             + "uniform float uCore;\n"
+            + "uniform float uVivid;\n"
             + "varying vec2 vTexSamplingCoord;\n"
             + "vec3 gMin;\n"
             + "vec3 gMax;\n"
             + "vec3 tap(vec2 uv) { return texture2D(uTexSampler, uv).rgb; }\n"
             + "float lum(vec3 c) { return dot(c, vec3(0.299, 0.587, 0.114)); }\n"
+            // Optional "vivid" grade for washed-out sources, plus sub-step dither that hides the
+            // banding low-bitrate streams show in flat gradients (sky, skin, backgrounds).
+            + "vec3 finish(vec3 c) {\n"
+            + "  if (uVivid > 0.5) {\n"
+            + "    c = mix(vec3(lum(c)), c, 1.16);\n"
+            + "    c = (c - 0.5) * 1.05 + 0.5;\n"
+            + "  }\n"
+            + "  float n = fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715))));\n"
+            + "  c += (n - 0.5) / 255.0;\n"
+            + "  return clamp(c, 0.0, 1.0);\n"
+            + "}\n"
             // Catmull-Rom bicubic in 9 bilinear taps; also records the 2x2 neighbourhood range.
             + "vec3 bicubic(vec2 uv) {\n"
             + "  vec2 pos = uv * uInSize;\n"
@@ -200,7 +293,7 @@ public final class VideoEnhance {
             + "}\n"
             + "void main() {\n"
             + "  vec2 uv = vTexSamplingCoord;\n"
-            + "  if (uPlain > 0.5) { gl_FragColor = vec4(tap(uv), 1.0); return; }\n"
+            + "  if (uPlain > 0.5) { gl_FragColor = vec4(finish(tap(uv)), 1.0); return; }\n"
             + "  vec2 w = uv;\n"
             + "  if (uThin > 0.0) w = thinWarp(uv);\n"
             + "  vec3 base = bicubic(w);\n"
@@ -212,24 +305,26 @@ public final class VideoEnhance {
             + "  float gain = uAmount * (dl < 0.0 ? 1.0 + uDark : 1.0);\n"
             + "  vec3 o = base + vec3(cored * gain);\n"
             + "  o = clamp(o, gMin - 0.02, gMax + 0.02);\n"
-            + "  gl_FragColor = vec4(clamp(o, 0.0, 1.0), 1.0);\n"
+            + "  gl_FragColor = vec4(finish(clamp(o, 0.0, 1.0)), 1.0);\n"
             + "}\n";
 
     private static final class SharpenEffect implements GlEffect {
         private final int mode;
         private final boolean animeApp;
+        private final boolean vivid;
         private final Live live;
 
-        SharpenEffect(int mode, boolean animeApp, Live live) {
+        SharpenEffect(int mode, boolean animeApp, boolean vivid, Live live) {
             this.mode = mode;
             this.animeApp = animeApp;
+            this.vivid = vivid;
             this.live = live;
         }
 
         @Override
         public GlShaderProgram toGlShaderProgram(Context context, boolean useHdr)
                 throws VideoFrameProcessingException {
-            return new SharpenProgram(mode, animeApp, live, useHdr);
+            return new SharpenProgram(mode, animeApp, vivid, live, useHdr);
         }
     }
 
@@ -237,6 +332,7 @@ public final class VideoEnhance {
         private final GlProgram program;
         private final int mode;
         private final boolean animeApp;
+        private final boolean vivid;
         private final Live live;
         private int inW = 1;
         private int inH = 1;
@@ -247,11 +343,12 @@ public final class VideoEnhance {
         private float thin;
         private float core;
 
-        SharpenProgram(int mode, boolean animeApp, Live live, boolean useHdr)
+        SharpenProgram(int mode, boolean animeApp, boolean vivid, Live live, boolean useHdr)
                 throws VideoFrameProcessingException {
             super(useHdr, 1);
             this.mode = mode;
             this.animeApp = animeApp;
+            this.vivid = vivid;
             this.live = live;
             this.program = newProgram(SHARPEN_FRAGMENT);
         }
@@ -312,6 +409,7 @@ public final class VideoEnhance {
                 program.setFloatUniform("uDark", dark);
                 program.setFloatUniform("uThin", thin);
                 program.setFloatUniform("uCore", core);
+                program.setFloatUniform("uVivid", vivid ? 1f : 0f);
                 program.bindAttributesAndUniforms();
                 GLES20.glDrawArrays(GLES20.GL_TRIANGLE_STRIP, 0, 4);
                 GlUtil.checkGlError();
@@ -333,7 +431,8 @@ public final class VideoEnhance {
 
     // ---------------------------------------------------------------- ambient fill
 
-    // Renders the frame into a tiny texture: each output pixel averages a 4x4 grid of its block.
+    // Box-filters the source into a smaller texture: each output pixel averages a 6x6 grid of its
+    // block (bilinear taps overlap, so no source pixel is skipped and nothing shimmers).
     private static final String DOWNSAMPLE_FRAGMENT =
             "precision highp float;\n"
             + "uniform sampler2D uTexSampler;\n"
@@ -341,13 +440,31 @@ public final class VideoEnhance {
             + "varying vec2 vTexSamplingCoord;\n"
             + "void main() {\n"
             + "  vec3 s = vec3(0.0);\n"
-            + "  for (int i = 0; i < 4; i++) {\n"
-            + "    for (int j = 0; j < 4; j++) {\n"
-            + "      vec2 o = (vec2(float(i), float(j)) + 0.5) / 4.0 - 0.5;\n"
+            + "  for (int i = 0; i < 6; i++) {\n"
+            + "    for (int j = 0; j < 6; j++) {\n"
+            + "      vec2 o = (vec2(float(i), float(j)) + 0.5) / 6.0 - 0.5;\n"
             + "      s += texture2D(uTexSampler, vTexSamplingCoord + o * uBlock).rgb;\n"
             + "    }\n"
             + "  }\n"
-            + "  gl_FragColor = vec4(s / 16.0, 1.0);\n"
+            + "  gl_FragColor = vec4(s / 36.0, 1.0);\n"
+            + "}\n";
+
+    // One direction of a wide separable gaussian (9 taps, 1.5 texels apart).
+    private static final String BLUR_FRAGMENT =
+            "precision highp float;\n"
+            + "uniform sampler2D uTexSampler;\n"
+            + "uniform vec2 uStep;\n"
+            + "varying vec2 vTexSamplingCoord;\n"
+            + "void main() {\n"
+            + "  vec3 s = vec3(0.0);\n"
+            + "  float wsum = 0.0;\n"
+            + "  for (int k = -4; k <= 4; k++) {\n"
+            + "    float d = float(k);\n"
+            + "    float w = exp(-d * d / 12.5);\n"
+            + "    s += texture2D(uTexSampler, vTexSamplingCoord + uStep * d * 1.5).rgb * w;\n"
+            + "    wsum += w;\n"
+            + "  }\n"
+            + "  gl_FragColor = vec4(s / wsum, 1.0);\n"
             + "}\n";
 
     private static final String FILL_FRAGMENT =
@@ -359,20 +476,39 @@ public final class VideoEnhance {
             + "uniform vec2 uCoverLo;\n"
             + "uniform vec2 uCoverHi;\n"
             + "uniform vec2 uOutSize;\n"
+            + "uniform vec2 uLowSize;\n"
             + "uniform vec2 uLowTexel;\n"
             + "uniform float uDim;\n"
             + "varying vec2 vTexSamplingCoord;\n"
-            + "vec3 low(vec2 q) { return texture2D(uLow, clamp(q, 0.0, 1.0)).rgb; }\n"
+            + "vec3 lowTap(vec2 uv) { return texture2D(uLow, uv).rgb; }\n"
+            // Catmull-Rom over the already-blurred texture: smooth, no bilinear diamonds.
+            + "vec3 lowCubic(vec2 uv) {\n"
+            + "  vec2 pos = uv * uLowSize;\n"
+            + "  vec2 c = floor(pos - 0.5) + 0.5;\n"
+            + "  vec2 f = pos - c;\n"
+            + "  vec2 w0 = f * (-0.5 + f * (1.0 - 0.5 * f));\n"
+            + "  vec2 w1 = 1.0 + f * f * (-2.5 + 1.5 * f);\n"
+            + "  vec2 w2 = f * (0.5 + f * (2.0 - 1.5 * f));\n"
+            + "  vec2 w3 = f * f * (-0.5 + 0.5 * f);\n"
+            + "  vec2 w12 = w1 + w2;\n"
+            + "  vec2 p0 = (c - 1.0) * uLowTexel;\n"
+            + "  vec2 p3 = (c + 2.0) * uLowTexel;\n"
+            + "  vec2 p12 = (c + w2 / w12) * uLowTexel;\n"
+            + "  return lowTap(vec2(p0.x, p0.y)) * w0.x * w0.y\n"
+            + "       + lowTap(vec2(p12.x, p0.y)) * w12.x * w0.y\n"
+            + "       + lowTap(vec2(p3.x, p0.y)) * w3.x * w0.y\n"
+            + "       + lowTap(vec2(p0.x, p12.y)) * w0.x * w12.y\n"
+            + "       + lowTap(vec2(p12.x, p12.y)) * w12.x * w12.y\n"
+            + "       + lowTap(vec2(p3.x, p12.y)) * w3.x * w12.y\n"
+            + "       + lowTap(vec2(p0.x, p3.y)) * w0.x * w3.y\n"
+            + "       + lowTap(vec2(p12.x, p3.y)) * w12.x * w3.y\n"
+            + "       + lowTap(vec2(p3.x, p3.y)) * w3.x * w3.y;\n"
+            + "}\n"
             + "void main() {\n"
             + "  vec2 uv = vTexSamplingCoord;\n"
-            // Background: the frame zoomed to cover the screen, heavily blurred (3x3 on a 96px source).
-            + "  vec2 bq = (uv - uCoverLo) / (uCoverHi - uCoverLo);\n"
-            + "  vec2 s = uLowTexel * 2.0;\n"
-            + "  vec3 bg = low(bq) * 4.0\n"
-            + "          + (low(bq + vec2(s.x, 0.0)) + low(bq - vec2(s.x, 0.0))\n"
-            + "           + low(bq + vec2(0.0, s.y)) + low(bq - vec2(0.0, s.y))) * 2.0\n"
-            + "          + low(bq + s) + low(bq - s) + low(bq + vec2(s.x, -s.y)) + low(bq + vec2(-s.x, s.y));\n"
-            + "  bg /= 16.0;\n"
+            // Background: the frame zoomed to cover the screen, heavily blurred.
+            + "  vec2 bq = clamp((uv - uCoverLo) / (uCoverHi - uCoverLo), 0.0, 1.0);\n"
+            + "  vec3 bg = max(lowCubic(bq), 0.0);\n"
             + "  float l = dot(bg, vec3(0.299, 0.587, 0.114));\n"
             + "  bg = mix(vec3(l), bg, 1.2) * uDim;\n"
             + "  vec2 p = uv - 0.5;\n"
@@ -383,9 +519,9 @@ public final class VideoEnhance {
             + "  float edge = min(min(uv.x - uLo.x, uHi.x - uv.x) * uOutSize.x,\n"
             + "                   min(uv.y - uLo.y, uHi.y - uv.y) * uOutSize.y);\n"
             + "  vec3 c = mix(bg, fg, clamp(edge, 0.0, 1.0));\n"
-            // Dither so the dark gradient does not band.
+            // Sub-step dither so the dark gradient does not band (about half an 8-bit step).
             + "  float n = fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715))));\n"
-            + "  c += (n - 0.5) / 170.0;\n"
+            + "  c += (n - 0.5) / 255.0;\n"
             + "  gl_FragColor = vec4(clamp(c, 0.0, 1.0), 1.0);\n"
             + "}\n";
 
@@ -404,19 +540,20 @@ public final class VideoEnhance {
     }
 
     private static final class AmbientFillProgram extends BaseGlShaderProgram {
-        private static final int LOW_W = 96;
+        // Blur chain: source -> A (256 wide) -> B (64 wide) -> C -> B, gaussian-blurred at 64 wide.
+        private static final int A_W = 256;
+        private static final int B_W = 64;
 
         private final GlProgram fill;
         private final GlProgram down;
+        private final GlProgram blur;
         private final Live live;
         private int inW = 1;
         private int inH = 1;
         private int outW = 1;
         private int outH = 1;
-        private int lowW = LOW_W;
-        private int lowH = 54;
-        private int lowTex = -1;
-        private int lowFbo = -1;
+        private int aW = A_W, aH = 144, bW = B_W, bH = 36;
+        private int texA = -1, fboA = -1, texB = -1, fboB = -1, texC = -1, fboC = -1;
         private final int[] savedFbo = new int[1];
         private final int[] savedViewport = new int[4];
 
@@ -425,6 +562,7 @@ public final class VideoEnhance {
             this.live = live;
             this.fill = newProgram(FILL_FRAGMENT);
             this.down = newProgram(DOWNSAMPLE_FRAGMENT);
+            this.blur = newProgram(BLUR_FRAGMENT);
         }
 
         @Override
@@ -449,12 +587,18 @@ public final class VideoEnhance {
                 outW = even(outW * k);
                 outH = even(outH * k);
             }
-            lowW = LOW_W;
-            lowH = Math.max(8, Math.min(256, Math.round(LOW_W / video)));
+            aW = A_W;
+            aH = Math.max(16, Math.min(512, Math.round(A_W / video)));
+            bW = B_W;
+            bH = Math.max(8, Math.min(256, Math.round(B_W / video)));
             try {
                 releaseLow();
-                lowTex = GlUtil.createTexture(lowW, lowH, /* useHighPrecisionColorComponents= */ false);
-                lowFbo = GlUtil.createFboForTexture(lowTex);
+                texA = GlUtil.createTexture(aW, aH, /* useHighPrecisionColorComponents= */ false);
+                fboA = GlUtil.createFboForTexture(texA);
+                texB = GlUtil.createTexture(bW, bH, false);
+                fboB = GlUtil.createFboForTexture(texB);
+                texC = GlUtil.createTexture(bW, bH, false);
+                fboC = GlUtil.createFboForTexture(texC);
             } catch (GlUtil.GlException e) {
                 throw new VideoFrameProcessingException(e);
             }
@@ -462,10 +606,24 @@ public final class VideoEnhance {
         }
 
         private void releaseLow() throws GlUtil.GlException {
-            if (lowFbo != -1) GlUtil.deleteFbo(lowFbo);
-            if (lowTex != -1) GlUtil.deleteTexture(lowTex);
-            lowFbo = -1;
-            lowTex = -1;
+            if (fboA != -1) GlUtil.deleteFbo(fboA);
+            if (fboB != -1) GlUtil.deleteFbo(fboB);
+            if (fboC != -1) GlUtil.deleteFbo(fboC);
+            if (texA != -1) GlUtil.deleteTexture(texA);
+            if (texB != -1) GlUtil.deleteTexture(texB);
+            if (texC != -1) GlUtil.deleteTexture(texC);
+            fboA = fboB = fboC = texA = texB = texC = -1;
+        }
+
+        private void pass(GlProgram p, int srcTex, int dstFbo, int w, int h, String uniform, float ux, float uy)
+                throws GlUtil.GlException {
+            GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, dstFbo);
+            GLES20.glViewport(0, 0, w, h);
+            p.use();
+            p.setSamplerTexIdUniform("uTexSampler", srcTex, 0);
+            p.setFloatsUniform(uniform, new float[] {ux, uy});
+            p.bindAttributesAndUniforms();
+            GLES20.glDrawArrays(GLES20.GL_TRIANGLE_STRIP, 0, 4);
         }
 
         @Override
@@ -480,29 +638,27 @@ public final class VideoEnhance {
                 float[] r = live.fitMode == CROP ? cover : live.fitMode == FILL
                         ? new float[] {0f, 0f, 1f, 1f} : fit;
 
-                // Pass 1: blur source (renders into our own small FBO; remember the output target).
+                // Blur chain renders into our own small FBOs; remember the real output target.
                 GLES20.glGetIntegerv(GLES20.GL_FRAMEBUFFER_BINDING, savedFbo, 0);
                 GLES20.glGetIntegerv(GLES20.GL_VIEWPORT, savedViewport, 0);
-                GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, lowFbo);
-                GLES20.glViewport(0, 0, lowW, lowH);
-                down.use();
-                down.setSamplerTexIdUniform("uTexSampler", inputTexId, 0);
-                down.setFloatsUniform("uBlock", new float[] {1f / lowW, 1f / lowH});
-                down.bindAttributesAndUniforms();
-                GLES20.glDrawArrays(GLES20.GL_TRIANGLE_STRIP, 0, 4);
+                pass(down, inputTexId, fboA, aW, aH, "uBlock", 1f / aW, 1f / aH);
+                pass(down, texA, fboB, bW, bH, "uBlock", 1f / bW, 1f / bH);
+                pass(blur, texB, fboC, bW, bH, "uStep", 1f / bW, 0f);
+                pass(blur, texC, fboB, bW, bH, "uStep", 0f, 1f / bH);
 
-                // Pass 2: the frame itself.
+                // Final pass: the frame itself.
                 GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, savedFbo[0]);
                 GLES20.glViewport(savedViewport[0], savedViewport[1], savedViewport[2], savedViewport[3]);
                 fill.use();
                 fill.setSamplerTexIdUniform("uTexSampler", inputTexId, 0);
-                fill.setSamplerTexIdUniform("uLow", lowTex, 1);
+                fill.setSamplerTexIdUniform("uLow", texB, 1);
                 fill.setFloatsUniform("uLo", new float[] {r[0], r[1]});
                 fill.setFloatsUniform("uHi", new float[] {r[2], r[3]});
                 fill.setFloatsUniform("uCoverLo", new float[] {cover[0], cover[1]});
                 fill.setFloatsUniform("uCoverHi", new float[] {cover[2], cover[3]});
                 fill.setFloatsUniform("uOutSize", new float[] {outW, outH});
-                fill.setFloatsUniform("uLowTexel", new float[] {1f / lowW, 1f / lowH});
+                fill.setFloatsUniform("uLowSize", new float[] {bW, bH});
+                fill.setFloatsUniform("uLowTexel", new float[] {1f / bW, 1f / bH});
                 fill.setFloatUniform("uDim", 0.55f);
                 fill.bindAttributesAndUniforms();
                 GLES20.glDrawArrays(GLES20.GL_TRIANGLE_STRIP, 0, 4);
@@ -538,6 +694,7 @@ public final class VideoEnhance {
                 releaseLow();
                 fill.delete();
                 down.delete();
+                blur.delete();
             } catch (GlUtil.GlException e) {
                 throw new VideoFrameProcessingException(e);
             }
