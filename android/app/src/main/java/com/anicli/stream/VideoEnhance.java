@@ -65,6 +65,25 @@ public final class VideoEnhance {
 
     /** Set when the GPU pipeline fails once; effects stay off until the app restarts. */
     private static volatile boolean disabledForSession = false;
+    /** Quick before/after switch (long-press on Enhance) and thermal protection: effects off, settings kept. */
+    private static volatile boolean bypassed = false;
+
+    public static boolean isBypassed() {
+        return bypassed;
+    }
+
+    public static void setBypass(boolean on) {
+        bypassed = on;
+    }
+
+    private static boolean powerSaver(Context c) {
+        try {
+            android.os.PowerManager pm = (android.os.PowerManager) c.getSystemService(Context.POWER_SERVICE);
+            return pm != null && pm.isPowerSaveMode();
+        } catch (Throwable t) {
+            return false;
+        }
+    }
 
     /** State the UI thread updates and the GL thread reads every frame. */
     public static final class Live {
@@ -150,19 +169,23 @@ public final class VideoEnhance {
     }
 
     public static boolean ambientActive(Context c, String title) {
-        return !disabledForSession && getAmbient(c, title);
+        return !disabledForSession && !bypassed && getAmbient(c, title);
     }
 
     /** Builds the effect chain for the current settings; empty when everything is off. */
     public static List<Effect> buildEffects(Context c, boolean animeApp, Live live, String title) {
         List<Effect> effects = new ArrayList<>();
-        if (disabledForSession) return effects;
+        if (disabledForSession || bypassed) return effects;
         int sharpen = getSharpen(c, title);
         boolean vivid = getVivid(c, title);
+        // Battery saver: the heaviest mode drops to plain Anime.
+        if (sharpen == SHARP_ANIME_PLUS && powerSaver(c)) sharpen = SHARP_ANIME;
         // Anime+ cleans compression noise at source resolution before anything is upscaled.
         if (sharpen == SHARP_ANIME_PLUS) effects.add(new DenoiseEffect());
         // The sharpen stage also hosts the colour grade, so it stays in the chain for "Vivid".
         if (sharpen != SHARP_OFF || vivid) effects.add(new SharpenEffect(sharpen, animeApp, vivid, live));
+        // ... and Anime+ refines the lines again at display resolution, where thinning is cleanest.
+        if (sharpen == SHARP_ANIME_PLUS) effects.add(new RefineEffect());
         if (getAmbient(c, title)) effects.add(new AmbientFillEffect(live));
         return effects;
     }
@@ -397,7 +420,7 @@ public final class VideoEnhance {
                 case SHARP_ANIME_PLUS:
                     amount = 1.0f * softness + 0.15f;
                     dark = 0.6f;
-                    thin = inH <= 1080 ? 0.40f * softness + 0.08f : 0f;
+                    thin = inH <= 1080 ? 0.20f * softness + 0.04f : 0f;
                     core = 0.010f;
                     break;
                 case SHARP_ANIME:
@@ -519,6 +542,100 @@ public final class VideoEnhance {
                 program.use();
                 program.setSamplerTexIdUniform("uTexSampler", inputTexId, 0);
                 program.setFloatsUniform("uTexel", new float[] {1f / inW, 1f / inH});
+                program.bindAttributesAndUniforms();
+                GLES20.glDrawArrays(GLES20.GL_TRIANGLE_STRIP, 0, 4);
+                GlUtil.checkGlError();
+            } catch (GlUtil.GlException e) {
+                throw new VideoFrameProcessingException(e, presentationTimeUs);
+            }
+        }
+
+        @Override
+        public void release() throws VideoFrameProcessingException {
+            super.release();
+            try {
+                program.delete();
+            } catch (GlUtil.GlException e) {
+                throw new VideoFrameProcessingException(e);
+            }
+        }
+    }
+
+    // ---------------------------------------------------------------- refine (Anime+)
+
+    // Runs on the upscaled frame: finds edges with a Sobel on luma, nudges each pixel toward the
+    // brighter side of the edge (dark strokes get thinner and crisper than at source resolution),
+    // and clamps to the 3x3 neighbourhood so nothing overshoots.
+    private static final String REFINE_FRAGMENT =
+            "precision highp float;\n"
+            + "uniform sampler2D uTexSampler;\n"
+            + "uniform vec2 uTexel;\n"
+            + "uniform float uStep;\n"
+            + "uniform float uPull;\n"
+            + "varying vec2 vTexSamplingCoord;\n"
+            + "vec3 tap(vec2 uv) { return texture2D(uTexSampler, uv).rgb; }\n"
+            + "float lum(vec3 c) { return dot(c, vec3(0.299, 0.587, 0.114)); }\n"
+            + "void main() {\n"
+            + "  vec2 uv = vTexSamplingCoord;\n"
+            + "  vec2 s = uTexel * uStep;\n"
+            + "  vec3 c00 = tap(uv + vec2(-s.x, -s.y));\n"
+            + "  vec3 c10 = tap(uv + vec2(0.0, -s.y));\n"
+            + "  vec3 c20 = tap(uv + vec2(s.x, -s.y));\n"
+            + "  vec3 c01 = tap(uv + vec2(-s.x, 0.0));\n"
+            + "  vec3 c11 = tap(uv);\n"
+            + "  vec3 c21 = tap(uv + vec2(s.x, 0.0));\n"
+            + "  vec3 c02 = tap(uv + vec2(-s.x, s.y));\n"
+            + "  vec3 c12 = tap(uv + vec2(0.0, s.y));\n"
+            + "  vec3 c22 = tap(uv + vec2(s.x, s.y));\n"
+            + "  float gx = (lum(c20) + 2.0 * lum(c21) + lum(c22)) - (lum(c00) + 2.0 * lum(c01) + lum(c02));\n"
+            + "  float gy = (lum(c02) + 2.0 * lum(c12) + lum(c22)) - (lum(c00) + 2.0 * lum(c10) + lum(c20));\n"
+            + "  vec2 g = vec2(gx, gy) * 0.25;\n"
+            + "  float m = length(g);\n"
+            + "  float k = smoothstep(0.04, 0.28, m);\n"
+            + "  vec3 w = tap(uv + (g / (m + 0.0001)) * k * uPull * s);\n"
+            + "  vec3 lo = min(min(min(c00, c10), min(c20, c01)), min(min(c11, c21), min(c02, min(c12, c22))));\n"
+            + "  vec3 hi = max(max(max(c00, c10), max(c20, c01)), max(max(c11, c21), max(c02, max(c12, c22))));\n"
+            + "  gl_FragColor = vec4(clamp(w, lo, hi), 1.0);\n"
+            + "}\n";
+
+    private static final class RefineEffect implements GlEffect {
+        @Override
+        public GlShaderProgram toGlShaderProgram(Context context, boolean useHdr)
+                throws VideoFrameProcessingException {
+            return new RefineProgram(useHdr);
+        }
+    }
+
+    private static final class RefineProgram extends BaseGlShaderProgram {
+        private final GlProgram program;
+        private int inW = 1;
+        private int inH = 1;
+        private float step = 1f;
+
+        RefineProgram(boolean useHdr) throws VideoFrameProcessingException {
+            super(useHdr, 1);
+            this.program = newProgram(REFINE_FRAGMENT);
+        }
+
+        @Override
+        public Size configure(int inputWidth, int inputHeight) {
+            inW = Math.max(1, inputWidth);
+            inH = Math.max(1, inputHeight);
+            // Anime sources are mostly 480-720 lines: the bigger the upscale, the wider a source line
+            // is in pixels, so the edge probe (and the pull) scale with the frame height.
+            step = Math.max(1f, Math.min(3f, inH / 540f));
+            return new Size(inW, inH);
+        }
+
+        @Override
+        public void drawFrame(int inputTexId, long presentationTimeUs)
+                throws VideoFrameProcessingException {
+            try {
+                program.use();
+                program.setSamplerTexIdUniform("uTexSampler", inputTexId, 0);
+                program.setFloatsUniform("uTexel", new float[] {1f / inW, 1f / inH});
+                program.setFloatUniform("uStep", step);
+                program.setFloatUniform("uPull", 0.55f);
                 program.bindAttributesAndUniforms();
                 GLES20.glDrawArrays(GLES20.GL_TRIANGLE_STRIP, 0, 4);
                 GlUtil.checkGlError();
