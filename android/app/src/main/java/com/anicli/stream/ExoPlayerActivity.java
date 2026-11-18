@@ -139,9 +139,6 @@ public class ExoPlayerActivity extends AppCompatActivity {
     private PlaybackTuner enhanceTuner;
     private PlaybackTuner.StatsBadge enhanceStats;
     private boolean longPressSpeed = false;
-    private int scrollMode = 0;                  // 0 undecided, 1 brightness, 2 volume, 3 horizontal (ignored)
-    private float scrollStartBrightness = 0.5f;
-    private float scrollStartVolume = 0.5f;
     private int enhanceTab = 0;
     private final Runnable hideGestureRunnable = this::hideGestureIndicatorNow;
     private int aspectRatioMode = 0; // 0 = Fit, 1 = Crop, 2 = Fill
@@ -3406,12 +3403,6 @@ public class ExoPlayerActivity extends AppCompatActivity {
 
     private void setupGestures() {
         gestureDetector = new GestureDetector(this, new GestureDetector.SimpleOnGestureListener() {
-            @Override
-            public boolean onDown(MotionEvent e) {
-                scrollMode = 0;
-                return true;
-            }
-
             // Hold anywhere: 2x speed until you let go.
             @Override
             public void onLongPress(MotionEvent e) {
@@ -3419,45 +3410,6 @@ public class ExoPlayerActivity extends AppCompatActivity {
                 longPressSpeed = true;
                 player.setPlaybackSpeed(2f);
                 showGestureIndicator("2x speed");
-            }
-
-            // Vertical swipe: left half brightness, right half volume.
-            @Override
-            public boolean onScroll(MotionEvent e1, MotionEvent e2, float dx, float dy) {
-                if (screenLocked || longPressSpeed || e1 == null || e2 == null || playerView == null) return false;
-                float moveX = e2.getX() - e1.getX();
-                float moveUp = e1.getY() - e2.getY();
-                if (scrollMode == 0) {
-                    if (Math.abs(moveUp) > dp(18) && Math.abs(moveUp) > Math.abs(moveX) * 1.5f) {
-                        scrollMode = e1.getX() < playerView.getWidth() / 2f ? 1 : 2;
-                        scrollStartBrightness = currentBrightness;
-                        if (audioManager != null) {
-                            int max = Math.max(1, audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC));
-                            scrollStartVolume = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC) / (float) max;
-                        }
-                    } else if (Math.abs(moveX) > dp(18)) {
-                        scrollMode = 3;
-                    } else {
-                        return false;
-                    }
-                }
-                if (scrollMode == 3) return false;
-                float fraction = moveUp / Math.max(1f, playerView.getHeight() * 0.7f);
-                if (scrollMode == 1) {
-                    currentBrightness = Math.max(0.02f, Math.min(1f, scrollStartBrightness + fraction));
-                    WindowManager.LayoutParams params = getWindow().getAttributes();
-                    params.screenBrightness = currentBrightness;
-                    getWindow().setAttributes(params);
-                    if (sliderBrightness != null) sliderBrightness.setProgress(Math.round(currentBrightness * 100));
-                    flashGesture("Brightness " + Math.round(currentBrightness * 100) + "%");
-                } else if (audioManager != null) {
-                    float v = Math.max(0f, Math.min(1f, scrollStartVolume + fraction));
-                    int max = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC);
-                    audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, Math.round(v * max), 0);
-                    if (sliderVolume != null) sliderVolume.setProgress(Math.round(v * 100));
-                    flashGesture("Volume " + Math.round(v * 100) + "%");
-                }
-                return true;
             }
 
             @Override
@@ -3543,12 +3495,6 @@ public class ExoPlayerActivity extends AppCompatActivity {
         if (gestureIndicator != null) gestureIndicator.setVisibility(View.GONE);
     }
 
-    private void flashGesture(String text) {
-        showGestureIndicator(text);
-        handler.removeCallbacks(hideGestureRunnable);
-        handler.postDelayed(hideGestureRunnable, 800);
-    }
-
     private void endGestureHold() {
         if (longPressSpeed) {
             longPressSpeed = false;
@@ -3556,7 +3502,6 @@ public class ExoPlayerActivity extends AppCompatActivity {
             handler.removeCallbacks(hideGestureRunnable);
             if (gestureIndicator != null) gestureIndicator.setVisibility(View.GONE);
         }
-        scrollMode = 0;
     }
 
     // Remote controls and keyboards (TV remote, Bluetooth remote, headset buttons): arrows seek,
