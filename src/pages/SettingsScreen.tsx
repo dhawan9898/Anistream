@@ -34,6 +34,7 @@ import {
 const QUALITIES = [
   { id: 'Auto', label: 'Auto' }, { id: '1080p', label: '1080p' }, { id: '720p', label: '720p' }, { id: '480p', label: '480p' }
 ] as const;
+const AUTO_DOWNLOAD_OPTIONS = [{ id: '0', label: 'Off' }, { id: '1', label: '1' }, { id: '2', label: '2' }, { id: '3', label: '3' }] as const;
 const DOWNLOAD_QUALITIES = [{ id: '1080', label: '1080p' }, { id: '720', label: '720p' }, { id: '480', label: '480p' }] as const;
 const HAPTIC_LEVELS: readonly { id: HapticIntensity; label: string }[] = [
   { id: 'low', label: 'Low' }, { id: 'medium', label: 'Medium' }, { id: 'high', label: 'High' }
@@ -231,6 +232,27 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({ active, theme, o
             options={DOWNLOAD_QUALITIES}
             value={prefs.downloadQuality || '720'}
             onSelect={q => { hapticSelection(); updatePrefs({ downloadQuality: q }); }}
+          />
+          <ChoiceRow
+            title="Auto-Download Next Episodes"
+            hint="After half an episode, save the next ones so a binge or a flight is ready"
+            options={AUTO_DOWNLOAD_OPTIONS}
+            value={String(prefs.autoDownloadNext ?? 0)}
+            onSelect={v => { hapticSelection(); updatePrefs({ autoDownloadNext: Number(v) }); }}
+          />
+          <SettingsRow
+            icon={<DownloadCloud size={18} />}
+            title="Wi-Fi Only"
+            hint="Never use mobile data for automatic downloads"
+            onClick={toggle(prefs.autoDownloadWifiOnly !== false, () => updatePrefs({ autoDownloadWifiOnly: prefs.autoDownloadWifiOnly === false }))}
+            trailing={<Switch on={prefs.autoDownloadWifiOnly !== false} label="Wi-Fi Only" />}
+          />
+          <SettingsRow
+            icon={<Download size={18} />}
+            title="Delete After Watching"
+            hint="Free the space once an episode is finished"
+            onClick={toggle(!!prefs.deleteWatched, () => updatePrefs({ deleteWatched: !prefs.deleteWatched }))}
+            trailing={<Switch on={!!prefs.deleteWatched} label="Delete After Watching" />}
           />
         </SettingsSection>
 

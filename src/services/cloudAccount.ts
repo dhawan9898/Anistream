@@ -1,8 +1,21 @@
 // cloudAccount.ts - AniStream's account: what is synced between devices, and when.
+import { Capacitor } from '@capacitor/core';
 import { createCloudSync } from './cloudSync.ts';
+import { ExoPlayerPlugin } from '../plugins/exoPlayerPlugin.ts';
 import { exportBackup, importBackup, subscribeLibraryChanges } from './historyService.ts';
 
 const env = (typeof import.meta !== 'undefined' && (import.meta as { env?: Record<string, string | undefined> }).env) || {};
+
+// The player's Enhance settings live in native preferences; on the web there are none.
+async function readEnhance(): Promise<string | undefined> {
+  if (!Capacitor.isNativePlatform()) return undefined;
+  try { return (await ExoPlayerPlugin.getEnhancePrefs()).json; } catch { return undefined; }
+}
+
+async function writeEnhance(json: string): Promise<void> {
+  if (!Capacitor.isNativePlatform()) return;
+  try { await ExoPlayerPlugin.setEnhancePrefs({ json }); } catch { /* an older native build: ignore */ }
+}
 
 export const cloud = createCloudSync({
   app: 'anistream',
@@ -16,13 +29,22 @@ export const cloud = createCloudSync({
     episodeLog: { type: 'list', key: i => `${i.animeId}|${i.episodeId}`, stamp: i => Number(i.updatedAt) },
     // Sub or dub, remembered per title.
     titleModes: { type: 'map' },
-    preferences: { type: 'blob' }
+    preferences: { type: 'blob' },
+    // Player Enhance settings (sharpening, glow, colour, audio, subtitle look), native only.
+    enhance: { type: 'blob' }
   },
   read: async () => {
     const b = JSON.parse(await exportBackup());
-    return { history: b.history, bookmarks: b.bookmarks, episodeLog: b.episodeLog, titleModes: b.titleModes, preferences: b.preferences };
+    const state: Record<string, unknown> = { history: b.history, bookmarks: b.bookmarks, episodeLog: b.episodeLog, titleModes: b.titleModes, preferences: b.preferences };
+    const enhance = await readEnhance();
+    if (enhance !== undefined) state.enhance = enhance;
+    return state;
   },
-  write: async state => { await importBackup(JSON.stringify({ app: 'AniStream', ...state })); }
+  write: async state => {
+    const { enhance, ...rest } = state;
+    await importBackup(JSON.stringify({ app: 'AniStream', ...rest }));
+    if (typeof enhance === 'string') await writeEnhance(enhance);
+  }
 });
 
 let started = false;

@@ -47,6 +47,19 @@ final class AniSkipClient {
         void onResult(SkipInterval opening, SkipInterval ending);
     }
 
+    interface Callback3 {
+        void onResult(SkipInterval opening, SkipInterval ending, SkipInterval recap);
+    }
+
+    // Same lookup, also reporting the episode's recap ("previously on ...") when AniSkip has one.
+    static void fetchSkipIntervals3(String title, String episodeNumber, long episodeLengthSeconds,
+                                     Handler mainHandler, Callback3 callback) {
+        executor.execute(() -> {
+            SkipInterval[] result = fetchSkipIntervalsSync(title, episodeNumber, episodeLengthSeconds);
+            mainHandler.post(() -> callback.onResult(result[0], result[1], result[2]));
+        });
+    }
+
     // Runs the whole lookup on a background thread and delivers the result
     // on mainHandler (the activity's own Handler, tied to the main Looper).
     static void fetchSkipIntervals(String title, String episodeNumber, long episodeLengthSeconds,
@@ -58,7 +71,7 @@ final class AniSkipClient {
     }
 
     private static SkipInterval[] fetchSkipIntervalsSync(String title, String episodeNumber, long episodeLengthSeconds) {
-        SkipInterval[] none = new SkipInterval[]{null, null};
+        SkipInterval[] none = new SkipInterval[]{null, null, null};
         int epNum;
         try {
             epNum = Integer.parseInt(episodeNumber);
@@ -72,9 +85,9 @@ final class AniSkipClient {
 
         try {
             String url = "https://api.aniskip.com/v2/skip-times/" + malId + "/" + epNum
-                    + "?types[]=op&types[]=ed&episodeLength=" + episodeLengthSeconds;
+                    + "?types[]=op&types[]=ed&types[]=recap&episodeLength=" + episodeLengthSeconds;
             JSONObject data = fetchJson(url);
-            return new SkipInterval[]{extractInterval(data, "op"), extractInterval(data, "ed")};
+            return new SkipInterval[]{extractInterval(data, "op"), extractInterval(data, "ed"), extractInterval(data, "recap")};
         } catch (Exception e) {
             Log.w(TAG, "Skip-time lookup failed", e);
             return none;

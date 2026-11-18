@@ -12,6 +12,7 @@ import { checkForUpdate, fetchReleaseNotes, type UpdateInfo } from './services/u
 import { SharedElementTransitionOverlay } from './components/SharedElementTransitionOverlay';
 import { QuickPreview } from './components/QuickPreview';
 import { startSharedTransition } from './services/sharedTransitionService';
+import { handlePlaybackProgress as autoDownloadOnProgress } from './services/autoDownload';
 import { completedEpisodes, findCompletedDownload, initDownloads, sourceFromDownload, type DownloadRecord } from './services/downloadService';
 import { hapticLight } from './services/hapticsService';
 import { saveSessionProgress, applyPreferredQuality, type PlaybackSession } from './services/playbackSession';
@@ -222,6 +223,8 @@ export const App: React.FC = () => {
   // The latest play request, kept even when it failed before a stream existed (so Retry can repeat it).
   const lastPlayRequestRef = useRef<{ anime: AnimeItem; episode: EpisodeItem; mode: 'sub' | 'dub' } | null>(null);
   nowPlayingRef.current = nowPlaying;
+  // The episode list the native player was last given, for "download the next episodes".
+  const playingEpisodesRef = useRef<EpisodeItem[]>([]);
   const [streamErrorMessage, setStreamErrorMessage] = useState<string | null>(null);
   // Bumped on every play request and whenever the native player is closed,
   // so a slow stream resolution that finishes after the user moved on (or
@@ -442,6 +445,7 @@ export const App: React.FC = () => {
       if (!session || durationMs <= 0) return;
       if (episode !== session.episode.number || (mode && mode !== session.mode)) return;
       saveSessionProgress(session, positionMs / 1000, durationMs / 1000);
+      void autoDownloadOnProgress(session.anime, session.episode, session.mode, playingEpisodesRef.current, positionMs / 1000, durationMs / 1000);
     });
     return () => {
       modeHandle.then(h => h.remove());
@@ -465,7 +469,9 @@ export const App: React.FC = () => {
     episodes: EpisodeItem[],
     startTime: number,
     prefs: UserPreferences
-  ) => ({
+  ) => {
+    playingEpisodesRef.current = episodes;
+    return {
     url: source.streamUrl,
     title: anime.title,
     episode: episode.number,
@@ -498,7 +504,8 @@ export const App: React.FC = () => {
     defaultQuality: prefs.defaultQuality,
     aspectRatio: prefs.aspectRatio || 'fit',
     offline: source.quality === 'Offline'
-  });
+  };
+  };
 
   // The next episode's stream, resolved ahead of time and handed to the
   // native player, which starts it by itself when Next Episode is pressed

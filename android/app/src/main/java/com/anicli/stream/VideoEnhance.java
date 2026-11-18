@@ -70,11 +70,17 @@ public final class VideoEnhance {
     private static final String KEY_AMBIENT = "ambient";
     private static final String KEY_VIVID = "vivid";
     private static final String KEY_AUDIO = "audio";
+    private static final String KEY_SPATIAL = "spatial";
+    private static final String KEY_SUB_SIZE = "subSize";
+    private static final String KEY_SUB_STYLE = "subStyle";
+    private static final String KEY_SUB_POS = "subPos";
+    private static final String KEY_STATS = "stats";
 
     // Audio choices (stored).
     public static final int AUDIO_NORMAL = 0;
     public static final int AUDIO_BOOST = 1;   // louder than the system volume allows, with headroom
     public static final int AUDIO_NIGHT = 2;   // quiet loud parts, lift dialogue (compressor)
+    public static final int AUDIO_DIALOGUE = 3; // speech band lifted, rumble trimmed
 
     /** Set when the GPU pipeline fails once; effects stay off until the app restarts. */
     private static volatile boolean disabledForSession = false;
@@ -107,6 +113,8 @@ public final class VideoEnhance {
         public volatile int fitMode = FIT;
         /** Set by the sharpen stage for the current stream: should the Anime+ refine pass run? */
         public volatile boolean refine = false;
+        /** How much help this stream needs (0.8 clean .. 1.3 starved), from its bits per pixel. */
+        public volatile float strength = 1f;
     }
 
     // ---------------------------------------------------------------- settings
@@ -167,13 +175,144 @@ public final class VideoEnhance {
         SharedPreferences p = prefs(c);
         int v = hasShow(title) ? p.getInt(showKey(title, KEY_AUDIO), p.getInt(KEY_AUDIO, AUDIO_NORMAL))
                 : p.getInt(KEY_AUDIO, AUDIO_NORMAL);
-        return v < AUDIO_NORMAL || v > AUDIO_NIGHT ? AUDIO_NORMAL : v;
+        return v < AUDIO_NORMAL || v > AUDIO_DIALOGUE ? AUDIO_NORMAL : v;
     }
 
     public static void setAudio(Context c, String title, int mode) {
         SharedPreferences.Editor e = prefs(c).edit().putInt(KEY_AUDIO, mode);
         if (hasShow(title)) e.putInt(showKey(title, KEY_AUDIO), mode);
         e.apply();
+    }
+
+    public static boolean getSpatial(Context c, String title) {
+        SharedPreferences p = prefs(c);
+        boolean global = p.getBoolean(KEY_SPATIAL, false);
+        return hasShow(title) ? p.getBoolean(showKey(title, KEY_SPATIAL), global) : global;
+    }
+
+    public static void setSpatial(Context c, String title, boolean on) {
+        SharedPreferences.Editor e = prefs(c).edit().putBoolean(KEY_SPATIAL, on);
+        if (hasShow(title)) e.putBoolean(showKey(title, KEY_SPATIAL), on);
+        e.apply();
+    }
+
+    // Subtitle look: size 0 small / 1 medium / 2 large, style 0 outline / 1 box / 2 shadow,
+    // position 0 low / 1 normal / 2 high. App-wide.
+    public static int getSubSize(Context c) { return prefs(c).getInt(KEY_SUB_SIZE, 1); }
+    public static int getSubStyle(Context c) { return prefs(c).getInt(KEY_SUB_STYLE, 0); }
+    public static int getSubPos(Context c) { return prefs(c).getInt(KEY_SUB_POS, 1); }
+    public static void setSubSize(Context c, int v) { prefs(c).edit().putInt(KEY_SUB_SIZE, v).apply(); }
+    public static void setSubStyle(Context c, int v) { prefs(c).edit().putInt(KEY_SUB_STYLE, v).apply(); }
+    public static void setSubPos(Context c, int v) { prefs(c).edit().putInt(KEY_SUB_POS, v).apply(); }
+
+    /** Applies the saved subtitle size / style / position to a SubtitleView. */
+    public static void applySubtitleStyle(Context c, androidx.media3.ui.SubtitleView view) {
+        if (view == null) return;
+        float[] sizes = {0.045f, 0.058f, 0.075f};
+        float[] pos = {0.02f, 0.08f, 0.16f};
+        int style = getSubStyle(c);
+        androidx.media3.ui.CaptionStyleCompat st;
+        if (style == 1) {
+            st = new androidx.media3.ui.CaptionStyleCompat(android.graphics.Color.WHITE,
+                    android.graphics.Color.argb(190, 0, 0, 0), android.graphics.Color.TRANSPARENT,
+                    androidx.media3.ui.CaptionStyleCompat.EDGE_TYPE_NONE, android.graphics.Color.BLACK, null);
+        } else if (style == 2) {
+            st = new androidx.media3.ui.CaptionStyleCompat(android.graphics.Color.WHITE,
+                    android.graphics.Color.TRANSPARENT, android.graphics.Color.TRANSPARENT,
+                    androidx.media3.ui.CaptionStyleCompat.EDGE_TYPE_DROP_SHADOW, android.graphics.Color.BLACK, null);
+        } else {
+            st = new androidx.media3.ui.CaptionStyleCompat(android.graphics.Color.WHITE,
+                    android.graphics.Color.TRANSPARENT, android.graphics.Color.TRANSPARENT,
+                    androidx.media3.ui.CaptionStyleCompat.EDGE_TYPE_OUTLINE, android.graphics.Color.BLACK, null);
+        }
+        view.setStyle(st);
+        view.setFractionalTextSize(sizes[Math.max(0, Math.min(2, getSubSize(c)))]);
+        view.setBottomPaddingFraction(pos[Math.max(0, Math.min(2, getSubPos(c)))]);
+    }
+
+    // Enhance settings travel with the account (cloud sync): each value is [type, value] so ints,
+    // longs, booleans and strings come back as they were. Audio sync offsets stay on the device
+    // (they belong to that phone's earbuds).
+    public static String exportPrefs(Context c) {
+        org.json.JSONObject out = new org.json.JSONObject();
+        try {
+            for (java.util.Map.Entry<String, ?> e : prefs(c).getAll().entrySet()) {
+                if (KEY_STATS.equals(e.getKey())) continue;
+                Object v = e.getValue();
+                org.json.JSONArray a = new org.json.JSONArray();
+                if (v instanceof Boolean) { a.put("b"); a.put(((Boolean) v).booleanValue()); }
+                else if (v instanceof Integer) { a.put("i"); a.put(((Integer) v).intValue()); }
+                else if (v instanceof Long) { a.put("l"); a.put(((Long) v).longValue()); }
+                else if (v instanceof Float) { a.put("f"); a.put(((Float) v).doubleValue()); }
+                else if (v instanceof String) { a.put("s"); a.put((String) v); }
+                else continue;
+                out.put(e.getKey(), a);
+            }
+        } catch (Exception ignored) { }
+        return out.toString();
+    }
+
+    public static void importPrefs(Context c, String json) {
+        try {
+            org.json.JSONObject in = new org.json.JSONObject(json);
+            SharedPreferences.Editor ed = prefs(c).edit();
+            java.util.Iterator<String> keys = in.keys();
+            while (keys.hasNext()) {
+                String k = keys.next();
+                if (KEY_STATS.equals(k)) continue;
+                org.json.JSONArray a = in.optJSONArray(k);
+                if (a == null || a.length() < 2) continue;
+                switch (a.getString(0)) {
+                    case "b": ed.putBoolean(k, a.getBoolean(1)); break;
+                    case "i": ed.putInt(k, a.getInt(1)); break;
+                    case "l": ed.putLong(k, a.getLong(1)); break;
+                    case "f": ed.putFloat(k, (float) a.getDouble(1)); break;
+                    case "s": ed.putString(k, a.getString(1)); break;
+                    default: break;
+                }
+            }
+            ed.apply();
+        } catch (Exception ignored) { }
+    }
+
+    /** Manual subtitle timing for a show, in ms (positive = text appears later). Per show only. */
+    public static long getSubOffset(Context c, String title) {
+        return hasShow(title) ? prefs(c).getLong(showKey(title, "subOffset"), 0L) : 0L;
+    }
+
+    public static void setSubOffset(Context c, String title, long ms) {
+        if (hasShow(title)) prefs(c).edit().putLong(showKey(title, "subOffset"), ms).apply();
+    }
+
+    public static boolean getStats(Context c) { return prefs(c).getBoolean(KEY_STATS, false); }
+    public static void setStats(Context c, boolean on) { prefs(c).edit().putBoolean(KEY_STATS, on).apply(); }
+
+    // Filled in on the GL thread the first time an effect is configured.
+    private static volatile String gpuName = null;
+
+    private static void captureGpu() {
+        if (gpuName != null) return;
+        try {
+            gpuName = GLES20.glGetString(GLES20.GL_RENDERER);
+        } catch (Throwable ignored) { }
+    }
+
+    /** One line for error reports: what was switched on, and on what hardware. */
+    public static String diagnostics(Context c, boolean animeApp, String title) {
+        return "enhance[sharpen=" + getSharpen(c, title) + " glow=" + getAmbient(c, title)
+                + " vivid=" + getVivid(c, title) + " audio=" + getAudio(c, title)
+                + " spatial=" + getSpatial(c, title) + " bypass=" + bypassed + " disabled=" + disabledForSession
+                + " anime=" + animeApp + "] gpu=" + gpuName + " device=" + android.os.Build.MODEL
+                + " sdk=" + android.os.Build.VERSION.SDK_INT;
+    }
+
+    /** Short status for the stats badge. */
+    public static String statusLine(Context c, String title, Live live) {
+        if (disabledForSession) return "fx off (failed on this device)";
+        if (bypassed) return "fx bypassed";
+        return String.format(java.util.Locale.US, "fx sharpen=%s glow=%s vivid=%s  strength %.2f%s",
+                getSharpen(c, title) == SHARP_OFF ? "off" : "on", getAmbient(c, title) ? "on" : "off",
+                getVivid(c, title) ? "on" : "off", live.strength, live.refine ? "  +refine" : "");
     }
 
     public static boolean isDisabledForSession() {
@@ -204,7 +343,8 @@ public final class VideoEnhance {
         // ... and refine the lines again at display resolution, where thinning is cleanest.
         // Each stage decides per stream whether it has anything to do and otherwise just copies.
         if (on && animeApp) effects.add(new RefineEffect(live));
-        if (getAmbient(c, title)) effects.add(new AmbientFillEffect(live));
+        // Films often carry black bars inside the video itself: only the movie app looks for them.
+        if (getAmbient(c, title)) effects.add(new AmbientFillEffect(live, !animeApp));
         return effects;
     }
 
@@ -217,14 +357,17 @@ public final class VideoEnhance {
     public static final class AudioFx {
         private android.media.audiofx.LoudnessEnhancer loudness;
         private android.media.audiofx.DynamicsProcessing dynamics;
+        private android.media.audiofx.Virtualizer virtualizer;
         private final int mode;
+        private final boolean spatial;
 
-        public AudioFx(int mode) {
+        public AudioFx(int mode, boolean spatial) {
             this.mode = mode;
+            this.spatial = spatial;
         }
 
         public boolean wanted() {
-            return mode != AUDIO_NORMAL;
+            return mode != AUDIO_NORMAL || spatial;
         }
 
         public void attach(int sessionId) {
@@ -235,7 +378,7 @@ public final class VideoEnhance {
                     loudness = new android.media.audiofx.LoudnessEnhancer(sessionId);
                     loudness.setTargetGain(500);   // +5 dB, in millibels
                     loudness.setEnabled(true);
-                } else if (android.os.Build.VERSION.SDK_INT >= 28) {
+                } else if (mode == AUDIO_NIGHT && android.os.Build.VERSION.SDK_INT >= 28) {
                     // Night: a limiter used as a compressor (squash loud scenes) with make-up gain.
                     android.media.audiofx.DynamicsProcessing.Config cfg =
                             new android.media.audiofx.DynamicsProcessing.Config.Builder(
@@ -243,23 +386,54 @@ public final class VideoEnhance {
                                     2, false, 0, false, 0, false, 0, true).build();
                     dynamics = new android.media.audiofx.DynamicsProcessing(0, sessionId, cfg);
                     for (int ch = 0; ch < 2; ch++) {
-                        android.media.audiofx.DynamicsProcessing.Limiter lim =
-                                new android.media.audiofx.DynamicsProcessing.Limiter(
-                                        true, true, 0, 5f, 120f, 4f, -26f, 9f);
-                        dynamics.setLimiterByChannelIndex(ch, lim);
+                        dynamics.setLimiterByChannelIndex(ch, new android.media.audiofx.DynamicsProcessing.Limiter(
+                                true, true, 0, 5f, 120f, 4f, -26f, 9f));
+                    }
+                    dynamics.setEnabled(true);
+                } else if (mode == AUDIO_DIALOGUE && android.os.Build.VERSION.SDK_INT >= 28) {
+                    // Dialogue: trim rumble, lift the speech band (1.5-4.5 kHz), keep peaks in check.
+                    android.media.audiofx.DynamicsProcessing.Config cfg =
+                            new android.media.audiofx.DynamicsProcessing.Config.Builder(
+                                    android.media.audiofx.DynamicsProcessing.VARIANT_FAVOR_FREQUENCY_RESOLUTION,
+                                    2, true, 4, false, 0, false, 0, true).build();
+                    dynamics = new android.media.audiofx.DynamicsProcessing(0, sessionId, cfg);
+                    float[] cutoff = {250f, 1500f, 4500f, 20000f};
+                    float[] gain = {-2f, 2f, 4f, 0f};
+                    for (int ch = 0; ch < 2; ch++) {
+                        for (int b = 0; b < 4; b++) {
+                            dynamics.setPreEqBandByChannelIndex(ch, b,
+                                    new android.media.audiofx.DynamicsProcessing.EqBand(true, cutoff[b], gain[b]));
+                        }
+                        dynamics.setLimiterByChannelIndex(ch, new android.media.audiofx.DynamicsProcessing.Limiter(
+                                true, true, 0, 1f, 60f, 10f, -1f, 0f));
                     }
                     dynamics.setEnabled(true);
                 }
             } catch (Throwable t) {
-                release();
+                try { if (loudness != null) loudness.release(); } catch (Throwable ignored) { }
+                try { if (dynamics != null) dynamics.release(); } catch (Throwable ignored) { }
+                loudness = null;
+                dynamics = null;
+            }
+            if (spatial) {
+                try {
+                    virtualizer = new android.media.audiofx.Virtualizer(0, sessionId);
+                    if (virtualizer.getStrengthSupported()) virtualizer.setStrength((short) 650);
+                    virtualizer.setEnabled(true);
+                } catch (Throwable t) {
+                    try { if (virtualizer != null) virtualizer.release(); } catch (Throwable ignored) { }
+                    virtualizer = null;
+                }
             }
         }
 
         public void release() {
             try { if (loudness != null) loudness.release(); } catch (Throwable ignored) { }
             try { if (dynamics != null) dynamics.release(); } catch (Throwable ignored) { }
+            try { if (virtualizer != null) virtualizer.release(); } catch (Throwable ignored) { }
             loudness = null;
             dynamics = null;
+            virtualizer = null;
         }
     }
 
@@ -302,6 +476,7 @@ public final class VideoEnhance {
             + "uniform float uThin;\n"
             + "uniform float uCore;\n"
             + "uniform float uVivid;\n"
+            + "uniform float uDeblock;\n"
             + "varying vec2 vTexSamplingCoord;\n"
             + "vec3 gMin;\n"
             + "vec3 gMax;\n"
@@ -371,6 +546,10 @@ public final class VideoEnhance {
             + "  float gain = uAmount * (dl < 0.0 ? 1.0 + uDark : 1.0);\n"
             + "  vec3 o = base + vec3(cored * gain);\n"
             + "  o = clamp(o, gMin - 0.02, gMax + 0.02);\n"
+            // Deblock: in dark, flat areas (where compression blocks show most) blend toward the low-pass.
+            + "  float dk = (1.0 - smoothstep(0.06, 0.32, lum(base)))\n"
+            + "           * (1.0 - smoothstep(0.02, 0.07, lum(gMax) - lum(gMin))) * uDeblock;\n"
+            + "  o = mix(o, low, dk * 0.6);\n"
             + "  gl_FragColor = vec4(finish(clamp(o, 0.0, 1.0)), 1.0);\n"
             + "}\n";
 
@@ -411,6 +590,8 @@ public final class VideoEnhance {
         private float dark;
         private float thin;
         private float core;
+        private float deblock;
+        private final boolean hdr;
 
         SharpenProgram(int mode, boolean animeApp, boolean vivid, boolean saver, Live live, boolean useHdr)
                 throws VideoFrameProcessingException {
@@ -419,6 +600,7 @@ public final class VideoEnhance {
             this.animeApp = animeApp;
             this.vivid = vivid;
             this.saver = saver;
+            this.hdr = useHdr;
             this.live = live;
             this.program = newProgram(SHARPEN_FRAGMENT);
         }
@@ -431,7 +613,10 @@ public final class VideoEnhance {
         public Size configure(int inputWidth, int inputHeight) throws VideoFrameProcessingException {
             inW = Math.max(1, inputWidth);
             inH = Math.max(1, inputHeight);
+            captureGpu();
             int level = resolve(inH);
+            // HDR (PQ/HLG) frames pass through untouched: the filters and grade are tuned for SDR.
+            if (hdr) level = SHARP_OFF;
             live.refine = level == LVL_ANIME_PLUS;
             // Strong enough to see on soft sources, gentle on already-crisp ones.
             float softness = inH <= 576 ? 1f : inH <= 720 ? 0.85f : inH <= 1080 ? 0.55f : 0.3f;
@@ -458,7 +643,9 @@ public final class VideoEnhance {
                 default:
                     plain = true;
                     amount = dark = thin = core = 0f;
+                    deblock = 0f;
             }
+            deblock = plain ? 0f : 1f;
             if (plain) return new Size(inW, inH);
             // Upscale (never down) to what the screen can show, so the sharpening works at display
             // resolution instead of after the system stretches a soft frame.
@@ -479,11 +666,13 @@ public final class VideoEnhance {
                 program.setFloatsUniform("uInSize", new float[] {inW, inH});
                 program.setFloatsUniform("uTexel", new float[] {1f / inW, 1f / inH});
                 program.setFloatUniform("uPlain", plain ? 1f : 0f);
-                program.setFloatUniform("uAmount", amount);
+                float strength = Math.max(0.6f, Math.min(1.4f, live.strength));
+                program.setFloatUniform("uAmount", amount * strength);
+                program.setFloatUniform("uDeblock", deblock * Math.min(1.3f, strength));
                 program.setFloatUniform("uDark", dark);
                 program.setFloatUniform("uThin", thin);
                 program.setFloatUniform("uCore", core);
-                program.setFloatUniform("uVivid", vivid ? 1f : 0f);
+                program.setFloatUniform("uVivid", vivid && !hdr ? 1f : 0f);
                 program.bindAttributesAndUniforms();
                 GLES20.glDrawArrays(GLES20.GL_TRIANGLE_STRIP, 0, 4);
                 GlUtil.checkGlError();
@@ -549,6 +738,7 @@ public final class VideoEnhance {
     private static final class DenoiseProgram extends BaseGlShaderProgram {
         private final GlProgram program;
         private final boolean saver;
+        private final boolean hdr;
         private boolean active = false;
         private int inW = 1;
         private int inH = 1;
@@ -556,6 +746,7 @@ public final class VideoEnhance {
         DenoiseProgram(boolean saver, boolean useHdr) throws VideoFrameProcessingException {
             super(useHdr, 1);
             this.saver = saver;
+            this.hdr = useHdr;
             this.program = newProgram(DENOISE_FRAGMENT);
         }
 
@@ -563,7 +754,7 @@ public final class VideoEnhance {
         public Size configure(int inputWidth, int inputHeight) {
             inW = Math.max(1, inputWidth);
             inH = Math.max(1, inputHeight);
-            active = autoLevel(true, saver, inH) == LVL_ANIME_PLUS;
+            active = !hdr && autoLevel(true, saver, inH) == LVL_ANIME_PLUS;
             return new Size(inW, inH);
         }
 
@@ -750,6 +941,7 @@ public final class VideoEnhance {
             + "uniform vec2 uOutSize;\n"
             + "uniform vec2 uLowSize;\n"
             + "uniform vec2 uLowTexel;\n"
+            + "uniform vec4 uContent;\n"
             + "uniform float uDim;\n"
             + "varying vec2 vTexSamplingCoord;\n"
             + "vec3 lowTap(vec2 uv) { return texture2D(uLow, uv).rgb; }\n"
@@ -780,14 +972,14 @@ public final class VideoEnhance {
             + "  vec2 uv = vTexSamplingCoord;\n"
             // Background: the frame zoomed to cover the screen, heavily blurred.
             + "  vec2 bq = clamp((uv - uCoverLo) / (uCoverHi - uCoverLo), 0.0, 1.0);\n"
-            + "  vec3 bg = max(lowCubic(bq), 0.0);\n"
+            + "  vec3 bg = max(lowCubic(mix(uContent.xy, uContent.zw, bq)), 0.0);\n"
             + "  float l = dot(bg, vec3(0.299, 0.587, 0.114));\n"
             + "  bg = mix(vec3(l), bg, 1.2) * uDim;\n"
             + "  vec2 p = uv - 0.5;\n"
             + "  bg *= 1.0 - 0.45 * dot(p, p);\n"
             // Sharp picture, anti-aliased against the rect edge.
             + "  vec2 q = clamp((uv - uLo) / (uHi - uLo), 0.0, 1.0);\n"
-            + "  vec3 fg = texture2D(uTexSampler, q).rgb;\n"
+            + "  vec3 fg = texture2D(uTexSampler, mix(uContent.xy, uContent.zw, q)).rgb;\n"
             + "  float edge = min(min(uv.x - uLo.x, uHi.x - uv.x) * uOutSize.x,\n"
             + "                   min(uv.y - uLo.y, uHi.y - uv.y) * uOutSize.y);\n"
             + "  vec3 c = mix(bg, fg, clamp(edge, 0.0, 1.0));\n"
@@ -799,15 +991,17 @@ public final class VideoEnhance {
 
     private static final class AmbientFillEffect implements GlEffect {
         private final Live live;
+        private final boolean detectBars;
 
-        AmbientFillEffect(Live live) {
+        AmbientFillEffect(Live live, boolean detectBars) {
             this.live = live;
+            this.detectBars = detectBars;
         }
 
         @Override
         public GlShaderProgram toGlShaderProgram(Context context, boolean useHdr)
                 throws VideoFrameProcessingException {
-            return new AmbientFillProgram(live, useHdr);
+            return new AmbientFillProgram(live, detectBars, useHdr);
         }
     }
 
@@ -820,6 +1014,14 @@ public final class VideoEnhance {
         private final GlProgram down;
         private final GlProgram blur;
         private final Live live;
+        private final boolean detectBars;
+        // Visible part of the video in its own UV space (bars baked into films get cropped away).
+        private final float[] content = {0f, 0f, 1f, 1f};
+        private final float[] contentTarget = {0f, 0f, 1f, 1f};
+        private float minTop = 1f, minBottom = 1f, minLeft = 1f, minRight = 1f;
+        private int barSamples = 0;
+        private int frameCount = 0;
+        private java.nio.ByteBuffer pixels;
         private int inW = 1;
         private int inH = 1;
         private int outW = 1;
@@ -829,9 +1031,10 @@ public final class VideoEnhance {
         private final int[] savedFbo = new int[1];
         private final int[] savedViewport = new int[4];
 
-        AmbientFillProgram(Live live, boolean useHdr) throws VideoFrameProcessingException {
+        AmbientFillProgram(Live live, boolean detectBars, boolean useHdr) throws VideoFrameProcessingException {
             super(useHdr, 1);
             this.live = live;
+            this.detectBars = detectBars;
             this.fill = newProgram(FILL_FRAGMENT);
             this.down = newProgram(DOWNSAMPLE_FRAGMENT);
             this.blur = newProgram(BLUR_FRAGMENT);
@@ -841,8 +1044,14 @@ public final class VideoEnhance {
         public Size configure(int inputWidth, int inputHeight) throws VideoFrameProcessingException {
             inW = Math.max(1, inputWidth);
             inH = Math.max(1, inputHeight);
+            captureGpu();
             float screen = live.fullAspect > 0f ? live.fullAspect : live.viewAspect;
             float video = inW / (float) inH;
+            // A new stream (or rendition) starts the bar search over.
+            for (int i = 0; i < 4; i++) { content[i] = i < 2 ? 0f : 1f; contentTarget[i] = content[i]; }
+            minTop = minBottom = minLeft = minRight = 1f;
+            barSamples = 0;
+            frameCount = 0;
             // Output has the screen's shape and keeps the picture's resolution along its long side.
             if (screen > video * 1.01f) {
                 outH = inH;
@@ -863,6 +1072,7 @@ public final class VideoEnhance {
             aH = Math.max(16, Math.min(512, Math.round(A_W / video)));
             bW = B_W;
             bH = Math.max(8, Math.min(256, Math.round(B_W / video)));
+            pixels = detectBars ? java.nio.ByteBuffer.allocateDirect(aW * aH * 4) : null;
             try {
                 releaseLow();
                 texA = GlUtil.createTexture(aW, aH, /* useHighPrecisionColorComponents= */ false);
@@ -904,7 +1114,8 @@ public final class VideoEnhance {
             try {
                 // Rects in output UV space for the live view shape and fit mode.
                 float a = live.viewAspect > 0f ? live.viewAspect : (float) outW / outH;
-                float v = inW / (float) inH;
+                // Aspect of the visible picture (bars cropped), not of the raw frame.
+                float v = (inW / (float) inH) * ((content[2] - content[0]) / Math.max(0.05f, content[3] - content[1]));
                 float[] fit = fitRect(a, v, FIT);
                 float[] cover = fitRect(a, v, CROP);
                 float[] r = live.fitMode == CROP ? cover : live.fitMode == FILL
@@ -914,6 +1125,10 @@ public final class VideoEnhance {
                 GLES20.glGetIntegerv(GLES20.GL_FRAMEBUFFER_BINDING, savedFbo, 0);
                 GLES20.glGetIntegerv(GLES20.GL_VIEWPORT, savedViewport, 0);
                 pass(down, inputTexId, fboA, aW, aH, "uBlock", 1f / aW, 1f / aH);
+                if (detectBars) {
+                    if (frameCount++ % 10 == 0) sampleBars();
+                    for (int i = 0; i < 4; i++) content[i] += (contentTarget[i] - content[i]) * 0.06f;
+                }
                 pass(down, texA, fboB, bW, bH, "uBlock", 1f / bW, 1f / bH);
                 pass(blur, texB, fboC, bW, bH, "uStep", 1f / bW, 0f);
                 pass(blur, texC, fboB, bW, bH, "uStep", 0f, 1f / bH);
@@ -931,6 +1146,7 @@ public final class VideoEnhance {
                 fill.setFloatsUniform("uOutSize", new float[] {outW, outH});
                 fill.setFloatsUniform("uLowSize", new float[] {bW, bH});
                 fill.setFloatsUniform("uLowTexel", new float[] {1f / bW, 1f / bH});
+                fill.setFloatsUniform("uContent", new float[] {content[0], content[1], content[2], content[3]});
                 fill.setFloatUniform("uDim", 0.55f);
                 fill.bindAttributesAndUniforms();
                 GLES20.glDrawArrays(GLES20.GL_TRIANGLE_STRIP, 0, 4);
@@ -938,6 +1154,55 @@ public final class VideoEnhance {
             } catch (GlUtil.GlException e) {
                 throw new VideoFrameProcessingException(e, presentationTimeUs);
             }
+        }
+
+        /**
+         * Looks for black bars baked into the video, using the small box-filtered copy (fboA is still
+         * bound). Only ever shrinks the estimate over time, so dark scenes (which look like wide bars)
+         * cannot crop real picture: a true bar is black in every frame, a dark scene is not.
+         */
+        private void sampleBars() {
+            try {
+                pixels.clear();
+                GLES20.glReadPixels(0, 0, aW, aH, GLES20.GL_RGBA, GLES20.GL_UNSIGNED_BYTE, pixels);
+                int[] rowMax = new int[aH];
+                int[] colMax = new int[aW];
+                for (int y = 0; y < aH; y++) {
+                    for (int x = 0; x < aW; x++) {
+                        int i = (y * aW + x) * 4;
+                        int m = Math.max(pixels.get(i) & 0xFF, Math.max(pixels.get(i + 1) & 0xFF, pixels.get(i + 2) & 0xFF));
+                        if (m > rowMax[y]) rowMax[y] = m;
+                        if (m > colMax[x]) colMax[x] = m;
+                    }
+                }
+                final int black = 14;
+                int bottom = 0;
+                while (bottom < aH && rowMax[bottom] < black) bottom++;
+                if (bottom >= aH) return;   // a fully black frame says nothing
+                int top = 0;
+                while (top < aH && rowMax[aH - 1 - top] < black) top++;
+                int left = 0;
+                while (left < aW && colMax[left] < black) left++;
+                int right = 0;
+                while (right < aW && colMax[aW - 1 - right] < black) right++;
+                minBottom = Math.min(minBottom, bottom / (float) aH);
+                minTop = Math.min(minTop, top / (float) aH);
+                minLeft = Math.min(minLeft, left / (float) aW);
+                minRight = Math.min(minRight, right / (float) aW);
+                barSamples++;
+                if (barSamples >= 6) {
+                    contentTarget[0] = bar(minLeft);
+                    contentTarget[1] = bar(minBottom);
+                    contentTarget[2] = 1f - bar(minRight);
+                    contentTarget[3] = 1f - bar(minTop);
+                }
+            } catch (Throwable ignored) {
+                // Detection is a nicety: never let it break rendering.
+            }
+        }
+
+        private static float bar(float fraction) {
+            return fraction < 0.02f ? 0f : Math.min(fraction, 0.35f);
         }
 
         /** Where the picture lands in a frame shaped like the view (screen aspect a, video aspect v). */

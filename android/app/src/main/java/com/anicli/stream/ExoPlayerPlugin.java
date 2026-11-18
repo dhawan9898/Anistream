@@ -17,6 +17,21 @@ public class ExoPlayerPlugin extends Plugin {
     // done natively.
     private static ExoPlayerPlugin activeInstance;
 
+    // Enhance settings for cloud sync (see cloudAccount.ts): read as JSON, write back the merged copy.
+    @PluginMethod
+    public void getEnhancePrefs(PluginCall call) {
+        JSObject ret = new JSObject();
+        ret.put("json", VideoEnhance.exportPrefs(getContext()));
+        call.resolve(ret);
+    }
+
+    @PluginMethod
+    public void setEnhancePrefs(PluginCall call) {
+        String json = call.getString("json");
+        if (json != null) VideoEnhance.importPrefs(getContext(), json);
+        call.resolve();
+    }
+
     @PluginMethod
     public void play(PluginCall call) {
         Intent intent = buildPlayIntent(call);

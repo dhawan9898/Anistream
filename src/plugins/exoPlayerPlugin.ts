@@ -130,6 +130,10 @@ export interface ExoPlayerPluginInterface {
   /** Moves the player's own stream lookups to the site's new address (see siteConfig.ts). */
   setSiteHost(options: { host: string }): Promise<void>;
 
+  /** Enhance settings as JSON, for syncing between devices (native only). */
+  getEnhancePrefs(): Promise<{ json: string }>;
+  setEnhancePrefs(options: { json: string }): Promise<void>;
+
   addListener(
     eventName: 'playerClosed',
     listenerFunc: () => void

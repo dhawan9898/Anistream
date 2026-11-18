@@ -24,6 +24,11 @@ export interface UserPreferences {
   aspectRatio?: 'fit' | 'crop' | 'fill';
   // Highest video height (px) fetched by Downloads.
   downloadQuality?: '1080' | '720' | '480';
+  // After half an episode, download this many of the next ones (0 = off). Wi-Fi only unless false.
+  autoDownloadNext?: number;
+  autoDownloadWifiOnly?: boolean;
+  // Remove an episode's download once it has been watched to the end.
+  deleteWatched?: boolean;
   // Bumped when a default changes, so old saved copies of it are reset once.
   prefsVersion?: number;
 }
@@ -54,6 +59,9 @@ export const DEFAULT_PREFERENCES: UserPreferences = {
   subtitlesEnabled: true,
   aspectRatio: 'fit',
   downloadQuality: '720',
+  autoDownloadNext: 0,
+  autoDownloadWifiOnly: true,
+  deleteWatched: false,
   prefsVersion: PREFS_VERSION
 };
 
