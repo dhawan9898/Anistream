@@ -28,7 +28,7 @@ interface TmdbSearchTv { results?: { id: number; name?: string; original_name?: 
 interface TmdbGroupList { results?: TmdbGroupSummary[] }
 interface TmdbGroupDetails { groups?: { name: string; order: number; episodes: { order: number; season_number?: number; episode_number?: number }[] }[] }
 
-const DEFAULT_TMDB_API_KEY = 'd56cb07bf9500bb94de196e6b7ae1967';
+const DEFAULT_TMDB_API_KEY = ''; // supplied at build time from the TMDB_API_KEY secret, never committed
 
 function apiKey(): string | undefined {
   try {

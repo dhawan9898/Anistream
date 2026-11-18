@@ -330,4 +330,3 @@ export function createCloudSync(options: CloudSyncOptions) {
   };
 }
 
-export type CloudSync = ReturnType<typeof createCloudSync>;

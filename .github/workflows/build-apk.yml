@@ -57,7 +57,7 @@ jobs:
             android/gradle/wrapper/gradle-wrapper.properties
 
       - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
+        uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407 # v3
         with:
           packages: 'platform-tools'
 
@@ -130,7 +130,7 @@ jobs:
       - name: Build Web Production Bundle
         run: npm run build
         env:
-          VITE_TMDB_API_KEY: ${{ secrets.TMDB_API_KEY || 'd56cb07bf9500bb94de196e6b7ae1967' }}
+          VITE_TMDB_API_KEY: ${{ secrets.TMDB_API_KEY }}
           # Sign-in and sync (see supabase/schema.sql). Both values are public by design; without
           # them the account section stays hidden.
           VITE_SUPABASE_URL: ${{ vars.SUPABASE_URL }}
@@ -142,39 +142,29 @@ jobs:
       - name: Make Gradlew Executable
         run: chmod +x android/gradlew
 
-      # The release key lives in repository secrets (KEYSTORE_BASE64 = base64 of the keystore,
-      # KEYSTORE_PASSWORD, KEY_ALIAS, KEY_PASSWORD), never in the repository. Every release must be
-      # signed with it, or Android refuses to install the APK over the previous version.
-      - name: Restore signing key
+      # Gradle builds the release APK unsigned; the signing (with key rotation, see
+      # .github/scripts/sign-apk.sh) happens right after. The keys live in repository secrets only
+      # (KEYSTORE_BASE64, KEYSTORE_PASSWORD, KEY_ALIAS, OLD_KEYSTORE_BASE64, OLD_KEYSTORE_PASSWORD,
+      # OLD_KEY_ALIAS, LINEAGE_BASE64), never in the repository.
+      - name: Build Android APK (release, minified, unsigned)
+        working-directory: ./android
+        run: ./gradlew assembleRelease --stacktrace
+
+      - name: Align and sign APK
         env:
           KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
-        run: |
-          if [ -z "$KEYSTORE_BASE64" ]; then
-            echo "::error::The KEYSTORE_BASE64 secret is not set: the release cannot be signed."
-            exit 1
-          fi
-          echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.keystore"
-          echo "KEYSTORE_FILE=$RUNNER_TEMP/release.keystore" >> "$GITHUB_ENV"
-
-      # Minified (R8) + resource-shrunk release build, signed with the same
-      # key as every earlier release so it installs as an in-place update.
-      - name: Build Android APK (release, minified)
-        working-directory: ./android
-        env:
           KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
           KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
-          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+          OLD_KEYSTORE_BASE64: ${{ secrets.OLD_KEYSTORE_BASE64 }}
+          OLD_KEYSTORE_PASSWORD: ${{ secrets.OLD_KEYSTORE_PASSWORD }}
+          OLD_KEY_ALIAS: ${{ secrets.OLD_KEY_ALIAS }}
+          LINEAGE_BASE64: ${{ secrets.LINEAGE_BASE64 }}
         run: |
-          ./gradlew assembleRelease --stacktrace
-          rm -f "$RUNNER_TEMP/release.keystore"
-          BT=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)
-          "$BT/apksigner" verify app/build/outputs/apk/release/app-release.apk
+          UNSIGNED=$(ls android/app/build/outputs/apk/release/*.apk | head -1)
+          bash .github/scripts/sign-apk.sh "$UNSIGNED" "build-output/AniStream-v${{ steps.version.outputs.version }}.apk"
 
       - name: Package APK for Release
-        run: |
-          mkdir -p build-output
-          cp android/app/build/outputs/apk/release/app-release.apk "build-output/AniStream-v${{ steps.version.outputs.version }}.apk"
-          ls -lh build-output
+        run: ls -lh build-output
 
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
@@ -198,10 +188,11 @@ jobs:
       # replace anything.
       - name: Replace Existing Release (manual runs only)
         if: github.event_name == 'workflow_dispatch' && inputs.release_tag != ''
-        run: gh release delete "${{ inputs.release_tag }}" --cleanup-tag --yes || true
         env:
+          RELEASE_TAG: ${{ inputs.release_tag }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
+        run: gh release delete "$RELEASE_TAG" --cleanup-tag --yes || true
 
       # Release notes: every commit since the previous release (a push can carry
       # several), newest first, without the co-author trailers.
@@ -224,7 +215,7 @@ jobs:
       # so publishing from a push to main cannot loop.
       - name: Create GitHub Release
         if: steps.version.outputs.release == 'true'
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
           files: build-output/AniStream-v${{ steps.version.outputs.version }}.apk
           tag_name: ${{ steps.version.outputs.tag }}

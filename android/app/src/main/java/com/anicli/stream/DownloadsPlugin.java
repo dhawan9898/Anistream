@@ -214,6 +214,20 @@ public class DownloadsPlugin extends Plugin {
             f.delete();
     }
 
+    /** Updates are only ever installed from GitHub releases: https, and a GitHub host. */
+    private static boolean isTrustedApkUrl(String url) {
+        try {
+            java.net.URI uri = java.net.URI.create(url);
+            String host = uri.getHost();
+            if (!"https".equalsIgnoreCase(uri.getScheme()) || host == null) return false;
+            host = host.toLowerCase(java.util.Locale.ROOT);
+            return host.equals("github.com") || host.endsWith(".github.com")
+                    || host.equals("githubusercontent.com") || host.endsWith(".githubusercontent.com");
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
     /**
      * Download an APK from url and trigger Android package installation sheet.
      */
@@ -222,6 +236,10 @@ public class DownloadsPlugin extends Plugin {
         final String apkUrl = call.getString("url");
         if (apkUrl == null || apkUrl.isEmpty()) {
             call.reject("url is required");
+            return;
+        }
+        if (!isTrustedApkUrl(apkUrl)) {
+            call.reject("Updates can only be downloaded from GitHub over https.");
             return;
         }
 
@@ -234,22 +252,34 @@ public class DownloadsPlugin extends Plugin {
                     apkFile.delete();
                 }
 
-                HttpURLConnection conn = (HttpURLConnection) new URL(apkUrl).openConnection();
-                conn.setInstanceFollowRedirects(true);
-                conn.setConnectTimeout(15_000);
-                conn.setReadTimeout(30_000);
-                conn.setRequestProperty("User-Agent", "Mozilla/5.0 (Linux; Android 14) AniStream");
-                conn.connect();
-
-                int responseCode = conn.getResponseCode();
-                if (responseCode == HttpURLConnection.HTTP_MOVED_PERM || responseCode == HttpURLConnection.HTTP_MOVED_TEMP || responseCode == 307 || responseCode == 308) {
-                    String newUrl = conn.getHeaderField("Location");
-                    conn.disconnect();
-                    conn = (HttpURLConnection) new URL(newUrl).openConnection();
+                // Follow redirects by hand (GitHub hands the file to its CDN) and only through GitHub hosts
+                // over https, so a tampered link cannot make the app fetch an APK from anywhere else.
+                String currentUrl = apkUrl;
+                HttpURLConnection conn = null;
+                for (int hop = 0; hop < 5; hop++) {
+                    conn = (HttpURLConnection) new URL(currentUrl).openConnection();
+                    conn.setInstanceFollowRedirects(false);
                     conn.setConnectTimeout(15_000);
                     conn.setReadTimeout(30_000);
                     conn.setRequestProperty("User-Agent", "Mozilla/5.0 (Linux; Android 14) AniStream");
                     conn.connect();
+                    int code = conn.getResponseCode();
+                    if (code == 301 || code == 302 || code == 303 || code == 307 || code == 308) {
+                        String next = conn.getHeaderField("Location");
+                        conn.disconnect();
+                        if (next == null || !isTrustedApkUrl(next)) {
+                            call.reject("The update link redirected somewhere that is not GitHub. Will not install.");
+                            return;
+                        }
+                        currentUrl = next;
+                        conn = null;
+                        continue;
+                    }
+                    break;
+                }
+                if (conn == null) {
+                    call.reject("Too many redirects while downloading the update.");
+                    return;
                 }
 
                 long fileLength = conn.getContentLengthLong();

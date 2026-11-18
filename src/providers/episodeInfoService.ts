@@ -8,7 +8,7 @@ import type { AnimeItem } from './aniCliCore';
 import { trimOldest } from './boundedCache.ts';
 
 const TMDB = 'https://api.themoviedb.org/3';
-const DEFAULT_TMDB_API_KEY = 'd56cb07bf9500bb94de196e6b7ae1967';
+const DEFAULT_TMDB_API_KEY = ''; // supplied at build time from the TMDB_API_KEY secret, never committed
 const KITSU = 'https://kitsu.app/api/edge';
 const HEADERS = { Accept: 'application/vnd.api+json' };
 const NUMBERS_PER_REQUEST = 20;

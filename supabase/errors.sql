@@ -48,6 +48,11 @@ begin
   ) >= 300 then
     return null;
   end if;
+  -- Session ids are chosen by the sender, so also cap the table as a whole: a flood from many fake
+  -- sessions cannot fill it. Normal traffic is a small fraction of this.
+  if (select count(*) from public.app_errors where created_at > now() - interval '1 minute') >= 600 then
+    return null;
+  end if;
   return new;
 end $$;
 
