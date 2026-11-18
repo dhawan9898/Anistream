@@ -1627,7 +1627,7 @@ public class ExoPlayerActivity extends AppCompatActivity {
         enhanceAudio = null;
         if (player != null) {
             try {
-                final VideoEnhance.AudioFx audioFx = new VideoEnhance.AudioFx(VideoEnhance.getAudio(this));
+                final VideoEnhance.AudioFx audioFx = new VideoEnhance.AudioFx(VideoEnhance.getAudio(this, animeTitle));
                 if (audioFx.wanted()) {
                     enhanceAudio = audioFx;
                     player.addListener(new Player.Listener() {
@@ -1644,11 +1644,11 @@ public class ExoPlayerActivity extends AppCompatActivity {
             try {
                 updateEnhanceViewMetrics();
                 java.util.List<androidx.media3.common.Effect> effects =
-                        VideoEnhance.buildEffects(this, ENHANCE_ANIME_APP, enhanceLive);
+                        VideoEnhance.buildEffects(this, ENHANCE_ANIME_APP, enhanceLive, animeTitle);
                 if (!effects.isEmpty()) {
                     player.setVideoEffects(effects);
                     enhanceEffectsOn = true;
-                    enhanceAmbientOn = VideoEnhance.ambientActive(this);
+                    enhanceAmbientOn = VideoEnhance.ambientActive(this, animeTitle);
                 }
             } catch (Throwable t) {
                 Log.w(TAG, "Video effects unavailable", t);
@@ -1696,65 +1696,69 @@ public class ExoPlayerActivity extends AppCompatActivity {
         columns.setOrientation(LinearLayout.HORIZONTAL);
         columns.setPadding(0, dp(8), dp(40), 0);
 
-        int sharpen = VideoEnhance.getSharpen(this);
+        int sharpen = VideoEnhance.getSharpen(this, animeTitle);
         java.util.List<MenuRow> sharpRows = new java.util.ArrayList<>();
         sharpRows.add(new MenuRow("Auto", sharpen == VideoEnhance.SHARP_AUTO, () -> {
-            VideoEnhance.setSharpen(this, VideoEnhance.SHARP_AUTO);
+            VideoEnhance.setSharpen(this, animeTitle, VideoEnhance.SHARP_AUTO);
             scheduleEnhanceRebuild();
         }));
         sharpRows.add(new MenuRow("Off", sharpen == VideoEnhance.SHARP_OFF, () -> {
-            VideoEnhance.setSharpen(this, VideoEnhance.SHARP_OFF);
+            VideoEnhance.setSharpen(this, animeTitle, VideoEnhance.SHARP_OFF);
             scheduleEnhanceRebuild();
         }));
         sharpRows.add(new MenuRow("Sharp", sharpen == VideoEnhance.SHARP_SHARP, () -> {
-            VideoEnhance.setSharpen(this, VideoEnhance.SHARP_SHARP);
+            VideoEnhance.setSharpen(this, animeTitle, VideoEnhance.SHARP_SHARP);
             scheduleEnhanceRebuild();
         }));
         sharpRows.add(new MenuRow("Anime", sharpen == VideoEnhance.SHARP_ANIME, () -> {
-            VideoEnhance.setSharpen(this, VideoEnhance.SHARP_ANIME);
+            VideoEnhance.setSharpen(this, animeTitle, VideoEnhance.SHARP_ANIME);
+            scheduleEnhanceRebuild();
+        }));
+        sharpRows.add(new MenuRow("Anime+", sharpen == VideoEnhance.SHARP_ANIME_PLUS, () -> {
+            VideoEnhance.setSharpen(this, animeTitle, VideoEnhance.SHARP_ANIME_PLUS);
             scheduleEnhanceRebuild();
         }));
         columns.addView(buildOptionColumn("Sharpening", sharpRows),
                 new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, 1f));
 
-        boolean ambient = VideoEnhance.getAmbient(this);
+        boolean ambient = VideoEnhance.getAmbient(this, animeTitle);
         java.util.List<MenuRow> fillRows = new java.util.ArrayList<>();
         fillRows.add(new MenuRow("Glow", ambient, () -> {
-            VideoEnhance.setAmbient(this, true);
+            VideoEnhance.setAmbient(this, animeTitle, true);
             scheduleEnhanceRebuild();
         }));
         fillRows.add(new MenuRow("Black", !ambient, () -> {
-            VideoEnhance.setAmbient(this, false);
+            VideoEnhance.setAmbient(this, animeTitle, false);
             scheduleEnhanceRebuild();
         }));
         columns.addView(buildOptionColumn("Side bars", fillRows),
                 new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, 1f));
 
-        boolean vivid = VideoEnhance.getVivid(this);
+        boolean vivid = VideoEnhance.getVivid(this, animeTitle);
         java.util.List<MenuRow> colourRows = new java.util.ArrayList<>();
         colourRows.add(new MenuRow("Natural", !vivid, () -> {
-            VideoEnhance.setVivid(this, false);
+            VideoEnhance.setVivid(this, animeTitle, false);
             scheduleEnhanceRebuild();
         }));
         colourRows.add(new MenuRow("Vivid", vivid, () -> {
-            VideoEnhance.setVivid(this, true);
+            VideoEnhance.setVivid(this, animeTitle, true);
             scheduleEnhanceRebuild();
         }));
         columns.addView(buildOptionColumn("Colour", colourRows),
                 new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, 1f));
 
-        int audio = VideoEnhance.getAudio(this);
+        int audio = VideoEnhance.getAudio(this, animeTitle);
         java.util.List<MenuRow> audioRows = new java.util.ArrayList<>();
         audioRows.add(new MenuRow("Normal", audio == VideoEnhance.AUDIO_NORMAL, () -> {
-            VideoEnhance.setAudio(this, VideoEnhance.AUDIO_NORMAL);
+            VideoEnhance.setAudio(this, animeTitle, VideoEnhance.AUDIO_NORMAL);
             scheduleEnhanceRebuild();
         }));
         audioRows.add(new MenuRow("Boost", audio == VideoEnhance.AUDIO_BOOST, () -> {
-            VideoEnhance.setAudio(this, VideoEnhance.AUDIO_BOOST);
+            VideoEnhance.setAudio(this, animeTitle, VideoEnhance.AUDIO_BOOST);
             scheduleEnhanceRebuild();
         }));
         audioRows.add(new MenuRow("Night", audio == VideoEnhance.AUDIO_NIGHT, () -> {
-            VideoEnhance.setAudio(this, VideoEnhance.AUDIO_NIGHT);
+            VideoEnhance.setAudio(this, animeTitle, VideoEnhance.AUDIO_NIGHT);
             scheduleEnhanceRebuild();
         }));
         columns.addView(buildOptionColumn("Audio", audioRows),

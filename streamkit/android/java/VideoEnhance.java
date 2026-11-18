@@ -45,6 +45,7 @@ public final class VideoEnhance {
     public static final int SHARP_OFF = 1;
     public static final int SHARP_SHARP = 2;  // natural-looking, any content
     public static final int SHARP_ANIME = 3;  // line-art restoration
+    public static final int SHARP_ANIME_PLUS = 4;  // + edge-preserving denoise first, stronger lines
 
     // Fit modes the fill shader understands (same order as the player's Fit / Crop / Fill button).
     public static final int FIT = 0;
@@ -80,38 +81,64 @@ public final class VideoEnhance {
         return c.getApplicationContext().getSharedPreferences(PREFS, Context.MODE_PRIVATE);
     }
 
-    public static int getSharpen(Context c) {
-        int v = prefs(c).getInt(KEY_SHARPEN, SHARP_AUTO);
-        return v < SHARP_AUTO || v > SHARP_ANIME ? SHARP_AUTO : v;
+    // Per-show memory: a choice made while watching a title is remembered for that title, and also
+    // becomes the default other titles start from.
+    private static String showKey(String title, String name) {
+        return "show:" + title.trim().toLowerCase(java.util.Locale.ROOT) + ":" + name;
     }
 
-    public static void setSharpen(Context c, int mode) {
-        prefs(c).edit().putInt(KEY_SHARPEN, mode).apply();
+    private static boolean hasShow(String title) {
+        return title != null && !title.trim().isEmpty();
     }
 
-    public static boolean getAmbient(Context c) {
-        return prefs(c).getBoolean(KEY_AMBIENT, true);
+    public static int getSharpen(Context c, String title) {
+        SharedPreferences p = prefs(c);
+        int v = hasShow(title) ? p.getInt(showKey(title, KEY_SHARPEN), p.getInt(KEY_SHARPEN, SHARP_AUTO))
+                : p.getInt(KEY_SHARPEN, SHARP_AUTO);
+        return v < SHARP_AUTO || v > SHARP_ANIME_PLUS ? SHARP_AUTO : v;
     }
 
-    public static void setAmbient(Context c, boolean on) {
-        prefs(c).edit().putBoolean(KEY_AMBIENT, on).apply();
+    public static void setSharpen(Context c, String title, int mode) {
+        SharedPreferences.Editor e = prefs(c).edit().putInt(KEY_SHARPEN, mode);
+        if (hasShow(title)) e.putInt(showKey(title, KEY_SHARPEN), mode);
+        e.apply();
     }
 
-    public static boolean getVivid(Context c) {
-        return prefs(c).getBoolean(KEY_VIVID, false);
+    public static boolean getAmbient(Context c, String title) {
+        SharedPreferences p = prefs(c);
+        boolean global = p.getBoolean(KEY_AMBIENT, true);
+        return hasShow(title) ? p.getBoolean(showKey(title, KEY_AMBIENT), global) : global;
     }
 
-    public static void setVivid(Context c, boolean on) {
-        prefs(c).edit().putBoolean(KEY_VIVID, on).apply();
+    public static void setAmbient(Context c, String title, boolean on) {
+        SharedPreferences.Editor e = prefs(c).edit().putBoolean(KEY_AMBIENT, on);
+        if (hasShow(title)) e.putBoolean(showKey(title, KEY_AMBIENT), on);
+        e.apply();
     }
 
-    public static int getAudio(Context c) {
-        int v = prefs(c).getInt(KEY_AUDIO, AUDIO_NORMAL);
+    public static boolean getVivid(Context c, String title) {
+        SharedPreferences p = prefs(c);
+        boolean global = p.getBoolean(KEY_VIVID, false);
+        return hasShow(title) ? p.getBoolean(showKey(title, KEY_VIVID), global) : global;
+    }
+
+    public static void setVivid(Context c, String title, boolean on) {
+        SharedPreferences.Editor e = prefs(c).edit().putBoolean(KEY_VIVID, on);
+        if (hasShow(title)) e.putBoolean(showKey(title, KEY_VIVID), on);
+        e.apply();
+    }
+
+    public static int getAudio(Context c, String title) {
+        SharedPreferences p = prefs(c);
+        int v = hasShow(title) ? p.getInt(showKey(title, KEY_AUDIO), p.getInt(KEY_AUDIO, AUDIO_NORMAL))
+                : p.getInt(KEY_AUDIO, AUDIO_NORMAL);
         return v < AUDIO_NORMAL || v > AUDIO_NIGHT ? AUDIO_NORMAL : v;
     }
 
-    public static void setAudio(Context c, int mode) {
-        prefs(c).edit().putInt(KEY_AUDIO, mode).apply();
+    public static void setAudio(Context c, String title, int mode) {
+        SharedPreferences.Editor e = prefs(c).edit().putInt(KEY_AUDIO, mode);
+        if (hasShow(title)) e.putInt(showKey(title, KEY_AUDIO), mode);
+        e.apply();
     }
 
     public static boolean isDisabledForSession() {
@@ -122,23 +149,21 @@ public final class VideoEnhance {
         disabledForSession = true;
     }
 
-    public static boolean ambientActive(Context c) {
-        return !disabledForSession && getAmbient(c);
-    }
-
-    public static boolean anyActive(Context c) {
-        return !disabledForSession && (getAmbient(c) || getVivid(c) || getSharpen(c) != SHARP_OFF);
+    public static boolean ambientActive(Context c, String title) {
+        return !disabledForSession && getAmbient(c, title);
     }
 
     /** Builds the effect chain for the current settings; empty when everything is off. */
-    public static List<Effect> buildEffects(Context c, boolean animeApp, Live live) {
+    public static List<Effect> buildEffects(Context c, boolean animeApp, Live live, String title) {
         List<Effect> effects = new ArrayList<>();
         if (disabledForSession) return effects;
-        int sharpen = getSharpen(c);
-        boolean vivid = getVivid(c);
+        int sharpen = getSharpen(c, title);
+        boolean vivid = getVivid(c, title);
+        // Anime+ cleans compression noise at source resolution before anything is upscaled.
+        if (sharpen == SHARP_ANIME_PLUS) effects.add(new DenoiseEffect());
         // The sharpen stage also hosts the colour grade, so it stays in the chain for "Vivid".
         if (sharpen != SHARP_OFF || vivid) effects.add(new SharpenEffect(sharpen, animeApp, vivid, live));
-        if (getAmbient(c)) effects.add(new AmbientFillEffect(live));
+        if (getAmbient(c, title)) effects.add(new AmbientFillEffect(live));
         return effects;
     }
 
@@ -369,6 +394,12 @@ public final class VideoEnhance {
             float softness = inH <= 576 ? 1f : inH <= 720 ? 0.85f : inH <= 1080 ? 0.55f : 0.3f;
             plain = false;
             switch (level) {
+                case SHARP_ANIME_PLUS:
+                    amount = 1.0f * softness + 0.15f;
+                    dark = 0.6f;
+                    thin = inH <= 1080 ? 0.40f * softness + 0.08f : 0f;
+                    core = 0.010f;
+                    break;
                 case SHARP_ANIME:
                     amount = 0.85f * softness + 0.1f;
                     dark = 0.45f;
@@ -410,6 +441,84 @@ public final class VideoEnhance {
                 program.setFloatUniform("uThin", thin);
                 program.setFloatUniform("uCore", core);
                 program.setFloatUniform("uVivid", vivid ? 1f : 0f);
+                program.bindAttributesAndUniforms();
+                GLES20.glDrawArrays(GLES20.GL_TRIANGLE_STRIP, 0, 4);
+                GlUtil.checkGlError();
+            } catch (GlUtil.GlException e) {
+                throw new VideoFrameProcessingException(e, presentationTimeUs);
+            }
+        }
+
+        @Override
+        public void release() throws VideoFrameProcessingException {
+            super.release();
+            try {
+                program.delete();
+            } catch (GlUtil.GlException e) {
+                throw new VideoFrameProcessingException(e);
+            }
+        }
+    }
+
+    // ---------------------------------------------------------------- denoise (Anime+)
+
+    // Edge-preserving 5x5 bilateral filter: flattens block and mosquito noise but keeps outlines,
+    // because a pixel across a strong edge gets almost no weight.
+    private static final String DENOISE_FRAGMENT =
+            "precision highp float;\n"
+            + "uniform sampler2D uTexSampler;\n"
+            + "uniform vec2 uTexel;\n"
+            + "varying vec2 vTexSamplingCoord;\n"
+            + "void main() {\n"
+            + "  vec2 uv = vTexSamplingCoord;\n"
+            + "  vec3 c = texture2D(uTexSampler, uv).rgb;\n"
+            + "  vec3 sum = vec3(0.0);\n"
+            + "  float wsum = 0.0;\n"
+            + "  for (int i = -2; i <= 2; i++) {\n"
+            + "    for (int j = -2; j <= 2; j++) {\n"
+            + "      vec2 o = vec2(float(i), float(j));\n"
+            + "      vec3 s = texture2D(uTexSampler, uv + o * uTexel).rgb;\n"
+            + "      vec3 d = s - c;\n"
+            + "      float w = exp(-dot(o, o) / 4.5) * exp(-dot(d, d) / 0.0072);\n"
+            + "      sum += s * w;\n"
+            + "      wsum += w;\n"
+            + "    }\n"
+            + "  }\n"
+            + "  gl_FragColor = vec4(sum / wsum, 1.0);\n"
+            + "}\n";
+
+    private static final class DenoiseEffect implements GlEffect {
+        @Override
+        public GlShaderProgram toGlShaderProgram(Context context, boolean useHdr)
+                throws VideoFrameProcessingException {
+            return new DenoiseProgram(useHdr);
+        }
+    }
+
+    private static final class DenoiseProgram extends BaseGlShaderProgram {
+        private final GlProgram program;
+        private int inW = 1;
+        private int inH = 1;
+
+        DenoiseProgram(boolean useHdr) throws VideoFrameProcessingException {
+            super(useHdr, 1);
+            this.program = newProgram(DENOISE_FRAGMENT);
+        }
+
+        @Override
+        public Size configure(int inputWidth, int inputHeight) {
+            inW = Math.max(1, inputWidth);
+            inH = Math.max(1, inputHeight);
+            return new Size(inW, inH);
+        }
+
+        @Override
+        public void drawFrame(int inputTexId, long presentationTimeUs)
+                throws VideoFrameProcessingException {
+            try {
+                program.use();
+                program.setSamplerTexIdUniform("uTexSampler", inputTexId, 0);
+                program.setFloatsUniform("uTexel", new float[] {1f / inW, 1f / inH});
                 program.bindAttributesAndUniforms();
                 GLES20.glDrawArrays(GLES20.GL_TRIANGLE_STRIP, 0, 4);
                 GlUtil.checkGlError();
